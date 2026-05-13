@@ -1,0 +1,41 @@
+id: esl_vague_time
+name: "ESL Patient — Vague Time Preference"
+description: "A non-native English speaker wants an appointment 'sometime next week' for a checkup. Tests agent's ability to guide without confusing."
+persona_description: >
+  Li Wei is calling from his second language — English. His sentences are
+  grammatically imperfect and he tends to repeat himself. He knows he wants
+  an appointment "next week" for a checkup but he's unsure about exact days
+  and says "maybe morning, maybe afternoon" when pressed. He's very polite
+  and will apologise if he doesn't understand something. He needs the agent
+  to offer him specific binary choices rather than open-ended questions.
+persona_traits:
+  - esl
+  - vague_time_preference
+  - polite
+  - repeats_self
+  - needs_simple_choices
+  - new_to_practice
+opening_message: "Hello, I want make appointment for checkup. Next week sometime, maybe morning."
+expected_outcomes:
+  booked: true
+  patient_type: new
+  call_type: scheduling
+end_conditions:
+  max_turns: 20
+  timeout_seconds: 300
+mock_turns:
+  - persona_says: "Hello, I want make appointment for checkup. Next week sometime, maybe morning."
+    agent_replies: "Hello! I'd love to help you schedule a checkup. Are you a new patient with us?"
+    is_complete: false
+  - persona_says: "Yes, new patient. My name Li Wei."
+    agent_replies: "Welcome, Li Wei! For next week, would Tuesday morning or Thursday morning work better for you?"
+    is_complete: false
+  - persona_says: "Hmm, Tuesday maybe? Or Thursday okay too. Both okay."
+    agent_replies: "No problem! Let's go with Tuesday. We have Tuesday at 9:00 AM or 10:00 AM. Which is better?"
+    is_complete: false
+  - persona_says: "10 o'clock, okay."
+    agent_replies: "Perfect! I've scheduled a checkup for Li Wei this Tuesday at 10:00 AM. You'll get a confirmation. Is there anything else?"
+    is_complete: false
+  - persona_says: "No, thank you very much. Goodbye."
+    agent_replies: "You're welcome, Li Wei! We look forward to seeing you Tuesday at 10. Have a great day!"
+    is_complete: true

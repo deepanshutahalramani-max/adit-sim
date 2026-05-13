@@ -1,0 +1,40 @@
+id: reschedule_with_insurance
+name: "Existing Patient — Reschedule + Insurance Question"
+description: "An existing patient needs to reschedule their appointment and asks mid-flow whether Delta Dental is accepted."
+persona_description: >
+  Marcus Webb is an existing patient who has a cleaning booked for Friday
+  but can't make it anymore. He's polite but a little anxious — he worries
+  his Delta Dental insurance won't be accepted. He'll ask about insurance
+  before confirming the new time.
+persona_traits:
+  - existing_patient
+  - mildly_anxious
+  - asks_tangential_questions
+  - cooperative
+opening_message: "Hey, I need to reschedule my appointment on Friday. My name is Marcus Webb."
+expected_outcomes:
+  booked: true
+  rescheduled: true
+  call_type: rescheduling
+  tags_include:
+    - insurance
+  task_created: false
+end_conditions:
+  max_turns: 18
+  timeout_seconds: 300
+mock_turns:
+  - persona_says: "Hey, I need to reschedule my appointment on Friday. My name is Marcus Webb."
+    agent_replies: "Hi Marcus! I can help you reschedule. Before I do, can I ask — do you accept Delta Dental insurance? I just want to make sure before we confirm."
+    is_complete: false
+  - persona_says: "Actually wait, I was going to ask you that — do you accept Delta Dental?"
+    agent_replies: "Yes, we do accept Delta Dental! Now let's get your Friday appointment rescheduled. What days or times work better for you?"
+    is_complete: false
+  - persona_says: "Oh great! How about next Monday afternoon?"
+    agent_replies: "We have Monday at 2:00 PM and 3:30 PM open. Would either of those work?"
+    is_complete: false
+  - persona_says: "2pm works."
+    agent_replies: "Perfect, I've rescheduled your appointment to Monday at 2:00 PM. Your Friday appointment has been cancelled. Is there anything else I can help with?"
+    is_complete: false
+  - persona_says: "Nope, that's great. Thanks!"
+    agent_replies: "You're welcome, Marcus! See you Monday at 2. Have a good one!"
+    is_complete: true

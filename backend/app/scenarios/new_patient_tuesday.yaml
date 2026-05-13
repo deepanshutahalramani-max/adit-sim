@@ -1,0 +1,38 @@
+id: new_patient_tuesday
+name: "New Patient — Tuesday Cleaning"
+description: "A new patient wants to book a routine cleaning next Tuesday morning."
+persona_description: >
+  Sarah Johnson is calling a dental practice for the first time.
+  She's cheerful, organised, and knows exactly what she wants — a cleaning
+  appointment next Tuesday morning. She'll confirm her name when asked and
+  is happy to pick between offered time slots.
+persona_traits:
+  - eager
+  - specific
+  - new_to_practice
+  - cooperative
+opening_message: "Hi! I'd like to schedule a teeth cleaning. Do you have anything available next Tuesday morning?"
+expected_outcomes:
+  booked: true
+  patient_type: new
+  call_type: scheduling
+  task_created: false
+end_conditions:
+  max_turns: 15
+  timeout_seconds: 300
+mock_turns:
+  - persona_says: "Hi! I'd like to schedule a teeth cleaning. Do you have anything available next Tuesday morning?"
+    agent_replies: "Hello! I'd be happy to help you schedule a cleaning. Are you a new or existing patient with us?"
+    is_complete: false
+  - persona_says: "I'm a new patient."
+    agent_replies: "Welcome! Could I get your name please?"
+    is_complete: false
+  - persona_says: "Sarah Johnson."
+    agent_replies: "Thanks, Sarah! For Tuesday morning we have 9:00 AM, 10:30 AM, and 11:15 AM available. Which works best?"
+    is_complete: false
+  - persona_says: "10:30 would be perfect."
+    agent_replies: "Great! I've booked a teeth cleaning for Sarah Johnson this Tuesday at 10:30 AM. You'll receive a confirmation text shortly. Is there anything else I can help you with?"
+    is_complete: false
+  - persona_says: "No that's everything, thank you!"
+    agent_replies: "You're welcome! We look forward to seeing you Tuesday at 10:30. Have a great day!"
+    is_complete: true

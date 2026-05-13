@@ -1,0 +1,40 @@
+id: changes_mind_midcall
+name: "Indecisive Patient — Cancels Then Reschedules"
+description: "Patient opens wanting to cancel, then changes mind and reschedules when offered alternatives."
+persona_description: >
+  Kevin Park is calling to cancel his upcoming appointment — he's been putting
+  it off and just doesn't feel like going. But he's not fully committed to
+  cancelling; he's more avoidant than opposed. When the agent offers him
+  alternative times rather than just confirming the cancellation, he softens
+  and agrees to reschedule instead. He's a bit sheepish about changing his mind.
+persona_traits:
+  - indecisive
+  - avoidant
+  - existing_patient
+  - changes_mind
+  - cooperative_when_prompted
+opening_message: "Hi, I need to cancel my appointment. It's Kevin Park."
+expected_outcomes:
+  booked: true
+  rescheduled: true
+  cancelled: false
+  call_type: rescheduling
+end_conditions:
+  max_turns: 18
+  timeout_seconds: 300
+mock_turns:
+  - persona_says: "Hi, I need to cancel my appointment. It's Kevin Park."
+    agent_replies: "Hi Kevin! I can help with that. Before I cancel, would you like to reschedule instead? We have several openings this week and next."
+    is_complete: false
+  - persona_says: "I don't know... I guess I've just been busy."
+    agent_replies: "That's totally understandable! How about I move it to a time that's more convenient? What days work better for you?"
+    is_complete: false
+  - persona_says: "Maybe next week? I don't know, what do you have?"
+    agent_replies: "Next week we have Monday at 11 AM, Wednesday at 2 PM, or Friday at 9 AM. Any of those work?"
+    is_complete: false
+  - persona_says: "Wednesday at 2 actually works. Okay, let's do that instead."
+    agent_replies: "Done! I've rescheduled your appointment to Wednesday at 2:00 PM. Your original appointment has been cancelled and the new one is confirmed. You'll get a text confirmation."
+    is_complete: false
+  - persona_says: "Great, thanks. Sorry for the hassle."
+    agent_replies: "No hassle at all, Kevin! That's what we're here for. See you Wednesday at 2."
+    is_complete: true

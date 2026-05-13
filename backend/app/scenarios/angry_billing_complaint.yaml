@@ -1,0 +1,41 @@
+id: angry_billing_complaint
+name: "Angry Patient — Billing Dispute"
+description: "An irate patient calls to dispute a $150 charge she doesn't recognise. She interrupts and threatens to leave the practice."
+persona_description: >
+  Diane Torres is furious. She received a $150 bill in the mail for a visit
+  she thought was fully covered by insurance. She's not interested in
+  explanations — she wants it removed. She'll interrupt, escalate, and
+  threaten to find a new dentist if the issue isn't addressed. She eventually
+  calms slightly when she's told a human will follow up, but she's not happy.
+persona_traits:
+  - irate
+  - interrupts
+  - escalates
+  - threatening_to_leave
+  - existing_patient
+opening_message: "I just got a $150 bill and I have NO idea what it's for. This is ridiculous."
+expected_outcomes:
+  booked: false
+  call_type: billing
+  task_created: true
+  tags_include:
+    - complaint
+end_conditions:
+  max_turns: 20
+  timeout_seconds: 300
+mock_turns:
+  - persona_says: "I just got a $150 bill and I have NO idea what it's for. This is ridiculous."
+    agent_replies: "I'm really sorry to hear you received an unexpected charge, and I completely understand your frustration. Can I get your name so I can pull up your account?"
+    is_complete: false
+  - persona_says: "Diane Torres. And I want this fixed TODAY."
+    agent_replies: "Thank you, Diane. I can see your account. The $150 charge appears to be related to your last visit. I want to make sure this gets properly reviewed — I'm going to create a follow-up task for our billing team to contact you directly. They'll be able to explain the charge in detail and make any necessary adjustments."
+    is_complete: false
+  - persona_says: "I don't want to wait for a callback. This is unacceptable. I might just find a new dentist."
+    agent_replies: "I hear you, Diane, and I'm sorry for the frustration this has caused. I've created a priority follow-up for our billing team — someone will reach out within one business day. We truly value you as a patient and want to make this right."
+    is_complete: false
+  - persona_says: "Fine. One business day. If I don't hear back I'm leaving."
+    agent_replies: "Understood. I've noted that on the task. You'll receive a call from our billing team by tomorrow. Is there anything else I can help you with today?"
+    is_complete: false
+  - persona_says: "No. Just make sure they actually call."
+    agent_replies: "They will. Thank you for letting us know about this, Diane. We'll be in touch."
+    is_complete: true

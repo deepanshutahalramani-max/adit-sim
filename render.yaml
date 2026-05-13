@@ -1,0 +1,41 @@
+services:
+  - type: web
+    name: adit-sim
+    runtime: python
+    buildCommand: pip install -e .
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    rootDir: backend
+    envVars:
+      - key: TARGET_ENVIRONMENT
+        value: production        # override to staging if needed
+      - key: MESSAGING_PROVIDER
+        value: mock              # change to ringcentral when ready
+      - key: DATABASE_URL
+        fromDatabase:
+          name: adit-sim-db
+          property: connectionString
+      - key: ANTHROPIC_API_KEY
+        sync: false              # set manually in Render dashboard
+      # RingCentral (optional — set manually if MESSAGING_PROVIDER=ringcentral)
+      - key: RINGCENTRAL_CLIENT_ID
+        sync: false
+      - key: RINGCENTRAL_CLIENT_SECRET
+        sync: false
+      - key: RINGCENTRAL_JWT
+        sync: false
+      - key: RINGCENTRAL_FROM_NUMBER
+        sync: false
+      - key: TARGET_AGENT_NUMBER
+        sync: false
+      - key: PUBLIC_WEBHOOK_URL
+        sync: false
+
+    # Build frontend and embed in the Python container
+    buildCommand: |
+      cd ../frontend && npm install && npm run build && cp -r dist ../backend/frontend/dist
+      cd ../backend && pip install -e .
+
+databases:
+  - name: adit-sim-db
+    plan: free
+    databaseName: adit_sim
