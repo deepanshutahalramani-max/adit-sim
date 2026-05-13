@@ -15,7 +15,15 @@ def init_db(database_url: str) -> None:
         .replace("postgresql://", "postgresql+asyncpg://")
         .replace("postgres://", "postgresql+asyncpg://")
     )
-    _engine = create_async_engine(url, echo=False, pool_pre_ping=True)
+    # Railway's hosted Postgres requires SSL; local/internal doesn't
+    connect_args: dict = {}
+    if "railway.app" in url or "railway.internal" in url:
+        import ssl as _ssl
+        ctx = _ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = _ssl.CERT_NONE
+        connect_args["ssl"] = ctx
+    _engine = create_async_engine(url, echo=False, pool_pre_ping=True, connect_args=connect_args)
     _session_factory = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
 
 
