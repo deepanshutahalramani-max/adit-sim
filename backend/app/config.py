@@ -19,8 +19,8 @@ class MessagingProviderType(str, Enum):
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    TARGET_ENVIRONMENT: Environment
-    MESSAGING_PROVIDER: MessagingProviderType
+    TARGET_ENVIRONMENT: Environment = Environment.mock
+    MESSAGING_PROVIDER: MessagingProviderType = MessagingProviderType.mock
     DATABASE_URL: Optional[str] = None
 
     # Railway Postgres plugin injects these individually
