@@ -71,7 +71,7 @@ function DeterministicCard({ result }: { result: EvalResult }) {
         </tbody>
       </table>
       <p className="text-xs text-gray-400 mt-2">
-        {result.details?.turn_count as number} turns total
+        {Number(result.details?.turn_count ?? 0)} turns total
       </p>
     </div>
   );
@@ -85,7 +85,7 @@ function LLMJudgeCard({ result }: { result: EvalResult }) {
           <MinusCircle className="w-4 h-4 text-gray-400" />
           <span className="font-semibold text-sm">LLM Judge</span>
           <span className="ml-auto text-xs text-gray-400 italic">
-            {result.details.reason as string}
+            {String(result.details.reason ?? "")}
           </span>
         </div>
       </div>
@@ -133,12 +133,12 @@ function LLMJudgeCard({ result }: { result: EvalResult }) {
 
       {result.details?.rationale && (
         <p className="text-xs text-gray-600 italic border-t pt-2">
-          {result.details.rationale as string}
+          {String(result.details.rationale)}
         </p>
       )}
       {result.details?.critical_failure && (
         <p className="text-xs text-red-600 font-medium mt-1">
-          Critical: {result.details.critical_failure as string}
+          Critical: {String(result.details.critical_failure)}
         </p>
       )}
     </div>
