@@ -29,8 +29,21 @@ def init_db(database_url: str) -> None:
 
 async def create_tables() -> None:
     assert _engine is not None, "DB not initialised — call init_db() first"
-    async with _engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
+    import asyncio
+    for attempt in range(10):
+        try:
+            async with _engine.begin() as conn:
+                await conn.run_sync(SQLModel.metadata.create_all)
+            return
+        except Exception as e:
+            if attempt == 9:
+                raise
+            wait = 2 ** attempt
+            import logging
+            logging.getLogger(__name__).warning(
+                "DB not ready (attempt %d/10): %s — retrying in %ds", attempt + 1, e, wait
+            )
+            await asyncio.sleep(wait)
 
 
 @asynccontextmanager
