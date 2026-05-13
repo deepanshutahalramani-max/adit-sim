@@ -9,8 +9,8 @@ RUN npm run build
 # Stage 2: Python backend + embedded frontend
 FROM python:3.11-slim
 WORKDIR /app
-COPY backend/pyproject.toml .
-RUN pip install --no-cache-dir -e .
+COPY backend/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ .
 # Place built frontend where FastAPI's static mount expects it
 COPY --from=frontend-builder /frontend/dist /frontend/dist
