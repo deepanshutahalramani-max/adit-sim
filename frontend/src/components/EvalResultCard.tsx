@@ -6,6 +6,14 @@ interface Props {
   eval_results: EvalResult[];
 }
 
+// Safely pull a typed value out of Record<string, unknown>
+function str(v: unknown): string { return v != null ? String(v) : ""; }
+function num(v: unknown): number { return Number(v ?? 0); }
+function bool(v: unknown): boolean { return Boolean(v); }
+function rec(v: unknown): Record<string, unknown> {
+  return (v && typeof v === "object" ? v : {}) as Record<string, unknown>;
+}
+
 function PassIcon({ passed }: { passed: boolean | null }) {
   if (passed === true) return <CheckCircle className="w-4 h-4 text-green-500" />;
   if (passed === false) return <XCircle className="w-4 h-4 text-red-500" />;
@@ -26,10 +34,7 @@ function ScoreBadge({ score }: { score: number | null }) {
 }
 
 function DeterministicCard({ result }: { result: EvalResult }) {
-  const checks = (result.details?.checks ?? {}) as Record<
-    string,
-    { expected: unknown; detected: unknown; pass: boolean }
-  >;
+  const checks = rec(result.details?.checks);
   return (
     <div className="border border-gray-200 rounded-xl p-4 bg-white">
       <div className="flex items-center gap-2 mb-3">
@@ -39,9 +44,7 @@ function DeterministicCard({ result }: { result: EvalResult }) {
           <span
             className={clsx(
               "ml-auto text-xs font-semibold px-2 py-0.5 rounded",
-              result.passed
-                ? "bg-green-100 text-green-700"
-                : "bg-red-100 text-red-700"
+              result.passed ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
             )}
           >
             {result.passed ? "PASS" : "FAIL"}
@@ -58,20 +61,23 @@ function DeterministicCard({ result }: { result: EvalResult }) {
           </tr>
         </thead>
         <tbody>
-          {Object.entries(checks).map(([key, c]) => (
-            <tr key={key} className="border-b last:border-0">
-              <td className="py-1.5 font-mono">{key}</td>
-              <td className="py-1.5 text-gray-600">{JSON.stringify(c.expected)}</td>
-              <td className="py-1.5 text-gray-600">{JSON.stringify(c.detected)}</td>
-              <td className="py-1.5 text-center">
-                {c.pass ? "✓" : <span className="text-red-500">✗</span>}
-              </td>
-            </tr>
-          ))}
+          {Object.entries(checks).map(([key, c]) => {
+            const row = rec(c);
+            return (
+              <tr key={key} className="border-b last:border-0">
+                <td className="py-1.5 font-mono">{key}</td>
+                <td className="py-1.5 text-gray-600">{JSON.stringify(row.expected)}</td>
+                <td className="py-1.5 text-gray-600">{JSON.stringify(row.detected)}</td>
+                <td className="py-1.5 text-center">
+                  {bool(row.pass) ? "✓" : <span className="text-red-500">✗</span>}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
       <p className="text-xs text-gray-400 mt-2">
-        {Number(result.details?.turn_count ?? 0)} turns total
+        {num(result.details?.turn_count)} turns total
       </p>
     </div>
   );
@@ -85,14 +91,17 @@ function LLMJudgeCard({ result }: { result: EvalResult }) {
           <MinusCircle className="w-4 h-4 text-gray-400" />
           <span className="font-semibold text-sm">LLM Judge</span>
           <span className="ml-auto text-xs text-gray-400 italic">
-            {String(result.details.reason ?? "")}
+            {str(result.details.reason)}
           </span>
         </div>
       </div>
     );
   }
 
-  const scores = (result.details?.scores ?? {}) as Record<string, number>;
+  const scores = rec(result.details?.scores);
+  const rationale = str(result.details?.rationale);
+  const critical = str(result.details?.critical_failure);
+
   return (
     <div className="border border-gray-200 rounded-xl p-4 bg-white">
       <div className="flex items-center gap-2 mb-3">
@@ -103,9 +112,7 @@ function LLMJudgeCard({ result }: { result: EvalResult }) {
           <span
             className={clsx(
               "ml-auto text-xs font-semibold px-2 py-0.5 rounded",
-              result.passed
-                ? "bg-green-100 text-green-700"
-                : "bg-red-100 text-red-700"
+              result.passed ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
             )}
           >
             {result.passed ? "PASS" : "FAIL"}
@@ -114,33 +121,30 @@ function LLMJudgeCard({ result }: { result: EvalResult }) {
       </div>
 
       <div className="grid grid-cols-5 gap-2 mb-3">
-        {Object.entries(scores).map(([dim, val]) => (
-          <div key={dim} className="text-center">
-            <div
-              className={clsx(
+        {Object.entries(scores).map(([dim, val]) => {
+          const v = Number(val);
+          return (
+            <div key={dim} className="text-center">
+              <div className={clsx(
                 "text-lg font-bold",
-                val >= 4 ? "text-green-600" : val >= 3 ? "text-yellow-600" : "text-red-600"
-              )}
-            >
-              {val}
+                v >= 4 ? "text-green-600" : v >= 3 ? "text-yellow-600" : "text-red-600"
+              )}>
+                {v}
+              </div>
+              <div className="text-xs text-gray-500 capitalize leading-tight">
+                {dim.replace("_", " ")}
+              </div>
             </div>
-            <div className="text-xs text-gray-500 capitalize leading-tight">
-              {dim.replace("_", " ")}
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
-      {result.details?.rationale && (
-        <p className="text-xs text-gray-600 italic border-t pt-2">
-          {String(result.details.rationale)}
-        </p>
-      )}
-      {result.details?.critical_failure && (
-        <p className="text-xs text-red-600 font-medium mt-1">
-          Critical: {String(result.details.critical_failure)}
-        </p>
-      )}
+      {rationale ? (
+        <p className="text-xs text-gray-600 italic border-t pt-2">{rationale}</p>
+      ) : null}
+      {critical ? (
+        <p className="text-xs text-red-600 font-medium mt-1">Critical: {critical}</p>
+      ) : null}
     </div>
   );
 }
