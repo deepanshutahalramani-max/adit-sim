@@ -21,7 +21,14 @@ class Settings(BaseSettings):
 
     TARGET_ENVIRONMENT: Environment
     MESSAGING_PROVIDER: MessagingProviderType
-    DATABASE_URL: str
+    DATABASE_URL: Optional[str] = None
+
+    # Railway Postgres plugin injects these individually
+    PGHOST: Optional[str] = None
+    PGPORT: str = "5432"
+    PGDATABASE: str = "railway"
+    PGUSER: str = "postgres"
+    PGPASSWORD: Optional[str] = None
 
     ANTHROPIC_API_KEY: Optional[str] = None
 
@@ -32,6 +39,25 @@ class Settings(BaseSettings):
     RINGCENTRAL_FROM_NUMBER: Optional[str] = None
     TARGET_AGENT_NUMBER: Optional[str] = None
     PUBLIC_WEBHOOK_URL: Optional[str] = None
+
+    @model_validator(mode="after")
+    def resolve_database_url(self) -> "Settings":
+        needs_pg = (
+            not self.DATABASE_URL
+            or "localhost" in self.DATABASE_URL
+            or "127.0.0.1" in self.DATABASE_URL
+        )
+        if needs_pg and self.PGHOST:
+            pwd = self.PGPASSWORD or ""
+            self.DATABASE_URL = (
+                f"postgresql+asyncpg://{self.PGUSER}:{pwd}"
+                f"@{self.PGHOST}:{self.PGPORT}/{self.PGDATABASE}"
+            )
+        if not self.DATABASE_URL:
+            raise ValueError(
+                "No database configured. Set DATABASE_URL or PGHOST/PGPASSWORD."
+            )
+        return self
 
     @model_validator(mode="after")
     def validate_ringcentral_deps(self) -> "Settings":
