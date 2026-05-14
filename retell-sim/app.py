@@ -1,828 +1,657 @@
 """
-Retell SMS Agent – Parallel Testing Platform
-=============================================
-Streamlit app for stress-testing the fd-sms API with:
-  • Up to 20 parallel simulations
-  • Screenshot analysis (GPT-4o Vision → reproducibility verdict)
-  • Instruction-based test generation (GPT-4o-mini → scenario → run)
-  • Live performance dashboard
+ADIT SMS Agent – Parallel Testing Platform
+==========================================
+Complete testing harness for the fd-sms / Retell SMS agent with:
+  • 20 parallel simulations against live or dev host
+  • GPT-4o Vision screenshot analysis for bug reproducibility
+  • Instruction-based test generation via GPT-4o-mini
+  • Live performance dashboard with pass-rates and scoring
 """
-
 from __future__ import annotations
 
 import base64
 import json
+import os
 import random
 import string
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from datetime import datetime
 from typing import Any, Optional
 
 import httpx
+import pandas as pd
 import streamlit as st
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Retell SMS Tester",
-    page_icon="🤖",
+    page_title="ADIT SMS Agent Tester",
+    page_icon="🦷",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# ── Constants ─────────────────────────────────────────────────────────────────
-API_BASE = "https://gjqwwdfeo35edl-8009.proxy.runpod.net"
-MAX_PARALLEL = 20
+# ── Hosts ─────────────────────────────────────────────────────────────────────
+HOSTS = {
+    "🟢 Live  (frontdeskchatagent.adit.com)": "https://frontdeskchatagent.adit.com",
+    "🔵 Dev   (RunPod beta)": "https://gjqwwdfeo35edl-8009.proxy.runpod.net",
+}
 
+MAX_PARALLEL = 20
+DEFAULT_AGENT_PHONE = "+14122652546"   # Sofia – Elegant Dental
+
+# ── Preset scenarios ──────────────────────────────────────────────────────────
 PRESET_SCENARIOS: dict[str, list[str]] = {
-    "Book Appointment (New Patient)": [
-        "Hi, I'd like to schedule a new patient appointment",
-        "I need a cleaning and check-up",
-        "I'm a new patient",
-        "Saturday morning would work best for me",
+    "🆕 Book – New Patient": [
+        "Hi, I'd like to book a new patient appointment",
+        "I need a general cleaning and check-up",
+        "Saturday morning works best for me",
         "My name is Jamie Chen, date of birth April 12 1990",
-        "Yes, please confirm the booking",
+        "Great, please confirm the booking",
     ],
-    "Book Appointment (Existing Patient)": [
-        "Hi, I need to book an appointment",
-        "I'm an existing patient, John Smith, DOB March 5 1985",
+    "📅 Book – Existing Patient": [
+        "Hi, I need to schedule an appointment",
+        "I'm an existing patient – John Smith, DOB March 5 1985",
         "I have a toothache on my lower left side",
-        "As soon as possible please, it's been hurting for two days",
-        "Thursday afternoon works",
-        "Yes, confirm please",
+        "As soon as possible please",
+        "Yes, confirm it",
     ],
-    "Emergency / Pain": [
-        "I'm having really bad tooth pain",
-        "It started yesterday, I can barely eat",
-        "Yes I'm a current patient, Sarah Johnson",
-        "My date of birth is July 22 1978",
-        "Do you have anything today or tomorrow?",
-        "Yes that slot works, please book it",
+    "🚨 Dental Emergency": [
+        "I have a severe toothache and need help urgently",
+        "It started this morning, it's really painful",
+        "I'm an existing patient, Maria Garcia",
+        "Today if possible",
+        "Yes please book me in",
     ],
-    "Reschedule Appointment": [
+    "🔄 Reschedule Appointment": [
         "Hi, I need to reschedule my appointment",
-        "My name is Mike Davis, born January 10 1992",
-        "I have an appointment this Friday at 2pm",
-        "Can I move it to next Tuesday instead?",
-        "Morning would be great",
-        "Perfect, thanks for rescheduling",
+        "It's booked for next Tuesday at 2pm",
+        "I'd prefer Thursday afternoon instead",
+        "Yes, that works perfectly",
     ],
-    "Cancel Appointment": [
+    "❌ Cancel Appointment": [
         "I need to cancel my appointment",
-        "My name is Lisa Park, DOB September 3 1988",
-        "I have an appointment tomorrow at 10am",
-        "I have a family emergency",
-        "No I don't need to reschedule right now",
-        "Thank you",
+        "It's for tomorrow at 10am",
+        "Something came up at work",
+        "Yes please cancel it",
     ],
-    "Ask About Hours & Services": [
+    "🕐 Check Office Hours": [
         "What are your office hours?",
-        "Are you open on weekends?",
-        "Do you offer teeth whitening?",
-        "What about Invisalign?",
+        "Are you open on Saturdays?",
+        "What about Sunday?",
+        "Thanks, that's all I needed",
+    ],
+    "🏥 Insurance Question": [
         "Do you accept Delta Dental insurance?",
-        "Great, thank you for the info",
+        "What about Cigna?",
+        "I have PPO coverage",
+        "Great, I'd like to book an appointment",
+        "Next week if possible",
     ],
-    "Insurance & Pricing Question": [
-        "Do you accept Cigna dental insurance?",
-        "What other insurances do you take?",
-        "How much is a cleaning without insurance roughly?",
-        "What about X-rays?",
-        "Do you offer payment plans?",
-        "Thanks, I'll call back to book",
+    "📞 Recall / Follow-up": [
+        "I haven't been in for a while and wanted to check in",
+        "It's been about 18 months since my last cleaning",
+        "I'm available weekday mornings",
+        "My name is Robert Lee, DOB June 20 1978",
+        "Yes, book me in",
     ],
-    "Recall / Overdue Checkup": [
-        "Hi, I got a reminder that I'm due for a checkup",
-        "My name is Tom Wilson, DOB February 28 1975",
-        "It's been about 18 months since my last visit",
-        "Any day next week works for me",
-        "Wednesday at 3pm sounds good",
-        "Great, I'll see you then",
+    "🔕 Out of Hours": [
+        "Hi, is anyone there?",
+        "I wanted to book an appointment for next week",
+        "Monday or Tuesday morning",
+        "Yes, that would work",
+    ],
+    "💊 Post-Treatment Follow-up": [
+        "I had a filling done last week and it's still sensitive",
+        "It hurts when I drink cold water",
+        "Should I come back in?",
+        "Yes please book me for a check",
     ],
 }
 
-# ── Session state ─────────────────────────────────────────────────────────────
-for key, default in {
-    "results": [],
-    "running": False,
-    "run_counter": 0,
-}.items():
-    if key not in st.session_state:
-        st.session_state[key] = default
-
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _fake_phone() -> str:
-    """Generate a unique fake E.164 number (+1555XXXXXXX)."""
-    suffix = "".join(random.choices(string.digits, k=7))
-    return f"+1555{suffix}"
-
-
-def _headers(token: str) -> dict:
-    h = {"Content-Type": "application/json"}
-    if token:
-        h["Authorization"] = f"Bearer {token}"
-    return h
-
-
+# ── Data classes ──────────────────────────────────────────────────────────────
 @dataclass
-class TurnResult:
-    turn: int
-    user_msg: str
-    ai_response: str
-    latency_ms: int
-
+class Turn:
+    role: str        # "patient" | "agent"
+    message: str
+    latency_ms: int = 0
 
 @dataclass
 class SimResult:
-    run_id: str
     scenario: str
     patient_phone: str
-    status: str           # "success" | "error" | "partial"
-    turns: list[TurnResult]
-    duration_s: float
-    avg_latency_ms: float
-    score: Optional[int]
-    error: Optional[str]
-    timestamp: str
+    turns: list[Turn] = field(default_factory=list)
+    passed: bool = False
+    score: int = 0
+    failure_reason: str = ""
+    total_ms: int = 0
+    chat_id: str = ""
 
-    def to_dict(self) -> dict:
-        d = asdict(self)
-        d["turns"] = [asdict(t) for t in self.turns]
-        return d
-
-
-def run_simulation(
-    *,
-    scenario_name: str,
-    messages: list[str],
-    agent_phone: str,
-    bearer_token: str,
-    openai_key: str = "",
-    use_llm_judge: bool = False,
-    run_id: str = "",
-) -> SimResult:
-    """Run one multi-turn conversation against the fd-sms API (synchronous)."""
-    patient_phone = _fake_phone()
-    chat_id: Optional[str] = None
-    turns: list[TurnResult] = []
-    t0 = time.time()
-
-    try:
-        for i, msg in enumerate(messages):
-            turn_t0 = time.time()
-            is_last = i == len(messages) - 1
-
-            payload: dict[str, Any] = {
-                "message": msg,
-                "patient_phone_number": patient_phone,
-                "agent_phone_number": agent_phone,
-            }
-            if chat_id:
-                payload["chat_id"] = chat_id
-            if is_last:
-                payload["end_conversation"] = True
-
-            resp = httpx.post(
-                f"{API_BASE}/engage/forward-to-agent",
-                json=payload,
-                headers=_headers(bearer_token),
-                timeout=45,
-            )
-            latency = round((time.time() - turn_t0) * 1000)
-
-            if resp.status_code != 200:
-                return SimResult(
-                    run_id=run_id,
-                    scenario=scenario_name,
-                    patient_phone=patient_phone,
-                    status="error",
-                    turns=turns,
-                    duration_s=round(time.time() - t0, 2),
-                    avg_latency_ms=0,
-                    score=None,
-                    error=f"HTTP {resp.status_code}: {resp.text[:300]}",
-                    timestamp=datetime.utcnow().isoformat(),
-                )
-
-            data = resp.json()
-            # Response shape: {"status": "success", "data": {"chat_id": "...", "agent_response": "..."}}
-            inner = data.get("data", data)
-            chat_id = inner.get("chat_id") or chat_id
-            ai_reply = inner.get("agent_response") or inner.get("message") or ""
-
-            turns.append(TurnResult(
-                turn=i + 1,
-                user_msg=msg,
-                ai_response=ai_reply,
-                latency_ms=latency,
-            ))
-
-        duration = round(time.time() - t0, 2)
-        avg_lat = round(sum(t.latency_ms for t in turns) / len(turns)) if turns else 0
-
-        score = None
-        if use_llm_judge and openai_key and turns:
-            score = _llm_judge(scenario_name, turns, openai_key)
-
-        return SimResult(
-            run_id=run_id,
-            scenario=scenario_name,
-            patient_phone=patient_phone,
-            status="success",
-            turns=turns,
-            duration_s=duration,
-            avg_latency_ms=avg_lat,
-            score=score,
-            error=None,
-            timestamp=datetime.utcnow().isoformat(),
-        )
-
-    except Exception as exc:
-        return SimResult(
-            run_id=run_id,
-            scenario=scenario_name,
-            patient_phone=patient_phone,
-            status="error",
-            turns=turns,
-            duration_s=round(time.time() - t0, 2),
-            avg_latency_ms=0,
-            score=None,
-            error=str(exc),
-            timestamp=datetime.utcnow().isoformat(),
-        )
-
-
-def _llm_judge(scenario: str, turns: list[TurnResult], openai_key: str) -> Optional[int]:
-    """Score 0-100 using GPT-4o-mini."""
-    try:
-        from openai import OpenAI
-        client = OpenAI(api_key=openai_key)
-        transcript = "\n".join(
-            f"Patient: {t.user_msg}\nAI Agent: {t.ai_response}" for t in turns
-        )
-        prompt = (
-            f"You are evaluating a dental practice AI SMS receptionist.\n"
-            f"Scenario: {scenario}\n\nConversation:\n{transcript}\n\n"
-            "Rate 0-100 where 100=perfect helpful professional resolution, "
-            "70-99=good with minor issues, 40-69=acceptable but incomplete, 0-39=poor/confusing.\n"
-            'Return ONLY valid JSON: {"score": <int>, "reason": "<one sentence>"}'
-        )
-        resp = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=120,
-            temperature=0,
-        )
-        result = json.loads(resp.choices[0].message.content.strip())
-        return int(result.get("score", 50))
-    except Exception:
-        return None
-
-
-def analyze_screenshot(image_bytes: bytes, openai_key: str, extra_context: str = "") -> str:
-    """Send screenshot to GPT-4o Vision and return reproducibility analysis."""
-    from openai import OpenAI
-    client = OpenAI(api_key=openai_key)
-    b64 = base64.b64encode(image_bytes).decode()
-    context_block = f"\nExtra context: {extra_context}" if extra_context else ""
-    prompt = (
-        "You are a QA analyst for an AI-powered dental practice SMS agent.\n"
-        "Analyze this screenshot of an SMS conversation and answer:\n"
-        "1. What is the issue or unexpected behavior shown?\n"
-        "2. Is this likely a reproducible bug or a one-off edge case?\n"
-        "3. What specific test scenario (patient message sequence) would reproduce this?\n"
-        "4. What should the AI have responded instead?\n"
-        f"5. Severity: Critical / High / Medium / Low{context_block}\n\n"
-        "Be concise and specific."
-    )
-    resp = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": prompt},
-                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}", "detail": "high"}},
-            ],
-        }],
-        max_tokens=600,
-    )
-    return resp.choices[0].message.content.strip()
-
-
-def generate_test_scenarios(instruction: str, openai_key: str, n: int = 5) -> list[dict]:
-    """Generate N test scenarios from a free-text instruction using GPT-4o-mini."""
-    from openai import OpenAI
-    client = OpenAI(api_key=openai_key)
-    prompt = (
-        f"You are creating test cases for a dental practice AI SMS receptionist agent.\n"
-        f"Instruction / requirement to test: {instruction}\n\n"
-        f"Generate {n} distinct test conversations (patient message sequences) that test this requirement.\n"
-        "Each conversation should have 4-6 patient messages simulating a realistic SMS exchange.\n"
-        "Return ONLY valid JSON — a list of objects:\n"
-        '[{"name": "Test name", "messages": ["msg1", "msg2", ...]}, ...]'
-    )
-    resp = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=1500,
-        temperature=0.7,
-        response_format={"type": "json_object"},
-    )
-    raw = resp.choices[0].message.content.strip()
-    parsed = json.loads(raw)
-    # Handle both {"scenarios": [...]} and direct list
-    if isinstance(parsed, list):
-        return parsed
-    for v in parsed.values():
-        if isinstance(v, list):
-            return v
-    return []
-
+# ── Session state init ────────────────────────────────────────────────────────
+if "results" not in st.session_state:
+    st.session_state.results: list[SimResult] = []
+if "running" not in st.session_state:
+    st.session_state.running = False
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.title("⚙️ Configuration")
-    st.caption("Settings applied to all tabs")
+    st.title("🦷 ADIT SMS Tester")
+    st.divider()
+
+    host_label = st.selectbox("API Host", list(HOSTS.keys()))
+    api_base = HOSTS[host_label]
 
     bearer_token = st.text_input(
         "Bearer Token (API_ACCESS_TOKEN)",
+        value=os.environ.get("API_ACCESS_TOKEN", ""),
         type="password",
-        placeholder="Ask your team for API_ACCESS_TOKEN",
-        help="The API_ACCESS_TOKEN env var set on the RunPod server",
+        help="The API_ACCESS_TOKEN set on the fd-sms server",
     )
+
     agent_phone = st.text_input(
-        "Agent Phone Number",
-        value="+14122652546",
-        help="The AI Front Desk SMS number (E.164 format)",
+        "Agent Phone (E.164)",
+        value=os.environ.get("AGENT_PHONE", DEFAULT_AGENT_PHONE),
+        help="The practice/agent phone that resolves to Sofia",
     )
+
     openai_key = st.text_input(
         "OpenAI API Key",
+        value=os.environ.get("OPENAI_API_KEY", ""),
         type="password",
-        placeholder="sk-proj-...",
-        help="Required for LLM judge scoring and screenshot analysis",
-    )
-    use_judge = st.toggle(
-        "Enable LLM Judge (costs tokens)",
-        value=False,
-        help="Grade each conversation 0-100 with GPT-4o-mini",
+        help="Used for LLM judge scoring and screenshot analysis",
     )
 
-    st.divider()
-    if st.button("🔍 Test API Connection", use_container_width=True):
-        with st.spinner("Checking..."):
-            try:
-                r = httpx.get(f"{API_BASE}/health", timeout=5)
-                data = r.json()
-                st.success(f"✅ API reachable — env: **{data.get('env', '?')}**")
-            except Exception as e:
-                st.error(f"❌ {e}")
+    use_llm_judge = st.toggle("LLM Judge (GPT-4o-mini)", value=True)
 
     st.divider()
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("Total Runs", len(st.session_state.results))
-    with col2:
-        successes = sum(1 for r in st.session_state.results if r["status"] == "success")
-        pct = round(successes / len(st.session_state.results) * 100) if st.session_state.results else 0
-        st.metric("Pass Rate", f"{pct}%")
+    st.caption(f"Agent: **Sofia** · Elegant Dental")
+    st.caption(f"Phone: `{agent_phone}`")
+    st.caption(f"Host: `{api_base}`")
 
-    if st.button("🗑️ Clear Results", use_container_width=True):
-        st.session_state.results = []
-        st.rerun()
+# ── Helpers ───────────────────────────────────────────────────────────────────
+def _phone() -> str:
+    return "+1555" + "".join(random.choices(string.digits, k=7))
 
+def _headers(token: str) -> dict:
+    return {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
 
-# ── Main Tabs ─────────────────────────────────────────────────────────────────
-tab_sim, tab_screenshot, tab_instruct, tab_dash = st.tabs([
+def _call_agent(
+    api_base: str,
+    token: str,
+    message: str,
+    patient_phone: str,
+    agent_phone: str,
+    chat_id: Optional[str] = None,
+    end_conversation: bool = False,
+    timeout: int = 45,
+) -> dict:
+    payload: dict[str, Any] = {
+        "message": message,
+        "patient_phone_number": patient_phone,
+        "agent_phone_number": agent_phone,
+        "end_conversation": end_conversation,
+    }
+    if chat_id:
+        payload["chat_id"] = chat_id
+
+    r = httpx.post(
+        f"{api_base}/engage/forward-to-agent",
+        headers=_headers(token),
+        json=payload,
+        timeout=timeout,
+    )
+    r.raise_for_status()
+    return r.json()
+
+def _llm_judge(scenario: str, turns: list[Turn], oai_key: str) -> tuple[int, str]:
+    """Score 0-100 + reason using GPT-4o-mini."""
+    if not oai_key:
+        return 70, "No OpenAI key – default score"
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=oai_key)
+        transcript = "\n".join(
+            f"[{t.role.upper()}] {t.message}" for t in turns
+        )
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a quality evaluator for a dental front-desk AI SMS agent called Sofia. "
+                        "Score the conversation 0-100 where 100=perfect. "
+                        "Evaluate: correct intent handling, professional tone, booking completion, "
+                        "no hallucinations. Reply with JSON only: {\"score\": <int>, \"reason\": \"<string>\"}"
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": f"Scenario: {scenario}\n\nTranscript:\n{transcript}",
+                },
+            ],
+            max_tokens=150,
+            temperature=0,
+        )
+        data = json.loads(resp.choices[0].message.content)
+        return int(data["score"]), data["reason"]
+    except Exception as e:
+        return 50, f"Judge error: {e}"
+
+def run_simulation(
+    scenario_name: str,
+    messages: list[str],
+    api_base: str,
+    token: str,
+    agent_phone: str,
+    use_judge: bool,
+    oai_key: str,
+) -> SimResult:
+    patient_phone = _phone()
+    result = SimResult(scenario=scenario_name, patient_phone=patient_phone)
+    chat_id: Optional[str] = None
+    start = time.time()
+
+    try:
+        for i, msg in enumerate(messages):
+            is_last = i == len(messages) - 1
+            t0 = time.time()
+            resp = _call_agent(
+                api_base, token, msg, patient_phone, agent_phone,
+                chat_id=chat_id,
+                end_conversation=is_last,
+            )
+            latency = int((time.time() - t0) * 1000)
+            data = resp.get("data", {})
+            chat_id = data.get("chat_id") or chat_id
+
+            result.turns.append(Turn("patient", msg))
+            agent_resp = data.get("agent_response", "")
+            if agent_resp:
+                result.turns.append(Turn("agent", agent_resp, latency_ms=latency))
+
+        result.total_ms = int((time.time() - start) * 1000)
+        result.chat_id = chat_id or ""
+
+        if use_judge and oai_key:
+            result.score, reason = _llm_judge(scenario_name, result.turns, oai_key)
+        else:
+            result.score = 75
+
+        result.passed = result.score >= 60 and len(result.turns) >= 2
+        if not result.passed:
+            result.failure_reason = "Low score or empty response"
+
+    except httpx.HTTPStatusError as e:
+        result.failure_reason = f"HTTP {e.response.status_code}: {e.response.text[:200]}"
+        result.score = 0
+    except Exception as e:
+        result.failure_reason = str(e)[:200]
+        result.score = 0
+
+    return result
+
+def analyze_screenshot(img_b64: str, bug_desc: str, oai_key: str) -> str:
+    if not oai_key:
+        return "⚠️ No OpenAI key configured."
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=oai_key)
+        resp = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                f"You are a QA engineer reviewing the ADIT dental SMS agent (Sofia). "
+                                f"The reported bug is: '{bug_desc}'. "
+                                "Analyze this screenshot and determine: "
+                                "1) Is this bug visible/reproducible here? "
+                                "2) What exactly is wrong? "
+                                "3) What is the likely root cause? "
+                                "4) Suggested fix? "
+                                "Be concise and specific."
+                            ),
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/png;base64,{img_b64}"},
+                        },
+                    ],
+                }
+            ],
+            max_tokens=500,
+        )
+        return resp.choices[0].message.content
+    except Exception as e:
+        return f"❌ Analysis failed: {e}"
+
+def generate_test_scenarios(instruction: str, oai_key: str) -> list[dict]:
+    if not oai_key:
+        return []
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=oai_key)
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You generate SMS test scenarios for a dental AI agent called Sofia at Elegant Dental. "
+                        "Given a test instruction, output a JSON array of scenarios. "
+                        "Each scenario: {\"name\": str, \"messages\": [str, str, ...]} "
+                        "Messages are what the PATIENT sends (2-6 messages). "
+                        "Generate 3-5 scenarios covering edge cases. Output only valid JSON."
+                    ),
+                },
+                {"role": "user", "content": instruction},
+            ],
+            max_tokens=1000,
+            temperature=0.7,
+        )
+        raw = resp.choices[0].message.content.strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        return json.loads(raw)
+    except Exception as e:
+        st.error(f"Scenario generation failed: {e}")
+        return []
+
+# ── Tabs ──────────────────────────────────────────────────────────────────────
+tab_sim, tab_ss, tab_instr, tab_dash = st.tabs([
     "🚀 Parallel Simulations",
     "📸 Screenshot Analysis",
     "📋 Instruction Tests",
     "📊 Dashboard",
 ])
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# TAB 1 — Parallel Simulations
-# ══════════════════════════════════════════════════════════════════════════════
+# ── Tab 1: Parallel Simulations ───────────────────────────────────────────────
 with tab_sim:
     st.header("🚀 Parallel Simulations")
-    st.caption("Run up to 20 scenarios at once against the live AI agent")
 
-    col_left, col_right = st.columns([1, 1])
-
-    with col_left:
-        selected_scenarios = st.multiselect(
-            "Select preset scenarios to run",
-            options=list(PRESET_SCENARIOS.keys()),
-            default=list(PRESET_SCENARIOS.keys())[:3],
-            help="Each selected scenario will count as one run",
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        selected = st.multiselect(
+            "Select scenarios to run",
+            list(PRESET_SCENARIOS.keys()),
+            default=list(PRESET_SCENARIOS.keys())[:5],
         )
+    with col2:
+        n_parallel = st.slider("Parallel workers", 1, MAX_PARALLEL, 5)
+        runs_per = st.number_input("Runs per scenario", 1, 5, 1)
 
-    with col_right:
-        repeat_count = st.number_input(
-            "Repeat each scenario N times",
-            min_value=1,
-            max_value=MAX_PARALLEL,
-            value=1,
-            help=f"Total runs = scenarios × repeats (max {MAX_PARALLEL})",
+    custom_expander = st.expander("➕ Add custom scenario")
+    with custom_expander:
+        custom_name = st.text_input("Scenario name", placeholder="e.g. Angry patient")
+        custom_msgs_raw = st.text_area(
+            "Patient messages (one per line)",
+            placeholder="Hi I need help\nI've been waiting 3 weeks\nThis is unacceptable",
         )
-
-    # Build final job list
-    jobs: list[tuple[str, list[str]]] = []
-    for s in selected_scenarios:
-        for _ in range(repeat_count):
-            jobs.append((s, PRESET_SCENARIOS[s]))
-
-    total_jobs = len(jobs)
-    if total_jobs > MAX_PARALLEL:
-        st.warning(f"⚠️ {total_jobs} runs requested but capped at {MAX_PARALLEL}. Trimming.")
-        jobs = jobs[:MAX_PARALLEL]
-        total_jobs = MAX_PARALLEL
-
-    st.info(f"**{total_jobs}** run(s) queued — {min(total_jobs, MAX_PARALLEL)} will execute in parallel")
 
     run_btn = st.button(
-        f"▶️ Run {total_jobs} Simulation(s)",
-        disabled=st.session_state.running or not bearer_token or not jobs,
+        "▶ Run Simulations",
+        type="primary",
+        disabled=st.session_state.running,
         use_container_width=True,
-        type="primary",
     )
 
-    if not bearer_token:
-        st.warning("⚠️ Enter your Bearer Token in the sidebar to enable runs")
-
-    if run_btn and jobs and bearer_token:
-        st.session_state.running = True
-        progress_bar = st.progress(0, text="Starting simulations…")
-        results_placeholder = st.empty()
-        completed = 0
-        batch_results = []
-
-        with ThreadPoolExecutor(max_workers=MAX_PARALLEL) as pool:
-            futures = {
-                pool.submit(
-                    run_simulation,
-                    scenario_name=name,
-                    messages=msgs,
-                    agent_phone=agent_phone,
-                    bearer_token=bearer_token,
-                    openai_key=openai_key,
-                    use_llm_judge=use_judge,
-                    run_id=f"run-{st.session_state.run_counter + i + 1}",
-                ): (name, i)
-                for i, (name, msgs) in enumerate(jobs)
-            }
-
-            for future in as_completed(futures):
-                completed += 1
-                result = future.result()
-                batch_results.append(result.to_dict())
-                st.session_state.run_counter += 1
-                pct = completed / total_jobs
-                status_icon = "✅" if result.status == "success" else "❌"
-                progress_bar.progress(
-                    pct,
-                    text=f"{status_icon} {completed}/{total_jobs} — last: {result.scenario[:40]}",
-                )
-
-        # Persist to session state
-        st.session_state.results.extend(batch_results)
-        st.session_state.running = False
-
-        # Summary
-        success_count = sum(1 for r in batch_results if r["status"] == "success")
-        progress_bar.empty()
-        if success_count == total_jobs:
-            st.success(f"✅ All {total_jobs} simulations passed!")
+    if run_btn:
+        if not bearer_token:
+            st.error("⚠️ Enter the Bearer Token in the sidebar first.")
+        elif not selected and not (custom_name and custom_msgs_raw):
+            st.error("⚠️ Select at least one scenario.")
         else:
-            st.warning(f"⚠️ {success_count}/{total_jobs} passed — {total_jobs - success_count} failed")
+            # Build job list
+            jobs: list[tuple[str, list[str]]] = []
+            for name in selected:
+                for _ in range(int(runs_per)):
+                    jobs.append((name, PRESET_SCENARIOS[name]))
+            if custom_name and custom_msgs_raw:
+                msgs = [m.strip() for m in custom_msgs_raw.strip().splitlines() if m.strip()]
+                for _ in range(int(runs_per)):
+                    jobs.append((custom_name, msgs))
 
-        # Show this batch's results
-        st.subheader("This batch results")
-        for r in batch_results:
-            status_color = "🟢" if r["status"] == "success" else "🔴"
-            with st.expander(
-                f"{status_color} {r['scenario']} | {r['duration_s']}s | "
-                f"avg {r['avg_latency_ms']}ms"
-                + (f" | score: {r['score']}/100" if r.get('score') is not None else ""),
-                expanded=r["status"] != "success",
-            ):
-                if r.get("error"):
-                    st.error(r["error"])
-                for turn in r.get("turns", []):
-                    st.markdown(f"**Turn {turn['turn']}** _{turn['latency_ms']}ms_")
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        st.info(f"👤 **Patient:** {turn['user_msg']}")
-                    with c2:
-                        st.success(f"🤖 **AI:** {turn['ai_response']}")
+            st.session_state.running = True
+            st.session_state.results = []
 
+            progress = st.progress(0, text=f"Running {len(jobs)} simulations…")
+            results_container = st.container()
 
-# ══════════════════════════════════════════════════════════════════════════════
-# TAB 2 — Screenshot Analysis
-# ══════════════════════════════════════════════════════════════════════════════
-with tab_screenshot:
+            with ThreadPoolExecutor(max_workers=n_parallel) as ex:
+                futures = {
+                    ex.submit(
+                        run_simulation,
+                        name, msgs, api_base, bearer_token,
+                        agent_phone, use_llm_judge, openai_key,
+                    ): (name, msgs)
+                    for name, msgs in jobs
+                }
+                done = 0
+                for fut in as_completed(futures):
+                    done += 1
+                    res = fut.result()
+                    st.session_state.results.append(res)
+                    progress.progress(done / len(jobs), text=f"Completed {done}/{len(jobs)}")
+
+                    icon = "✅" if res.passed else "❌"
+                    with results_container:
+                        with st.expander(
+                            f"{icon} {res.scenario} · Score: {res.score}/100 · {res.total_ms}ms",
+                            expanded=not res.passed,
+                        ):
+                            if res.failure_reason:
+                                st.error(res.failure_reason)
+                            for t in res.turns:
+                                if t.role == "patient":
+                                    st.markdown(f"**👤 Patient:** {t.message}")
+                                else:
+                                    st.markdown(f"**🤖 Sofia:** {t.message}")
+                                    if t.latency_ms:
+                                        st.caption(f"↳ {t.latency_ms}ms")
+                            if res.chat_id:
+                                st.caption(f"chat_id: `{res.chat_id}`")
+
+            progress.empty()
+            st.session_state.running = False
+
+            total = len(st.session_state.results)
+            passed = sum(1 for r in st.session_state.results if r.passed)
+            avg_score = sum(r.score for r in st.session_state.results) / total if total else 0
+            avg_ms = sum(r.total_ms for r in st.session_state.results) / total if total else 0
+
+            st.divider()
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Total Runs", total)
+            m2.metric("Pass Rate", f"{passed/total*100:.0f}%" if total else "—")
+            m3.metric("Avg Score", f"{avg_score:.0f}/100")
+            m4.metric("Avg Latency", f"{avg_ms/1000:.1f}s")
+
+# ── Tab 2: Screenshot Analysis ────────────────────────────────────────────────
+with tab_ss:
     st.header("📸 Screenshot Analysis")
-    st.caption("Upload a chat screenshot → AI identifies the issue and suggests a test scenario")
+    st.write("Upload a screenshot of a bug in Sofia's responses and get a GPT-4o Vision analysis.")
 
-    if not openai_key:
-        st.warning("⚠️ OpenAI API Key required (set in sidebar)")
-
-    uploaded = st.file_uploader(
-        "Upload SMS conversation screenshot",
-        type=["png", "jpg", "jpeg", "webp"],
-        help="Screenshot of the patient ↔ AI SMS conversation showing the problematic behaviour",
+    bug_desc = st.text_area(
+        "Describe the bug you're investigating",
+        placeholder="e.g. Sofia is confirming a booking but the patient never gave their name or DOB",
     )
-    extra_context = st.text_area(
-        "Additional context (optional)",
-        placeholder="e.g. 'This happened when patient tried to book after hours' or paste the conversation text",
-        height=80,
-    )
+    uploaded = st.file_uploader("Upload screenshot", type=["png", "jpg", "jpeg", "webp"])
 
-    col_a, col_b = st.columns([1, 3])
-    analyze_btn = col_a.button(
-        "🔍 Analyse Screenshot",
-        disabled=not uploaded or not openai_key,
-        type="primary",
-    )
+    if st.button("🔍 Analyse Screenshot", type="primary"):
+        if not openai_key:
+            st.error("⚠️ OpenAI key required.")
+        elif not uploaded:
+            st.error("⚠️ Please upload a screenshot.")
+        elif not bug_desc.strip():
+            st.error("⚠️ Please describe the bug.")
+        else:
+            with st.spinner("Analysing with GPT-4o Vision…"):
+                img_b64 = base64.b64encode(uploaded.read()).decode()
+                analysis = analyze_screenshot(img_b64, bug_desc, openai_key)
+            st.divider()
+            st.subheader("Analysis")
+            st.markdown(analysis)
 
-    if uploaded:
-        st.image(uploaded, caption="Uploaded screenshot", use_column_width=False, width=400)
-
-    if analyze_btn and uploaded and openai_key:
-        with st.spinner("Analysing with GPT-4o Vision…"):
-            try:
-                analysis = analyze_screenshot(uploaded.read(), openai_key, extra_context)
-                st.subheader("Analysis")
-                st.markdown(analysis)
-
-                # Offer to run a simulation based on identified scenario
-                st.divider()
-                st.subheader("Run a test based on this analysis")
-                st.caption("Generate a test scenario from the analysis and run it now")
-                if st.button("🤖 Generate & Run Reproducer Test", disabled=not bearer_token):
-                    with st.spinner("Generating test scenario…"):
-                        scenarios = generate_test_scenarios(
-                            f"Reproduce this issue: {analysis[:500]}",
-                            openai_key,
-                            n=1,
-                        )
-                    if scenarios:
-                        s = scenarios[0]
-                        st.info(f"Running: **{s['name']}** ({len(s['messages'])} turns)")
-                        with st.spinner("Running simulation…"):
-                            result = run_simulation(
-                                scenario_name=s["name"],
-                                messages=s["messages"],
-                                agent_phone=agent_phone,
-                                bearer_token=bearer_token,
-                                openai_key=openai_key,
-                                use_llm_judge=use_judge,
-                                run_id=f"screenshot-{int(time.time())}",
-                            )
-                        st.session_state.results.append(result.to_dict())
-                        status = "✅ PASS" if result.status == "success" else "❌ FAIL"
-                        st.markdown(f"**Result:** {status} | {result.duration_s}s")
-                        for turn in result.turns:
-                            c1, c2 = st.columns(2)
-                            with c1:
-                                st.info(f"👤 {turn.user_msg}")
-                            with c2:
-                                st.success(f"🤖 {turn.ai_response}")
-                        if result.error:
-                            st.error(result.error)
-            except Exception as e:
-                st.error(f"Analysis failed: {e}")
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# TAB 3 — Instruction Tests
-# ══════════════════════════════════════════════════════════════════════════════
-with tab_instruct:
+# ── Tab 3: Instruction Tests ──────────────────────────────────────────────────
+with tab_instr:
     st.header("📋 Instruction-Based Tests")
-    st.caption(
-        "Describe a behaviour or requirement → AI generates test scenarios → runs them all in parallel"
-    )
-
-    if not openai_key:
-        st.warning("⚠️ OpenAI API Key required (set in sidebar)")
-    if not bearer_token:
-        st.warning("⚠️ Bearer Token required (set in sidebar)")
+    st.write("Describe what you want to test in plain English and GPT-4o-mini will generate and run the scenarios.")
 
     instruction = st.text_area(
-        "Test instruction / requirement",
+        "Test instruction",
         placeholder=(
-            "Examples:\n"
-            "• The AI should politely refuse to book for patients under 18 without guardian consent\n"
-            "• Test that the AI correctly handles cancellation requests within the cancellation window\n"
-            "• Verify the AI asks for DOB before looking up an existing patient\n"
-            "• Test how the AI responds to angry or frustrated patients"
+            "e.g. Test edge cases where a patient tries to book outside business hours, "
+            "gives incomplete information, or asks about multiple services at once"
         ),
-        height=130,
+        height=120,
     )
 
-    col1, col2 = st.columns([1, 2])
-    n_tests = col1.slider("Number of test scenarios to generate", 1, 10, 5)
-    run_instruct_btn = col2.button(
-        f"🧪 Generate & Run {n_tests} Tests",
-        disabled=not instruction or not openai_key or not bearer_token,
-        type="primary",
-        use_container_width=True,
-    )
+    col_gen, col_run = st.columns([1, 1])
 
-    if run_instruct_btn and instruction and openai_key and bearer_token:
-        with st.spinner(f"Generating {n_tests} test scenarios with GPT-4o-mini…"):
-            try:
-                scenarios = generate_test_scenarios(instruction, openai_key, n=n_tests)
-            except Exception as e:
-                st.error(f"Scenario generation failed: {e}")
-                scenarios = []
-
-        if not scenarios:
-            st.warning("No scenarios generated. Try rephrasing your instruction.")
+    if col_gen.button("⚙️ Generate Scenarios", use_container_width=True):
+        if not openai_key:
+            st.error("⚠️ OpenAI key required.")
+        elif not instruction.strip():
+            st.error("⚠️ Enter an instruction.")
         else:
-            st.success(f"Generated {len(scenarios)} scenario(s) — running in parallel…")
+            with st.spinner("Generating with GPT-4o-mini…"):
+                scenarios = generate_test_scenarios(instruction, openai_key)
+            if scenarios:
+                st.session_state["gen_scenarios"] = scenarios
+                st.success(f"Generated {len(scenarios)} scenarios")
+                for s in scenarios:
+                    with st.expander(s["name"]):
+                        for m in s["messages"]:
+                            st.markdown(f"• {m}")
 
-            # Show generated scenarios
-            with st.expander("📋 Generated scenarios", expanded=False):
-                for i, s in enumerate(scenarios, 1):
-                    st.markdown(f"**{i}. {s.get('name', 'Unnamed')}**")
-                    for j, msg in enumerate(s.get("messages", []), 1):
-                        st.caption(f"  Turn {j}: {msg}")
-
-            progress_bar = st.progress(0, text="Running tests…")
-            completed = 0
-            batch_results = []
-
-            jobs_instruct = [
-                (s.get("name", f"Test {i}"), s.get("messages", []))
-                for i, s in enumerate(scenarios, 1)
-                if s.get("messages")
-            ]
-
-            with ThreadPoolExecutor(max_workers=min(len(jobs_instruct), MAX_PARALLEL)) as pool:
-                futures = {
-                    pool.submit(
+    gen = st.session_state.get("gen_scenarios", [])
+    if gen and col_run.button("▶ Run Generated Tests", type="primary", use_container_width=True):
+        if not bearer_token:
+            st.error("⚠️ Enter the Bearer Token in the sidebar.")
+        else:
+            progress2 = st.progress(0, text="Running generated tests…")
+            gen_results = []
+            with ThreadPoolExecutor(max_workers=min(len(gen), 10)) as ex:
+                futures2 = {
+                    ex.submit(
                         run_simulation,
-                        scenario_name=name,
-                        messages=msgs,
-                        agent_phone=agent_phone,
-                        bearer_token=bearer_token,
-                        openai_key=openai_key,
-                        use_llm_judge=use_judge,
-                        run_id=f"instruct-{int(time.time())}-{i}",
-                    ): name
-                    for i, (name, msgs) in enumerate(jobs_instruct)
+                        s["name"], s["messages"], api_base, bearer_token,
+                        agent_phone, use_llm_judge, openai_key,
+                    ): s
+                    for s in gen
                 }
+                done2 = 0
+                for fut2 in as_completed(futures2):
+                    done2 += 1
+                    res2 = fut2.result()
+                    gen_results.append(res2)
+                    st.session_state.results.append(res2)
+                    progress2.progress(done2 / len(gen))
+                    icon = "✅" if res2.passed else "❌"
+                    with st.expander(f"{icon} {res2.scenario} · {res2.score}/100", expanded=False):
+                        for t in res2.turns:
+                            label = "**👤 Patient:**" if t.role == "patient" else "**🤖 Sofia:**"
+                            st.markdown(f"{label} {t.message}")
+                        if res2.failure_reason:
+                            st.error(res2.failure_reason)
+            progress2.empty()
+            passed2 = sum(1 for r in gen_results if r.passed)
+            st.success(f"Done: {passed2}/{len(gen_results)} passed")
 
-                for future in as_completed(futures):
-                    completed += 1
-                    result = future.result()
-                    batch_results.append(result.to_dict())
-                    st.session_state.results.extend([result.to_dict()])
-                    progress_bar.progress(
-                        completed / len(jobs_instruct),
-                        text=f"{'✅' if result.status == 'success' else '❌'} {completed}/{len(jobs_instruct)}",
-                    )
-
-            progress_bar.empty()
-            passed = sum(1 for r in batch_results if r["status"] == "success")
-            st.metric("Results", f"{passed}/{len(batch_results)} passed")
-
-            for r in batch_results:
-                icon = "🟢" if r["status"] == "success" else "🔴"
-                with st.expander(
-                    f"{icon} {r['scenario']}"
-                    + (f" — score: {r['score']}/100" if r.get("score") is not None else ""),
-                    expanded=r["status"] != "success",
-                ):
-                    if r.get("error"):
-                        st.error(r["error"])
-                    for turn in r.get("turns", []):
-                        c1, c2 = st.columns(2)
-                        with c1:
-                            st.info(f"👤 {turn['user_msg']}")
-                        with c2:
-                            st.success(f"🤖 {turn['ai_response']}")
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# TAB 4 — Dashboard
-# ══════════════════════════════════════════════════════════════════════════════
+# ── Tab 4: Dashboard ──────────────────────────────────────────────────────────
 with tab_dash:
-    st.header("📊 Performance Dashboard")
+    st.header("📊 Dashboard")
 
     results = st.session_state.results
-
     if not results:
         st.info("No results yet — run some simulations first.")
     else:
-        # Summary metrics
         total = len(results)
-        passed = sum(1 for r in results if r["status"] == "success")
+        passed = sum(1 for r in results if r.passed)
         failed = total - passed
-        avg_dur = round(sum(r.get("duration_s", 0) for r in results) / total, 2)
-        avg_lat = round(
-            sum(r.get("avg_latency_ms", 0) for r in results if r.get("avg_latency_ms")) / max(passed, 1)
-        )
-        scores = [r["score"] for r in results if r.get("score") is not None]
-        avg_score = round(sum(scores) / len(scores)) if scores else None
+        avg_score = sum(r.score for r in results) / total
+        avg_ms = sum(r.total_ms for r in results) / total
 
-        m1, m2, m3, m4, m5 = st.columns(5)
-        m1.metric("Total Runs", total)
-        m2.metric("✅ Passed", passed)
-        m3.metric("❌ Failed", failed)
-        m4.metric("Avg Duration", f"{avg_dur}s")
-        m5.metric("Avg Latency", f"{avg_lat}ms")
-
-        if avg_score is not None:
-            st.metric("Avg AI Score", f"{avg_score}/100")
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("Total Runs", total)
+        c2.metric("✅ Passed", passed)
+        c3.metric("❌ Failed", failed)
+        c4.metric("Avg Score", f"{avg_score:.0f}/100")
+        c5.metric("Avg Latency", f"{avg_ms/1000:.1f}s")
 
         st.divider()
 
-        # Results table
-        import pandas as pd
+        # Score by scenario
+        df = pd.DataFrame([
+            {
+                "Scenario": r.scenario,
+                "Passed": r.passed,
+                "Score": r.score,
+                "Latency (s)": round(r.total_ms / 1000, 2),
+                "Turns": len(r.turns),
+                "Failure": r.failure_reason or "—",
+                "chat_id": r.chat_id,
+            }
+            for r in results
+        ])
 
-        rows = []
-        for r in reversed(results):
-            turn_count = len(r.get("turns", []))
-            rows.append({
-                "Run ID": r.get("run_id", "—"),
-                "Scenario": r["scenario"],
-                "Status": "✅ Pass" if r["status"] == "success" else "❌ Fail",
-                "Turns": turn_count,
-                "Duration (s)": r.get("duration_s", "—"),
-                "Avg Latency (ms)": r.get("avg_latency_ms", "—"),
-                "Score": r.get("score", "—"),
-                "Timestamp": r.get("timestamp", "—")[:19].replace("T", " "),
-                "Error": (r.get("error") or "")[:80],
-            })
-
-        df = pd.DataFrame(rows)
-        st.dataframe(df, use_container_width=True, height=400)
-
-        # Pass rate by scenario
-        st.subheader("Pass Rate by Scenario")
-        scenario_stats: dict[str, dict] = {}
-        for r in results:
-            s = r["scenario"]
-            if s not in scenario_stats:
-                scenario_stats[s] = {"total": 0, "pass": 0, "latencies": []}
-            scenario_stats[s]["total"] += 1
-            if r["status"] == "success":
-                scenario_stats[s]["pass"] += 1
-            if r.get("avg_latency_ms"):
-                scenario_stats[s]["latencies"].append(r["avg_latency_ms"])
-
-        stat_rows = []
-        for s, v in scenario_stats.items():
-            pass_rate = round(v["pass"] / v["total"] * 100)
-            avg_l = round(sum(v["latencies"]) / len(v["latencies"])) if v["latencies"] else "—"
-            stat_rows.append({
-                "Scenario": s,
-                "Runs": v["total"],
-                "Pass Rate": f"{pass_rate}%",
-                "Avg Latency (ms)": avg_l,
-            })
-        st.dataframe(pd.DataFrame(stat_rows), use_container_width=True)
-
-        # Full conversation browser
-        st.subheader("Conversation Browser")
-        filter_status = st.radio("Filter by status", ["All", "Pass", "Fail"], horizontal=True)
-        filtered = [
-            r for r in reversed(results)
-            if filter_status == "All"
-            or (filter_status == "Pass" and r["status"] == "success")
-            or (filter_status == "Fail" and r["status"] != "success")
-        ]
-
-        for r in filtered[:20]:  # show latest 20
-            icon = "🟢" if r["status"] == "success" else "🔴"
-            label = (
-                f"{icon} {r['scenario']} | {r.get('duration_s')}s"
-                + (f" | score {r['score']}/100" if r.get("score") is not None else "")
-                + f" | {r.get('timestamp', '')[:19].replace('T', ' ')}"
+        st.subheader("Results by Scenario")
+        scenario_summary = (
+            df.groupby("Scenario")
+            .agg(
+                Runs=("Score", "count"),
+                Pass_Rate=("Passed", lambda x: f"{x.mean()*100:.0f}%"),
+                Avg_Score=("Score", lambda x: f"{x.mean():.0f}"),
+                Avg_Latency=("Latency (s)", lambda x: f"{x.mean():.1f}s"),
             )
-            with st.expander(label):
-                if r.get("error"):
-                    st.error(r["error"])
-                for turn in r.get("turns", []):
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        st.info(f"👤 **Turn {turn['turn']}:** {turn['user_msg']}")
-                    with c2:
-                        ai_text = turn["ai_response"] or "_(no response)_"
-                        st.success(f"🤖 {ai_text}")
-                        st.caption(f"⏱ {turn['latency_ms']}ms")
+            .reset_index()
+        )
+        st.dataframe(scenario_summary, use_container_width=True)
+
+        st.subheader("All Runs")
+        st.dataframe(df.drop(columns=["chat_id"]), use_container_width=True)
+
+        # Score distribution
+        st.subheader("Score Distribution")
+        bins = {"0-20": 0, "21-40": 0, "41-60": 0, "61-80": 0, "81-100": 0}
+        for r in results:
+            if r.score <= 20: bins["0-20"] += 1
+            elif r.score <= 40: bins["21-40"] += 1
+            elif r.score <= 60: bins["41-60"] += 1
+            elif r.score <= 80: bins["61-80"] += 1
+            else: bins["81-100"] += 1
+        st.bar_chart(pd.DataFrame.from_dict(bins, orient="index", columns=["Count"]))
+
+        # Failures
+        failures = [r for r in results if not r.passed]
+        if failures:
+            st.subheader("❌ Failure Analysis")
+            for r in failures:
+                with st.expander(f"{r.scenario} · Score {r.score}"):
+                    st.error(r.failure_reason)
+                    for t in r.turns:
+                        label = "**👤 Patient:**" if t.role == "patient" else "**🤖 Sofia:**"
+                        st.markdown(f"{label} {t.message}")
+
+        if st.button("🗑 Clear All Results"):
+            st.session_state.results = []
+            st.rerun()
 
         # Export
-        st.divider()
-        if st.button("📥 Export Results as JSON"):
-            st.download_button(
-                label="Download results.json",
-                data=json.dumps(results, indent=2),
-                file_name=f"retell_test_results_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json",
-                mime="application/json",
-            )
+        csv = df.to_csv(index=False)
+        st.download_button(
+            "⬇ Export CSV",
+            csv,
+            file_name=f"adit_sms_test_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            mime="text/csv",
+        )
