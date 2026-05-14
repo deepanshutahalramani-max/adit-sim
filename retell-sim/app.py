@@ -151,8 +151,8 @@ with st.sidebar:
 
     agent_phone = st.text_input(
         "Agent Phone (E.164)",
-        value=os.environ.get("AGENT_PHONE", DEFAULT_AGENT_PHONE),
-        help="The practice/agent phone that resolves to Sofia",
+        value=DEFAULT_AGENT_PHONE,
+        help="The practice/agent phone number",
     )
 
     openai_key = st.text_input(
