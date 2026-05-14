@@ -33,7 +33,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── Global CSS — ADIT brand (matches training.adit.com) ──────────────────────
+# ── Global CSS — clean ADIT style ─────────────────────────────────────────────
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
@@ -42,199 +42,137 @@ html, body, [class*="css"], .stApp {
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
 }
 
-/* Hide Streamlit chrome */
-#MainMenu { visibility: hidden; }
-footer { visibility: hidden; }
+/* ── Hide Streamlit chrome ───────────────────────────── */
+#MainMenu, footer, [data-testid="stToolbar"], [data-testid="stDecoration"] { display: none !important; }
 .stDeployButton { display: none !important; }
-[data-testid="stToolbar"] { display: none !important; }
-[data-testid="stDecoration"] { display: none !important; }
 
-/* ── White app background ────────────────────────────── */
-.stApp { background: #FFFFFF !important; }
-.block-container {
-    padding-top: 0 !important;
-    padding-bottom: 48px !important;
-    max-width: 1200px !important;
-}
+/* ── App background ──────────────────────────────────── */
+.stApp { background: #F9F9F9 !important; }
+.block-container { padding-top: 0 !important; padding-bottom: 48px !important; max-width: 1180px !important; }
 
-/* ── Sidebar — dark navy ─────────────────────────────── */
+/* ── Sidebar — clean light ───────────────────────────── */
 [data-testid="stSidebar"] {
-    background: #0C1626 !important;
-    border-right: 1px solid #182236 !important;
+    background: #FFFFFF !important;
+    border-right: 1px solid #EBEBEB !important;
 }
 [data-testid="stSidebar"] .stSelectbox label,
 [data-testid="stSidebar"] .stTextInput label,
 [data-testid="stSidebar"] .stToggle label,
 [data-testid="stSidebar"] .stNumberInput label {
-    color: #7A90B0 !important;
-    font-size: 10.5px !important;
+    color: #9CA3AF !important;
+    font-size: 10px !important;
     font-weight: 700 !important;
     text-transform: uppercase !important;
-    letter-spacing: 0.09em !important;
+    letter-spacing: 0.1em !important;
 }
 [data-testid="stSidebar"] .stTextInput input,
 [data-testid="stSidebar"] [data-baseweb="select"] > div {
-    background: #182236 !important;
-    border: 1px solid #243249 !important;
-    color: #E2E8F0 !important;
+    background: #F9F9F9 !important;
+    border: 1px solid #E5E7EB !important;
+    color: #111827 !important;
     border-radius: 6px !important;
     font-size: 13px !important;
 }
+[data-testid="stSidebar"] .stTextInput input:focus {
+    border-color: #F5820D !important;
+    box-shadow: 0 0 0 2px rgba(245,130,13,0.12) !important;
+}
 [data-testid="stSidebar"] p,
-[data-testid="stSidebar"] .stCaption,
-[data-testid="stSidebar"] small { color: #7A90B0 !important; }
+[data-testid="stSidebar"] .stCaption { color: #9CA3AF !important; font-size: 12px !important; }
 [data-testid="stSidebar"] code {
-    background: #182236 !important;
-    color: #F5820D !important;
-    border-radius: 4px !important;
-    padding: 1px 5px !important;
-    font-size: 11px !important;
+    background: #FFF7ED !important; color: #C2540A !important;
+    border-radius: 4px !important; padding: 1px 5px !important; font-size: 11px !important;
 }
-[data-testid="stSidebar"] hr { border-color: #182236 !important; margin: 14px 0 !important; }
-[data-testid="stSidebar"] .stToggle > label > div { background: #243249 !important; }
-[data-testid="stSidebar"] .stToggle > label > div[data-checked="true"] { background: #F5820D !important; }
+[data-testid="stSidebar"] hr { border-color: #F3F4F6 !important; margin: 14px 0 !important; }
 
-/* ── Primary button — ADIT orange ────────────────────── */
+/* ── Buttons ─────────────────────────────────────────── */
 .stButton > button[kind="primary"] {
-    background: #F5820D !important;
-    color: white !important;
-    border: none !important;
-    border-radius: 6px !important;
-    font-weight: 600 !important;
-    font-size: 13.5px !important;
-    padding: 10px 24px !important;
-    transition: background 0.15s ease !important;
-    letter-spacing: 0.01em !important;
+    background: #F5820D !important; color: white !important; border: none !important;
+    border-radius: 6px !important; font-weight: 600 !important; font-size: 13.5px !important;
+    padding: 10px 24px !important; transition: background 0.15s !important;
 }
-.stButton > button[kind="primary"]:hover {
-    background: #E0720A !important;
-}
+.stButton > button[kind="primary"]:hover { background: #D96D08 !important; }
 .stButton > button[kind="secondary"] {
-    background: white !important;
-    color: #F5820D !important;
-    border: 1.5px solid #F5820D !important;
-    border-radius: 6px !important;
-    font-weight: 600 !important;
-    font-size: 13.5px !important;
+    background: white !important; color: #F5820D !important;
+    border: 1.5px solid #F5820D !important; border-radius: 6px !important;
+    font-weight: 600 !important; font-size: 13.5px !important;
 }
-.stButton > button[kind="secondary"]:hover {
-    background: #FFF7ED !important;
-}
+.stButton > button[kind="secondary"]:hover { background: #FFF7ED !important; }
 
-/* ── Tabs — matches ADIT nav style ───────────────────── */
+/* ── Tabs — underline style ──────────────────────────── */
 .stTabs [data-baseweb="tab-list"] {
-    background: transparent !important;
-    border-bottom: 2px solid #F0F0F0 !important;
-    border-radius: 0 !important;
-    padding: 0 !important;
-    gap: 0 !important;
-    margin-bottom: 28px !important;
-    box-shadow: none !important;
+    background: transparent !important; border-bottom: 1px solid #E5E7EB !important;
+    border-radius: 0 !important; padding: 0 !important; gap: 0 !important;
+    margin-bottom: 28px !important; box-shadow: none !important;
 }
 .stTabs [data-baseweb="tab"] {
-    border-radius: 0 !important;
-    font-weight: 500 !important;
-    font-size: 14px !important;
-    color: #6B7280 !important;
-    padding: 10px 20px !important;
-    background: transparent !important;
-    border: none !important;
-    border-bottom: 2px solid transparent !important;
-    margin-bottom: -2px !important;
+    border-radius: 0 !important; font-weight: 500 !important; font-size: 14px !important;
+    color: #6B7280 !important; padding: 10px 22px !important; background: transparent !important;
+    border: none !important; border-bottom: 2px solid transparent !important; margin-bottom: -1px !important;
 }
 .stTabs [aria-selected="true"] {
-    color: #0C1626 !important;
-    font-weight: 600 !important;
-    background: transparent !important;
-    border-bottom: 2px solid #F5820D !important;
+    color: #111827 !important; font-weight: 600 !important;
+    background: transparent !important; border-bottom: 2px solid #F5820D !important;
     box-shadow: none !important;
 }
 
-/* ── Metric / stat cards — orange border like training.adit.com ── */
+/* ── Metric / stat cards ─────────────────────────────── */
 [data-testid="stMetric"] {
-    background: white !important;
-    border-radius: 6px !important;
-    padding: 18px 20px !important;
-    border: 1px solid #F5820D !important;
+    background: white !important; border-radius: 6px !important;
+    padding: 18px 20px !important; border: 1px solid #F5820D !important;
 }
 [data-testid="stMetricLabel"] > div {
-    font-size: 10.5px !important;
-    font-weight: 700 !important;
-    text-transform: uppercase !important;
-    letter-spacing: 0.08em !important;
-    color: #6B7280 !important;
+    font-size: 10px !important; font-weight: 700 !important; text-transform: uppercase !important;
+    letter-spacing: 0.1em !important; color: #9CA3AF !important;
 }
 [data-testid="stMetricValue"] > div {
-    font-size: 28px !important;
-    font-weight: 700 !important;
-    color: #0C1626 !important;
-    letter-spacing: -0.5px !important;
-    margin-top: 4px !important;
+    font-size: 28px !important; font-weight: 700 !important;
+    color: #111827 !important; letter-spacing: -0.5px !important; margin-top: 4px !important;
 }
 [data-testid="stMetricDelta"] { display: none !important; }
 
 /* ── Expander / result cards ─────────────────────────── */
 .stExpander {
-    background: white !important;
-    border: 1px solid #F5820D !important;
-    border-radius: 6px !important;
-    margin-bottom: 10px !important;
-    overflow: hidden !important;
+    background: white !important; border: 1px solid #E5E7EB !important;
+    border-radius: 6px !important; margin-bottom: 8px !important; overflow: hidden !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04) !important;
 }
+details[open].stExpander { border-left: 3px solid #F5820D !important; }
 .stExpander summary {
-    font-weight: 600 !important;
-    font-size: 13.5px !important;
-    color: #0C1626 !important;
-    padding: 14px 18px !important;
+    font-weight: 600 !important; font-size: 13.5px !important;
+    color: #111827 !important; padding: 13px 18px !important;
+    background: white !important;
 }
 
 /* ── Inputs ─────────────────────────────────────────── */
 .stTextInput input, .stTextArea textarea, .stNumberInput input {
-    border-radius: 6px !important;
-    border: 1px solid #D1D5DB !important;
-    font-size: 13.5px !important;
-    background: white !important;
-    color: #0C1626 !important;
-    transition: border-color 0.15s !important;
+    border-radius: 6px !important; border: 1px solid #E5E7EB !important;
+    font-size: 13.5px !important; background: white !important;
+    color: #111827 !important; transition: border-color 0.15s !important;
 }
 .stTextInput input:focus, .stTextArea textarea:focus, .stNumberInput input:focus {
-    border-color: #F5820D !important;
-    box-shadow: 0 0 0 3px rgba(245,130,13,0.12) !important;
+    border-color: #F5820D !important; box-shadow: 0 0 0 3px rgba(245,130,13,0.1) !important;
 }
 [data-baseweb="select"] > div {
-    border-radius: 6px !important;
-    border: 1px solid #D1D5DB !important;
-    background: white !important;
+    border-radius: 6px !important; border: 1px solid #E5E7EB !important; background: white !important;
 }
 .stMultiSelect [data-baseweb="tag"] {
-    background: #FFF7ED !important;
-    border: 1px solid #FED7AA !important;
-    color: #C2540A !important;
-    border-radius: 4px !important;
+    background: #FFF7ED !important; border: 1px solid #FED7AA !important;
+    color: #C2540A !important; border-radius: 4px !important;
 }
 
 /* ── Alerts ─────────────────────────────────────────── */
-.stSuccess { background: #F0FDF4 !important; border: 1px solid #BBF7D0 !important; border-radius: 6px !important; }
-.stInfo    { background: #FFF7ED !important; border: 1px solid #FED7AA !important; border-radius: 6px !important; }
-.stError   { background: #FEF2F2 !important; border: 1px solid #FECACA !important; border-radius: 6px !important; }
-.stWarning { background: #FFFBEB !important; border: 1px solid #FDE68A !important; border-radius: 6px !important; }
+[data-testid="stAlert"] { border-radius: 6px !important; font-size: 13.5px !important; }
 
 /* ── Progress bar ────────────────────────────────────── */
-[data-testid="stProgressBar"] > div > div {
-    background: #F5820D !important;
-    border-radius: 4px !important;
-}
+[data-testid="stProgressBar"] > div > div { background: #F5820D !important; border-radius: 4px !important; }
 
 /* ── Dataframe ───────────────────────────────────────── */
-[data-testid="stDataFrame"] {
-    border-radius: 6px !important;
-    overflow: hidden !important;
-    border: 1px solid #E5E7EB !important;
-}
+[data-testid="stDataFrame"] { border-radius: 6px !important; border: 1px solid #E5E7EB !important; }
 
 /* ── Typography ──────────────────────────────────────── */
-h1 { color: #0C1626 !important; font-weight: 700 !important; font-size: 22px !important; letter-spacing: -0.3px !important; }
-h2 { color: #0C1626 !important; font-weight: 700 !important; font-size: 20px !important; letter-spacing: -0.2px !important; }
+h1 { color: #111827 !important; font-weight: 700 !important; font-size: 22px !important; letter-spacing: -0.3px !important; }
+h2 { color: #111827 !important; font-weight: 700 !important; font-size: 18px !important; letter-spacing: -0.2px !important; }
 h3 { color: #1F2937 !important; font-weight: 600 !important; font-size: 15px !important; }
 p  { color: #4B5563 !important; font-size: 14px !important; line-height: 1.6 !important; }
 .stCaption > div { color: #9CA3AF !important; font-size: 12.5px !important; }
@@ -242,88 +180,58 @@ hr { border-color: #F3F4F6 !important; }
 
 /* ── Chat bubbles ────────────────────────────────────── */
 .patient-bubble {
-    background: #F3F4F6;
-    border-radius: 0 12px 12px 12px;
-    padding: 10px 14px;
-    font-size: 13.5px;
-    color: #1F2937;
-    margin: 2px 0;
-    display: inline-block;
-    max-width: 80%;
-    line-height: 1.5;
+    background: #F3F4F6; border-radius: 2px 12px 12px 12px;
+    padding: 9px 13px; font-size: 13.5px; color: #1F2937;
+    margin: 2px 0; display: inline-block; max-width: 78%; line-height: 1.5;
 }
 .agent-bubble {
-    background: #FFF7ED;
-    border: 1px solid #FED7AA;
-    border-radius: 12px 0 12px 12px;
-    padding: 10px 14px;
-    font-size: 13.5px;
-    color: #7C2D12;
-    margin: 2px 0;
-    display: inline-block;
-    max-width: 80%;
-    line-height: 1.5;
+    background: #FFF7ED; border: 1px solid #FED7AA;
+    border-radius: 12px 2px 12px 12px; padding: 9px 13px;
+    font-size: 13.5px; color: #92400E; margin: 2px 0;
+    display: inline-block; max-width: 78%; line-height: 1.5;
 }
-.latency-badge {
-    font-size: 11px;
-    color: #9CA3AF;
-    margin-left: 6px;
-    font-weight: 400;
-}
+.latency-badge { font-size: 11px; color: #9CA3AF; margin-left: 5px; font-weight: 400; }
 </style>
 """, unsafe_allow_html=True)
 
-# ── Top nav bar — dark navy like training.adit.com ────────────────────────────
+# ── Page header — clean, no dark elements ─────────────────────────────────────
 st.markdown("""
 <div style="
-    background: #0C1626;
-    padding: 0 32px;
-    height: 52px;
+    background: white;
+    border-bottom: 1px solid #EBEBEB;
+    padding: 16px 0 18px;
+    margin: -1rem -1rem 32px -1rem;
+    padding-left: 2rem;
+    padding-right: 2rem;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin: -1rem -1rem 0 -1rem;
-    position: sticky;
-    top: 0;
-    z-index: 999;
 ">
-    <div style="display:flex; align-items:center; gap:12px;">
+    <div style="display:flex; align-items:center; gap:14px;">
         <div style="
-            width: 32px; height: 32px;
-            background: #F5820D;
-            border-radius: 6px;
+            width: 36px; height: 36px; background: #F5820D; border-radius: 8px;
             display: flex; align-items: center; justify-content: center;
-            font-size: 16px; font-weight: 800; color: white;
-            letter-spacing: -1px;
+            font-size: 18px; font-weight: 800; color: white; line-height: 1;
         ">a</div>
-        <span style="color: white; font-size: 14px; font-weight: 600; letter-spacing: -0.1px;">Agent QA Platform</span>
-        <span style="color: #3D5275; font-size: 14px; margin: 0 4px;">·</span>
-        <span style="color: #7A90B0; font-size: 13px;">AI Front Desk</span>
+        <div>
+            <div style="font-size: 16px; font-weight: 700; color: #111827; letter-spacing: -0.2px; line-height:1.2;">
+                Agent QA Platform
+            </div>
+            <div style="font-size: 12px; color: #9CA3AF; margin-top: 1px;">AI Front Desk</div>
+        </div>
     </div>
-    <div style="display:flex; align-items:center; gap:16px;">
-        <span style="
-            background: rgba(245,130,13,0.15);
-            border: 1px solid rgba(245,130,13,0.3);
-            color: #F5820D;
-            font-size: 11px; font-weight: 700;
-            padding: 3px 10px; border-radius: 20px;
-            text-transform: uppercase; letter-spacing: 0.06em;
-        ">● Live Production</span>
-        <span style="color: #7A90B0; font-size: 13px;">Siriyaa · Test QA Agent</span>
+    <div style="display:flex; align-items:center; gap:20px;">
+        <div style="text-align:right;">
+            <div style="font-size: 13px; font-weight: 600; color: #111827;">Siriyaa</div>
+            <div style="font-size: 11.5px; color: #9CA3AF;">Test QA · AI Agent</div>
+        </div>
+        <div style="display:flex; align-items:center; gap:6px;
+            background: #F0FDF4; border: 1px solid #BBF7D0;
+            padding: 5px 12px; border-radius: 20px;">
+            <div style="width:7px;height:7px;background:#22C55E;border-radius:50%;"></div>
+            <span style="font-size:12px;font-weight:600;color:#15803D;">Live Production</span>
+        </div>
     </div>
-</div>
-<div style="height: 32px;"></div>
-""", unsafe_allow_html=True)
-
-# ── Page title ────────────────────────────────────────────────────────────────
-st.markdown("""
-<div style="margin-bottom: 28px;">
-    <h1 style="margin:0 0 4px 0; font-size:26px; font-weight:700; color:#0C1626; letter-spacing:-0.5px;">
-        Agent Simulations
-    </h1>
-    <p style="margin:0; color:#6B7280; font-size:14px;">
-        Simulate patient conversations, evaluate quality, and debug your AI receptionist.
-    </p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -457,14 +365,14 @@ for key, val in [("results", []), ("running", False), ("chain_results", None)]:
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("""
-    <div style="padding: 8px 0 20px 0; border-bottom: 1px solid #182236; margin-bottom: 4px;">
+    <div style="padding: 4px 0 18px 0; border-bottom: 1px solid #F3F4F6; margin-bottom: 6px;">
         <div style="display:flex; align-items:center; gap:10px;">
-            <div style="width:28px;height:28px;background:#F5820D;border-radius:5px;
+            <div style="width:30px;height:30px;background:#F5820D;border-radius:6px;
                         display:flex;align-items:center;justify-content:center;
-                        font-size:14px;font-weight:800;color:white;">a</div>
+                        font-size:15px;font-weight:800;color:white;line-height:1;">a</div>
             <div>
-                <div style="color: #F1F5F9; font-size: 14px; font-weight: 700; letter-spacing: -0.2px; line-height:1.2;">Agent QA</div>
-                <div style="color: #4A6080; font-size: 11px; font-weight: 500;">AI Front Desk</div>
+                <div style="color:#111827; font-size:14px; font-weight:700; letter-spacing:-0.2px; line-height:1.2;">Agent QA</div>
+                <div style="color:#9CA3AF; font-size:11px;">AI Front Desk</div>
             </div>
         </div>
     </div>
@@ -491,8 +399,8 @@ with st.sidebar:
 
     st.divider()
     st.markdown("""
-    <div style="padding: 4px 0;">
-        <div style="color: #475569; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 10px;">Connection Status</div>
+    <div style="padding: 4px 0 2px;">
+        <div style="color:#9CA3AF; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.1em; margin-bottom:8px;">Status</div>
     </div>
     """, unsafe_allow_html=True)
     st.caption(f"Agent · Siriyaa (Test QA)")
