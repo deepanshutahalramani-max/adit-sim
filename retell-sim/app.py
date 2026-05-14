@@ -27,11 +27,286 @@ import streamlit as st
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="ADIT SMS Agent Tester",
-    page_icon="🦷",
+    page_title="ADIT Agent QA Platform",
+    page_icon="https://app.adit.com/favicon.ico",
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# ── Global CSS — ADIT brand ───────────────────────────────────────────────────
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+html, body, [class*="css"], .stApp {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+}
+
+/* Hide Streamlit chrome */
+#MainMenu { visibility: hidden; }
+footer { visibility: hidden; }
+.stDeployButton { display: none !important; }
+[data-testid="stToolbar"] { display: none !important; }
+[data-testid="stDecoration"] { display: none !important; }
+
+/* App background */
+.stApp { background: #F0F4F9 !important; }
+.block-container { padding-top: 24px !important; padding-bottom: 40px !important; }
+
+/* ── Sidebar ─────────────────────────────────────────── */
+[data-testid="stSidebar"] {
+    background: #0C1526 !important;
+    border-right: 1px solid #1A2740 !important;
+}
+[data-testid="stSidebar"] .stSelectbox label,
+[data-testid="stSidebar"] .stTextInput label,
+[data-testid="stSidebar"] .stToggle label,
+[data-testid="stSidebar"] .stNumberInput label {
+    color: #7A90B0 !important;
+    font-size: 11px !important;
+    font-weight: 600 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.07em !important;
+}
+[data-testid="stSidebar"] .stTextInput input,
+[data-testid="stSidebar"] [data-baseweb="select"] > div {
+    background: #1A2740 !important;
+    border: 1px solid #253550 !important;
+    color: #E2E8F0 !important;
+    border-radius: 8px !important;
+}
+[data-testid="stSidebar"] p,
+[data-testid="stSidebar"] .stCaption,
+[data-testid="stSidebar"] small { color: #7A90B0 !important; }
+[data-testid="stSidebar"] code { background: #1A2740 !important; color: #93C5FD !important; }
+[data-testid="stSidebar"] hr { border-color: #1A2740 !important; margin: 16px 0 !important; }
+
+/* ── Primary button ─────────────────────────────────── */
+.stButton > button[kind="primary"] {
+    background: linear-gradient(135deg, #1740B8 0%, #2563EB 100%) !important;
+    color: white !important;
+    border: none !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    font-size: 14px !important;
+    padding: 10px 24px !important;
+    box-shadow: 0 2px 12px rgba(37, 99, 235, 0.35) !important;
+    transition: all 0.18s ease !important;
+}
+.stButton > button[kind="primary"]:hover {
+    transform: translateY(-1px) !important;
+    box-shadow: 0 6px 20px rgba(37, 99, 235, 0.45) !important;
+}
+.stButton > button[kind="secondary"] {
+    background: white !important;
+    color: #2563EB !important;
+    border: 1.5px solid #BFDBFE !important;
+    border-radius: 8px !important;
+    font-weight: 500 !important;
+}
+
+/* ── Tabs ────────────────────────────────────────────── */
+.stTabs [data-baseweb="tab-list"] {
+    background: white !important;
+    border-radius: 10px !important;
+    padding: 5px !important;
+    gap: 3px !important;
+    border: 1px solid #E2E8F0 !important;
+    margin-bottom: 28px !important;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.05) !important;
+}
+.stTabs [data-baseweb="tab"] {
+    border-radius: 7px !important;
+    font-weight: 500 !important;
+    font-size: 13.5px !important;
+    color: #64748B !important;
+    padding: 8px 18px !important;
+    background: transparent !important;
+    border: none !important;
+    transition: all 0.15s ease !important;
+}
+.stTabs [aria-selected="true"] {
+    background: #2563EB !important;
+    color: white !important;
+    box-shadow: 0 2px 8px rgba(37,99,235,0.3) !important;
+}
+
+/* ── Metric cards ────────────────────────────────────── */
+[data-testid="stMetric"] {
+    background: white !important;
+    border-radius: 12px !important;
+    padding: 20px 24px !important;
+    border: 1px solid #E2E8F0 !important;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.05) !important;
+}
+[data-testid="stMetricLabel"] > div {
+    font-size: 11px !important;
+    font-weight: 600 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.06em !important;
+    color: #94A3B8 !important;
+}
+[data-testid="stMetricValue"] > div {
+    font-size: 30px !important;
+    font-weight: 700 !important;
+    color: #0F172A !important;
+    letter-spacing: -0.5px !important;
+}
+
+/* ── Expander / result cards ────────────────────────── */
+.stExpander {
+    background: white !important;
+    border: 1px solid #E2E8F0 !important;
+    border-radius: 12px !important;
+    margin-bottom: 10px !important;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.04) !important;
+    overflow: hidden !important;
+}
+details[open].stExpander { border-top: 3px solid #2563EB !important; }
+.stExpander summary {
+    font-weight: 600 !important;
+    font-size: 13.5px !important;
+    color: #0F172A !important;
+    padding: 14px 20px !important;
+}
+
+/* ── Inputs ─────────────────────────────────────────── */
+.stTextInput input, .stTextArea textarea,
+.stNumberInput input {
+    border-radius: 8px !important;
+    border: 1.5px solid #E2E8F0 !important;
+    font-size: 14px !important;
+    background: white !important;
+    transition: border-color 0.15s !important;
+}
+.stTextInput input:focus, .stTextArea textarea:focus,
+.stNumberInput input:focus {
+    border-color: #2563EB !important;
+    box-shadow: 0 0 0 3px rgba(37,99,235,0.1) !important;
+}
+[data-baseweb="select"] > div {
+    border-radius: 8px !important;
+    border: 1.5px solid #E2E8F0 !important;
+    background: white !important;
+}
+
+/* ── Alerts ─────────────────────────────────────────── */
+.stSuccess, .stInfo, .stError, .stWarning {
+    border-radius: 8px !important;
+    font-size: 14px !important;
+}
+
+/* ── Progress bar ────────────────────────────────────── */
+[data-testid="stProgressBar"] > div > div {
+    background: linear-gradient(90deg, #1740B8, #3B82F6) !important;
+    border-radius: 4px !important;
+}
+
+/* ── Dataframe ───────────────────────────────────────── */
+[data-testid="stDataFrame"] {
+    border-radius: 12px !important;
+    overflow: hidden !important;
+    border: 1px solid #E2E8F0 !important;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.05) !important;
+}
+
+/* ── Typography ──────────────────────────────────────── */
+h1 { color: #0F172A !important; font-weight: 700 !important; font-size: 22px !important; letter-spacing: -0.3px !important; }
+h2 { color: #0F172A !important; font-weight: 600 !important; font-size: 18px !important; }
+h3 { color: #1E293B !important; font-weight: 600 !important; font-size: 15px !important; }
+p  { color: #334155 !important; font-size: 14px !important; }
+.stCaption > div { color: #94A3B8 !important; font-size: 12.5px !important; }
+hr { border-color: #E2E8F0 !important; }
+
+/* ── Chat bubble overrides ───────────────────────────── */
+.patient-bubble {
+    background: #F1F5F9;
+    border-radius: 12px 12px 12px 4px;
+    padding: 10px 14px;
+    font-size: 13.5px;
+    color: #1E293B;
+    margin: 4px 0;
+    display: inline-block;
+    max-width: 85%;
+}
+.agent-bubble {
+    background: #EFF6FF;
+    border: 1px solid #BFDBFE;
+    border-radius: 12px 12px 4px 12px;
+    padding: 10px 14px;
+    font-size: 13.5px;
+    color: #1E3A6E;
+    margin: 4px 0;
+    display: inline-block;
+    max-width: 85%;
+}
+.latency-badge {
+    font-size: 11px;
+    color: #94A3B8;
+    margin-left: 6px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ── Page header ───────────────────────────────────────────────────────────────
+st.markdown("""
+<div style="
+    background: linear-gradient(135deg, #0C1E3E 0%, #1740B8 60%, #2563EB 100%);
+    padding: 28px 36px;
+    border-radius: 16px;
+    margin-bottom: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    box-shadow: 0 4px 24px rgba(23, 64, 184, 0.25);
+">
+    <div>
+        <div style="
+            color: rgba(255,255,255,0.55);
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            margin-bottom: 6px;
+        ">ADIT · AI FRONT DESK</div>
+        <div style="
+            color: white;
+            font-size: 30px;
+            font-weight: 800;
+            letter-spacing: -0.8px;
+            line-height: 1.1;
+        ">Agent QA Platform</div>
+        <div style="
+            color: rgba(255,255,255,0.6);
+            font-size: 14px;
+            margin-top: 8px;
+            font-weight: 400;
+        ">Simulate, evaluate and debug your AI dental receptionist at scale</div>
+    </div>
+    <div style="
+        background: rgba(255,255,255,0.1);
+        border: 1px solid rgba(255,255,255,0.15);
+        border-radius: 14px;
+        padding: 16px 24px;
+        text-align: center;
+        backdrop-filter: blur(4px);
+    ">
+        <div style="color: rgba(255,255,255,0.5); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em;">Active Agent</div>
+        <div style="color: white; font-size: 18px; font-weight: 700; margin-top: 4px; letter-spacing: -0.3px;">Siriyaa</div>
+        <div style="margin-top: 6px;">
+            <span style="
+                background: rgba(16,185,129,0.2);
+                border: 1px solid rgba(16,185,129,0.4);
+                color: #6EE7B7;
+                font-size: 11px;
+                font-weight: 600;
+                padding: 2px 10px;
+                border-radius: 20px;
+            ">● Live Production</span>
+        </div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 HOSTS = {
@@ -162,10 +437,14 @@ for key, val in [("results", []), ("running", False), ("chain_results", None)]:
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.title("🦷 ADIT SMS Tester")
-    st.divider()
+    st.markdown("""
+    <div style="padding: 8px 0 20px 0; border-bottom: 1px solid #1A2740; margin-bottom: 4px;">
+        <div style="color: #3B82F6; font-size: 10px; font-weight: 800; letter-spacing: 0.2em; text-transform: uppercase; margin-bottom: 4px;">ADIT</div>
+        <div style="color: #F1F5F9; font-size: 17px; font-weight: 700; letter-spacing: -0.3px;">Agent QA Platform</div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    host_label = st.selectbox("API Host", list(HOSTS.keys()))
+    host_label = st.selectbox("Environment", list(HOSTS.keys()))
     api_base = HOSTS[host_label]
 
     bearer_token = st.text_input(
@@ -174,7 +453,7 @@ with st.sidebar:
         type="password",
     )
     agent_phone = st.text_input(
-        "Agent Phone (E.164)",
+        "Agent Phone",
         value=DEFAULT_AGENT_PHONE,
     )
     openai_key = st.text_input(
@@ -182,12 +461,18 @@ with st.sidebar:
         value=os.environ.get("OPENAI_API_KEY", ""),
         type="password",
     )
-    use_llm_judge = st.toggle("LLM Judge (GPT-4o-mini)", value=True)
+    use_llm_judge = st.toggle("LLM Judge scoring", value=True)
 
     st.divider()
-    st.caption(f"Agent: **Siriyaa** · Test QA - AI Agent")
-    st.caption(f"Phone: `{agent_phone}`")
-    st.caption(f"Host: `{api_base}`")
+    st.markdown("""
+    <div style="padding: 4px 0;">
+        <div style="color: #475569; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 10px;">Connection Status</div>
+    </div>
+    """, unsafe_allow_html=True)
+    st.caption(f"Agent · Siriyaa (Test QA)")
+    st.caption(f"Phone · `{agent_phone}`")
+    env_name = "Live Production" if "frontdeskchatagent" in api_base else "Dev / RunPod"
+    st.caption(f"Env · {env_name}")
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def _phone() -> str:
@@ -587,63 +872,101 @@ def generate_test_scenarios(instruction: str, oai_key: str) -> list[dict]:
 
 # ── Display helper ─────────────────────────────────────────────────────────────
 def display_result(r: SimResult, expanded: bool = True):
-    outcome_badge = {
-        "booking_confirmed": "📅 Booking Confirmed",
-        "task_created":      "📋 Task Created",
-        "incomplete":        "⏳ Incomplete",
-        "error":             "🚨 Error",
-        "":                  "",
-    }.get(r.outcome_type, "")
+    OUTCOME_META = {
+        "booking_confirmed": ("📅", "Booking Confirmed", "#059669", "#ECFDF5", "#A7F3D0"),
+        "task_created":      ("📋", "Task Created",      "#2563EB", "#EFF6FF", "#BFDBFE"),
+        "incomplete":        ("⏳", "Incomplete",         "#D97706", "#FFFBEB", "#FDE68A"),
+        "error":             ("🚨", "Error",              "#DC2626", "#FEF2F2", "#FECACA"),
+        "":                  ("",   "",                   "#64748B", "#F8FAFC", "#E2E8F0"),
+    }
+    icon, label, color, bg, border = OUTCOME_META.get(r.outcome_type, OUTCOME_META[""])
 
     status_icon = "✅" if r.passed else "❌"
-    header = f"{status_icon} {r.scenario}  ·  {outcome_badge}  ·  Score: {r.score}/100  ·  {r.total_ms/1000:.1f}s  ·  {len(r.turns)//2} turns"
-    with st.expander(header, expanded=expanded):
-        # Outcome pill
-        if r.outcome_type == "booking_confirmed":
-            st.success("📅 Direct appointment booking confirmed by agent")
-        elif r.outcome_type == "task_created":
-            st.info("📋 Agent created a task/note — human team will follow up (valid fallback path)")
-        elif r.outcome_type == "error":
-            st.error(f"🚨 {r.failure_reason}")
+    score_color = "#059669" if r.score >= 80 else "#D97706" if r.score >= 60 else "#DC2626"
+    header = f"{status_icon}  {r.scenario}   ·   {icon} {label}   ·   Score {r.score}/100   ·   {r.total_ms/1000:.1f}s   ·   {len(r.turns)//2} turns"
 
-        st.divider()
+    with st.expander(header, expanded=expanded):
+        # Outcome banner
+        st.markdown(f"""
+        <div style="
+            background:{bg}; border:1px solid {border}; border-radius:8px;
+            padding:10px 16px; margin-bottom:12px;
+            display:flex; align-items:center; gap:10px;
+        ">
+            <span style="font-size:16px;">{icon}</span>
+            <div>
+                <span style="font-weight:700; color:{color}; font-size:13px;">{label}</span>
+                {'<span style="color:#64748B; font-size:12px; margin-left:8px;">— Direct booking by agent</span>' if r.outcome_type == "booking_confirmed" else
+                 '<span style="color:#64748B; font-size:12px; margin-left:8px;">— Agent collected info and created a task for the team (valid flow)</span>' if r.outcome_type == "task_created" else
+                 f'<span style="color:#64748B; font-size:12px; margin-left:8px;">{r.failure_reason[:80]}</span>' if r.outcome_type in ("error","incomplete") else ""}
+            </div>
+            <div style="margin-left:auto; background:white; border:1px solid {border}; border-radius:6px; padding:4px 12px; text-align:center;">
+                <div style="font-size:10px; color:#94A3B8; font-weight:600; text-transform:uppercase; letter-spacing:0.05em;">Score</div>
+                <div style="font-size:20px; font-weight:800; color:{score_color}; letter-spacing:-0.5px;">{r.score}</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Conversation transcript
+        st.markdown("""
+        <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.08em; color:#94A3B8; margin-bottom:12px;">
+            Conversation Transcript
+        </div>""", unsafe_allow_html=True)
+
         for t in r.turns:
             if t.role == "patient":
-                col1, col2 = st.columns([1, 12])
-                col1.markdown("🧑")
-                col2.markdown(f"**Patient:** {t.message}")
+                st.markdown(f"""
+                <div style="display:flex; align-items:flex-start; gap:10px; margin-bottom:8px;">
+                    <div style="width:28px; height:28px; background:#E2E8F0; border-radius:50%;
+                                display:flex; align-items:center; justify-content:center;
+                                font-size:13px; flex-shrink:0;">👤</div>
+                    <div>
+                        <div style="font-size:10px; font-weight:600; color:#94A3B8; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:3px;">Patient</div>
+                        <div class="patient-bubble">{t.message}</div>
+                    </div>
+                </div>""", unsafe_allow_html=True)
             else:
-                col1, col2 = st.columns([1, 12])
-                col1.markdown("🤖")
-                col2.markdown(f"**Agent:** {t.message}")
-                if t.latency_ms:
-                    col2.caption(f"↳ {t.latency_ms:,}ms")
+                latency = f'<span class="latency-badge">· {t.latency_ms:,}ms</span>' if t.latency_ms else ""
+                st.markdown(f"""
+                <div style="display:flex; align-items:flex-start; gap:10px; margin-bottom:8px; flex-direction:row-reverse;">
+                    <div style="width:28px; height:28px; background:#DBEAFE; border-radius:50%;
+                                display:flex; align-items:center; justify-content:center;
+                                font-size:13px; flex-shrink:0;">🤖</div>
+                    <div style="text-align:right;">
+                        <div style="font-size:10px; font-weight:600; color:#93C5FD; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:3px;">Siriyaa {latency}</div>
+                        <div class="agent-bubble">{t.message}</div>
+                    </div>
+                </div>""", unsafe_allow_html=True)
 
         st.divider()
         if r.failure_reason:
-            label = "Judge note" if r.passed else "Failure reason"
-            color = "green" if r.passed else "red"
-            st.markdown(f":{color}[**{label}:** {r.failure_reason}]")
-        st.caption(f"phone: `{r.patient_phone}` · chat_id: `{r.chat_id}`")
+            label_txt = "Judge note" if r.passed else "Failure reason"
+            txt_color = "#059669" if r.passed else "#DC2626"
+            st.markdown(f'<div style="font-size:12.5px; color:{txt_color};"><strong>{label_txt}:</strong> {r.failure_reason}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div style="font-size:11px; color:#94A3B8; margin-top:6px;">📞 {r.patient_phone} &nbsp;·&nbsp; 🔗 <code style="background:#F1F5F9;padding:1px 5px;border-radius:4px;font-size:11px;">{r.chat_id[:28] if r.chat_id else "—"}</code></div>', unsafe_allow_html=True)
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "🚀 Smart Simulations",
-    "🔗 Full E2E Chain",
-    "📸 Screenshot Reproduce",
-    "📋 Instruction Tests",
-    "📊 Dashboard",
+    "Simulations",
+    "E2E Chain",
+    "Screenshot",
+    "Test Generator",
+    "Dashboard",
 ])
 
 # ────────────────────────────────────────────────────────────────────────────────
 # TAB 1 – Smart Simulations
 # ────────────────────────────────────────────────────────────────────────────────
 with tab1:
-    st.header("Smart Parallel Simulations")
-    st.caption(
-        "GPT-4o-mini acts as the patient — reads every agent reply and responds naturally. "
-        "Runs until the booking is actually **confirmed**, not just chatted."
-    )
+    st.markdown("""
+    <div style="margin-bottom:20px;">
+        <h2 style="margin:0 0 4px 0;">Smart Simulations</h2>
+        <p style="margin:0; color:#64748B; font-size:13.5px;">
+            GPT-4o-mini acts as the patient — reads every agent reply and responds naturally.
+            Runs until booking is confirmed or a task is created.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
 
     col1, col2 = st.columns([2, 1])
     with col1:
@@ -721,27 +1044,38 @@ with tab1:
 # TAB 2 – Full E2E Chain
 # ────────────────────────────────────────────────────────────────────────────────
 with tab2:
-    st.header("🔗 Full E2E Chain: Book → Reschedule → Cancel")
-    st.caption(
-        "Uses **one phone number** across all 3 phases. "
-        "Phase 2 and 3 look up the appointment from Phase 1 — "
-        "exercises the full API chain from the flow diagram."
-    )
+    st.markdown("""
+    <div style="margin-bottom:20px;">
+        <h2 style="margin:0 0 4px 0;">Full E2E Chain</h2>
+        <p style="margin:0; color:#64748B; font-size:13.5px;">
+            Book → Reschedule → Cancel using one phone number. Each phase
+            looks up the appointment from the previous — exercises the full API chain.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
 
-    col_a, col_b = st.columns(2)
-    with col_a:
-        st.markdown("**Phases:**")
-        st.markdown("1. 🆕 Book new patient appointment (collect all details → get slots → confirm)")
-        st.markdown("2. 🔄 Reschedule that appointment (find upcoming → get new slots → modify)")
-        st.markdown("3. ❌ Cancel the appointment (find upcoming → cancel → confirm)")
-    with col_b:
-        st.markdown("**API chain validated:**")
-        st.markdown("- Create New Patient")
-        st.markdown("- Get Available Slots")
-        st.markdown("- Booking Appointment")
-        st.markdown("- Upcoming Appointment")
-        st.markdown("- Modify / Cancel Appointment")
-        st.markdown("- Task Creation")
+    st.markdown("""
+    <div style="display:flex; gap:16px; margin-bottom:24px; flex-wrap:wrap;">
+        <div style="flex:1; min-width:220px; background:white; border:1px solid #E2E8F0; border-radius:12px; padding:20px; border-top:3px solid #2563EB;">
+            <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.08em; color:#94A3B8; margin-bottom:12px;">Three Phases</div>
+            <div style="font-size:13.5px; color:#334155; line-height:2;">
+                <div>1 &nbsp;·&nbsp; 🆕 Book new appointment</div>
+                <div>2 &nbsp;·&nbsp; 🔄 Reschedule that appointment</div>
+                <div>3 &nbsp;·&nbsp; ❌ Cancel the appointment</div>
+            </div>
+        </div>
+        <div style="flex:1; min-width:220px; background:white; border:1px solid #E2E8F0; border-radius:12px; padding:20px; border-top:3px solid #10B981;">
+            <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.08em; color:#94A3B8; margin-bottom:12px;">API Chain Covered</div>
+            <div style="font-size:13.5px; color:#334155; line-height:2;">
+                <div>· Create New Patient</div>
+                <div>· Get Available Slots</div>
+                <div>· Book / Modify / Cancel Appointment</div>
+                <div>· Upcoming Appointment lookup</div>
+                <div>· Task Creation</div>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
     chain_status = st.empty()
     if "chain_status" in st.session_state:
@@ -777,11 +1111,15 @@ with tab2:
 # TAB 3 – Screenshot Reproduce
 # ────────────────────────────────────────────────────────────────────────────────
 with tab3:
-    st.header("📸 Screenshot → Analyse → Reproduce")
-    st.caption(
-        "Upload a screenshot of a conversation or error. "
-        "GPT-4o Vision identifies the issue and auto-runs a reproduction test."
-    )
+    st.markdown("""
+    <div style="margin-bottom:20px;">
+        <h2 style="margin:0 0 4px 0;">Screenshot Reproduce</h2>
+        <p style="margin:0; color:#64748B; font-size:13.5px;">
+            Upload a conversation screenshot — GPT-4o Vision identifies the issue
+            and auto-runs a reproduction simulation.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
 
     uploaded = st.file_uploader("Upload screenshot (PNG/JPG)", type=["png", "jpg", "jpeg", "webp"])
     extra_ctx = st.text_area("Extra context (optional)", placeholder="e.g. 'This happens when patient says they have no insurance'")
@@ -848,8 +1186,15 @@ with tab3:
 # TAB 4 – Instruction Tests
 # ────────────────────────────────────────────────────────────────────────────────
 with tab4:
-    st.header("📋 Instruction-Based Test Generator")
-    st.caption("Describe what you want to test in plain English. GPT-4o-mini generates realistic test flows and runs them.")
+    st.markdown("""
+    <div style="margin-bottom:20px;">
+        <h2 style="margin:0 0 4px 0;">Test Generator</h2>
+        <p style="margin:0; color:#64748B; font-size:13.5px;">
+            Describe what you want to test in plain English — GPT-4o-mini generates
+            realistic scenarios and runs them automatically.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
 
     instruction = st.text_area(
         "Test description",
@@ -897,7 +1242,14 @@ with tab4:
 # TAB 5 – Dashboard
 # ────────────────────────────────────────────────────────────────────────────────
 with tab5:
-    st.header("📊 Results Dashboard")
+    st.markdown("""
+    <div style="margin-bottom:20px;">
+        <h2 style="margin:0 0 4px 0;">Results Dashboard</h2>
+        <p style="margin:0; color:#64748B; font-size:13.5px;">
+            Aggregated pass rates, scores and latency across all simulation runs.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
 
     all_results = st.session_state.results
     chain = st.session_state.chain_results
@@ -908,7 +1260,13 @@ with tab5:
         all_display += [v for v in chain.values()]
 
     if not all_display:
-        st.info("No results yet. Run simulations in other tabs.")
+        st.markdown("""
+        <div style="text-align:center; padding:60px 20px; color:#94A3B8;">
+            <div style="font-size:40px; margin-bottom:12px;">📊</div>
+            <div style="font-size:16px; font-weight:600; color:#64748B;">No results yet</div>
+            <div style="font-size:13px; margin-top:6px;">Run simulations in the <strong>Simulations</strong> or <strong>E2E Chain</strong> tab to see results here.</div>
+        </div>
+        """, unsafe_allow_html=True)
     else:
         rows = []
         for r in all_display:
