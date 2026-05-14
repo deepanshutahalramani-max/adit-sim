@@ -33,203 +33,218 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── Global CSS — clean ADIT style ─────────────────────────────────────────────
+# ── Global CSS ────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
-html, body, [class*="css"], .stApp {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+*, html, body, [class*="css"] {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
+    box-sizing: border-box;
 }
 
-/* ── Hide Streamlit chrome ───────────────────────────── */
-#MainMenu, footer, [data-testid="stToolbar"], [data-testid="stDecoration"] { display: none !important; }
-.stDeployButton { display: none !important; }
+/* chrome */
+#MainMenu, footer, [data-testid="stToolbar"],
+[data-testid="stDecoration"], .stDeployButton { display: none !important; }
 
-/* ── App background ──────────────────────────────────── */
-.stApp { background: #F9F9F9 !important; }
-.block-container { padding-top: 0 !important; padding-bottom: 48px !important; max-width: 1180px !important; }
+/* layout */
+.stApp { background: #FAFAF8 !important; }
+.block-container { padding-top: 0 !important; padding-bottom: 56px !important; max-width: 1160px !important; }
 
-/* ── Sidebar — clean light ───────────────────────────── */
+/* ─ Sidebar ──────────────────────────────────────────────── */
 [data-testid="stSidebar"] {
-    background: #FFFFFF !important;
-    border-right: 1px solid #EBEBEB !important;
+    background: #fff !important;
+    border-right: 1px solid #EAEAEA !important;
 }
 [data-testid="stSidebar"] .stSelectbox label,
 [data-testid="stSidebar"] .stTextInput label,
 [data-testid="stSidebar"] .stToggle label,
 [data-testid="stSidebar"] .stNumberInput label {
-    color: #9CA3AF !important;
-    font-size: 10px !important;
-    font-weight: 700 !important;
-    text-transform: uppercase !important;
-    letter-spacing: 0.1em !important;
+    color: #ADADAD !important; font-size: 10px !important; font-weight: 700 !important;
+    text-transform: uppercase !important; letter-spacing: 0.1em !important;
 }
 [data-testid="stSidebar"] .stTextInput input,
 [data-testid="stSidebar"] [data-baseweb="select"] > div {
-    background: #F9F9F9 !important;
-    border: 1px solid #E5E7EB !important;
-    color: #111827 !important;
-    border-radius: 6px !important;
-    font-size: 13px !important;
+    background: #F7F7F5 !important; border: 1px solid #E5E5E5 !important;
+    color: #111 !important; border-radius: 7px !important; font-size: 13px !important;
 }
 [data-testid="stSidebar"] .stTextInput input:focus {
-    border-color: #F5820D !important;
-    box-shadow: 0 0 0 2px rgba(245,130,13,0.12) !important;
+    border-color: #F5820D !important; box-shadow: 0 0 0 2px rgba(245,130,13,0.14) !important;
 }
-[data-testid="stSidebar"] p,
-[data-testid="stSidebar"] .stCaption { color: #9CA3AF !important; font-size: 12px !important; }
+[data-testid="stSidebar"] p, [data-testid="stSidebar"] small,
+[data-testid="stSidebar"] .stCaption { color: #ADADAD !important; font-size: 12px !important; }
 [data-testid="stSidebar"] code {
-    background: #FFF7ED !important; color: #C2540A !important;
-    border-radius: 4px !important; padding: 1px 5px !important; font-size: 11px !important;
+    background: #FFF3E8 !important; color: #D4620A !important;
+    border-radius: 4px !important; padding: 1px 6px !important; font-size: 11.5px !important;
 }
-[data-testid="stSidebar"] hr { border-color: #F3F4F6 !important; margin: 14px 0 !important; }
+[data-testid="stSidebar"] hr { border-color: #F0F0EE !important; margin: 16px 0 !important; }
 
-/* ── Buttons ─────────────────────────────────────────── */
+/* ─ Primary button ───────────────────────────────────────── */
 .stButton > button[kind="primary"] {
-    background: #F5820D !important; color: white !important; border: none !important;
-    border-radius: 6px !important; font-weight: 600 !important; font-size: 13.5px !important;
-    padding: 10px 24px !important; transition: background 0.15s !important;
+    background: #F5820D !important; color: #fff !important; border: none !important;
+    border-radius: 8px !important; font-weight: 600 !important; font-size: 14px !important;
+    padding: 11px 26px !important; letter-spacing: 0.01em !important;
+    transition: background 0.15s, box-shadow 0.15s !important;
+    box-shadow: 0 1px 4px rgba(245,130,13,0.25) !important;
 }
-.stButton > button[kind="primary"]:hover { background: #D96D08 !important; }
+.stButton > button[kind="primary"]:hover {
+    background: #D96D08 !important; box-shadow: 0 4px 12px rgba(245,130,13,0.35) !important;
+}
 .stButton > button[kind="secondary"] {
-    background: white !important; color: #F5820D !important;
-    border: 1.5px solid #F5820D !important; border-radius: 6px !important;
-    font-weight: 600 !important; font-size: 13.5px !important;
+    background: #fff !important; color: #F5820D !important;
+    border: 1.5px solid #FBCF9A !important; border-radius: 8px !important;
+    font-weight: 600 !important; font-size: 14px !important;
 }
-.stButton > button[kind="secondary"]:hover { background: #FFF7ED !important; }
+.stButton > button[kind="secondary"]:hover { background: #FFF7EE !important; border-color: #F5820D !important; }
 
-/* ── Tabs — underline style ──────────────────────────── */
+/* ─ Tabs ─────────────────────────────────────────────────── */
 .stTabs [data-baseweb="tab-list"] {
-    background: transparent !important; border-bottom: 1px solid #E5E7EB !important;
-    border-radius: 0 !important; padding: 0 !important; gap: 0 !important;
-    margin-bottom: 28px !important; box-shadow: none !important;
+    background: transparent !important; border-bottom: 1.5px solid #EAEAEA !important;
+    padding: 0 !important; gap: 0 !important; margin-bottom: 32px !important; box-shadow: none !important;
 }
 .stTabs [data-baseweb="tab"] {
     border-radius: 0 !important; font-weight: 500 !important; font-size: 14px !important;
-    color: #6B7280 !important; padding: 10px 22px !important; background: transparent !important;
-    border: none !important; border-bottom: 2px solid transparent !important; margin-bottom: -1px !important;
+    color: #888 !important; padding: 11px 22px !important; background: transparent !important;
+    border: none !important; border-bottom: 2px solid transparent !important; margin-bottom: -1.5px !important;
+    transition: color 0.15s !important;
 }
+.stTabs [data-baseweb="tab"]:hover { color: #333 !important; }
 .stTabs [aria-selected="true"] {
-    color: #111827 !important; font-weight: 600 !important;
-    background: transparent !important; border-bottom: 2px solid #F5820D !important;
-    box-shadow: none !important;
+    color: #111 !important; font-weight: 700 !important;
+    border-bottom: 2px solid #F5820D !important; background: transparent !important; box-shadow: none !important;
 }
 
-/* ── Metric / stat cards ─────────────────────────────── */
+/* ─ Metric / stat cards ──────────────────────────────────── */
 [data-testid="stMetric"] {
-    background: white !important; border-radius: 6px !important;
-    padding: 18px 20px !important; border: 1px solid #F5820D !important;
+    background: #fff !important; border-radius: 10px !important; padding: 20px 22px !important;
+    border: 1px solid #F5820D !important;
+    box-shadow: 0 2px 8px rgba(245,130,13,0.08), 0 1px 2px rgba(0,0,0,0.04) !important;
 }
 [data-testid="stMetricLabel"] > div {
-    font-size: 10px !important; font-weight: 700 !important; text-transform: uppercase !important;
-    letter-spacing: 0.1em !important; color: #9CA3AF !important;
+    font-size: 10.5px !important; font-weight: 700 !important; text-transform: uppercase !important;
+    letter-spacing: 0.1em !important; color: #ADADAD !important;
 }
 [data-testid="stMetricValue"] > div {
-    font-size: 28px !important; font-weight: 700 !important;
-    color: #111827 !important; letter-spacing: -0.5px !important; margin-top: 4px !important;
+    font-size: 30px !important; font-weight: 800 !important;
+    color: #111 !important; letter-spacing: -1px !important; margin-top: 6px !important;
 }
 [data-testid="stMetricDelta"] { display: none !important; }
 
-/* ── Expander / result cards ─────────────────────────── */
+/* ─ Expanders / result cards ─────────────────────────────── */
 .stExpander {
-    background: white !important; border: 1px solid #E5E7EB !important;
-    border-radius: 6px !important; margin-bottom: 8px !important; overflow: hidden !important;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.04) !important;
+    background: #fff !important; border: 1px solid #EAEAEA !important;
+    border-radius: 10px !important; margin-bottom: 10px !important; overflow: hidden !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05), 0 1px 2px rgba(0,0,0,0.03) !important;
+    transition: box-shadow 0.2s !important;
 }
+.stExpander:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.04) !important; }
 details[open].stExpander { border-left: 3px solid #F5820D !important; }
 .stExpander summary {
     font-weight: 600 !important; font-size: 13.5px !important;
-    color: #111827 !important; padding: 13px 18px !important;
-    background: white !important;
+    color: #111 !important; padding: 14px 20px !important; background: #fff !important;
 }
 
-/* ── Inputs ─────────────────────────────────────────── */
+/* ─ Inputs ───────────────────────────────────────────────── */
 .stTextInput input, .stTextArea textarea, .stNumberInput input {
-    border-radius: 6px !important; border: 1px solid #E5E7EB !important;
-    font-size: 13.5px !important; background: white !important;
-    color: #111827 !important; transition: border-color 0.15s !important;
+    border-radius: 8px !important; border: 1px solid #E5E5E5 !important;
+    font-size: 14px !important; background: #fff !important;
+    color: #111 !important; padding: 9px 12px !important; transition: border-color 0.15s !important;
 }
 .stTextInput input:focus, .stTextArea textarea:focus, .stNumberInput input:focus {
-    border-color: #F5820D !important; box-shadow: 0 0 0 3px rgba(245,130,13,0.1) !important;
+    border-color: #F5820D !important; box-shadow: 0 0 0 3px rgba(245,130,13,0.12) !important;
 }
 [data-baseweb="select"] > div {
-    border-radius: 6px !important; border: 1px solid #E5E7EB !important; background: white !important;
+    border-radius: 8px !important; border: 1px solid #E5E5E5 !important; background: #fff !important;
+}
+[data-baseweb="select"] > div:focus-within {
+    border-color: #F5820D !important; box-shadow: 0 0 0 3px rgba(245,130,13,0.12) !important;
 }
 .stMultiSelect [data-baseweb="tag"] {
-    background: #FFF7ED !important; border: 1px solid #FED7AA !important;
-    color: #C2540A !important; border-radius: 4px !important;
+    background: #FFF3E8 !important; border: 1px solid #FBCF9A !important;
+    color: #B85D0A !important; border-radius: 5px !important; font-weight: 500 !important;
 }
 
-/* ── Alerts ─────────────────────────────────────────── */
-[data-testid="stAlert"] { border-radius: 6px !important; font-size: 13.5px !important; }
+/* ─ Alerts ───────────────────────────────────────────────── */
+[data-testid="stAlert"] { border-radius: 8px !important; font-size: 13.5px !important; }
 
-/* ── Progress bar ────────────────────────────────────── */
-[data-testid="stProgressBar"] > div > div { background: #F5820D !important; border-radius: 4px !important; }
+/* ─ Progress ─────────────────────────────────────────────── */
+[data-testid="stProgressBar"] > div > div {
+    background: linear-gradient(90deg, #F5820D, #FBAD5A) !important; border-radius: 4px !important;
+}
+[data-testid="stProgressBar"] > div {
+    background: #F0EDE8 !important; border-radius: 4px !important;
+}
 
-/* ── Dataframe ───────────────────────────────────────── */
-[data-testid="stDataFrame"] { border-radius: 6px !important; border: 1px solid #E5E7EB !important; }
+/* ─ Dataframe ────────────────────────────────────────────── */
+[data-testid="stDataFrame"] {
+    border-radius: 10px !important; border: 1px solid #EAEAEA !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04) !important;
+}
 
-/* ── Typography ──────────────────────────────────────── */
-h1 { color: #111827 !important; font-weight: 700 !important; font-size: 22px !important; letter-spacing: -0.3px !important; }
-h2 { color: #111827 !important; font-weight: 700 !important; font-size: 18px !important; letter-spacing: -0.2px !important; }
-h3 { color: #1F2937 !important; font-weight: 600 !important; font-size: 15px !important; }
-p  { color: #4B5563 !important; font-size: 14px !important; line-height: 1.6 !important; }
-.stCaption > div { color: #9CA3AF !important; font-size: 12.5px !important; }
-hr { border-color: #F3F4F6 !important; }
+/* ─ Typography ───────────────────────────────────────────── */
+h1 { color: #111 !important; font-weight: 800 !important; font-size: 24px !important; letter-spacing: -0.5px !important; }
+h2 { color: #111 !important; font-weight: 700 !important; font-size: 18px !important; letter-spacing: -0.3px !important; }
+h3 { color: #222 !important; font-weight: 600 !important; font-size: 15px !important; }
+p  { color: #555 !important; font-size: 14px !important; line-height: 1.65 !important; }
+.stCaption > div { color: #ADADAD !important; font-size: 12.5px !important; }
+hr { border-color: #F0F0EE !important; }
+label { color: #333 !important; font-size: 13.5px !important; }
 
-/* ── Chat bubbles ────────────────────────────────────── */
+/* ─ Chat bubbles ─────────────────────────────────────────── */
 .patient-bubble {
-    background: #F3F4F6; border-radius: 2px 12px 12px 12px;
-    padding: 9px 13px; font-size: 13.5px; color: #1F2937;
-    margin: 2px 0; display: inline-block; max-width: 78%; line-height: 1.5;
+    background: #F2F2F0; border-radius: 4px 14px 14px 14px;
+    padding: 10px 14px; font-size: 13.5px; color: #222;
+    display: inline-block; max-width: 76%; line-height: 1.55;
 }
 .agent-bubble {
-    background: #FFF7ED; border: 1px solid #FED7AA;
-    border-radius: 12px 2px 12px 12px; padding: 9px 13px;
-    font-size: 13.5px; color: #92400E; margin: 2px 0;
-    display: inline-block; max-width: 78%; line-height: 1.5;
+    background: #FFF4E6; border: 1px solid #FBCF9A;
+    border-radius: 14px 4px 14px 14px; padding: 10px 14px;
+    font-size: 13.5px; color: #7C3A0A; display: inline-block;
+    max-width: 76%; line-height: 1.55;
 }
-.latency-badge { font-size: 11px; color: #9CA3AF; margin-left: 5px; font-weight: 400; }
+.latency-badge { font-size: 11px; color: #ADADAD; margin-left: 6px; }
 </style>
 """, unsafe_allow_html=True)
 
-# ── Page header — clean, no dark elements ─────────────────────────────────────
+# ── Page header ───────────────────────────────────────────────────────────────
 st.markdown("""
 <div style="
-    background: white;
-    border-bottom: 1px solid #EBEBEB;
-    padding: 16px 0 18px;
-    margin: -1rem -1rem 32px -1rem;
-    padding-left: 2rem;
-    padding-right: 2rem;
+    padding: 28px 0 24px;
+    border-bottom: 1.5px solid #EAEAEA;
+    margin-bottom: 32px;
     display: flex;
     align-items: center;
     justify-content: space-between;
 ">
-    <div style="display:flex; align-items:center; gap:14px;">
+    <div style="display:flex; align-items:center; gap:16px;">
         <div style="
-            width: 36px; height: 36px; background: #F5820D; border-radius: 8px;
+            width: 42px; height: 42px; background: #F5820D; border-radius: 10px;
             display: flex; align-items: center; justify-content: center;
-            font-size: 18px; font-weight: 800; color: white; line-height: 1;
+            font-size: 22px; font-weight: 800; color: #fff; line-height: 1;
+            box-shadow: 0 2px 10px rgba(245,130,13,0.3);
         ">a</div>
         <div>
-            <div style="font-size: 16px; font-weight: 700; color: #111827; letter-spacing: -0.2px; line-height:1.2;">
+            <div style="font-size:20px; font-weight:800; color:#111; letter-spacing:-0.5px; line-height:1.15;">
                 Agent QA Platform
             </div>
-            <div style="font-size: 12px; color: #9CA3AF; margin-top: 1px;">AI Front Desk</div>
+            <div style="font-size:13px; color:#ADADAD; margin-top:2px; font-weight:400;">
+                AI Front Desk &nbsp;·&nbsp; Simulate, test and evaluate your receptionist
+            </div>
         </div>
     </div>
-    <div style="display:flex; align-items:center; gap:20px;">
+    <div style="display:flex; align-items:center; gap:12px;">
         <div style="text-align:right;">
-            <div style="font-size: 13px; font-weight: 600; color: #111827;">Siriyaa</div>
-            <div style="font-size: 11.5px; color: #9CA3AF;">Test QA · AI Agent</div>
+            <div style="font-size:13.5px; font-weight:600; color:#333;">Siriyaa</div>
+            <div style="font-size:11.5px; color:#ADADAD; margin-top:1px;">Test QA · AI Agent</div>
         </div>
-        <div style="display:flex; align-items:center; gap:6px;
-            background: #F0FDF4; border: 1px solid #BBF7D0;
-            padding: 5px 12px; border-radius: 20px;">
-            <div style="width:7px;height:7px;background:#22C55E;border-radius:50%;"></div>
-            <span style="font-size:12px;font-weight:600;color:#15803D;">Live Production</span>
+        <div style="
+            display:flex; align-items:center; gap:6px;
+            background:#F2FDF4; border:1px solid #B8EFC8;
+            padding:6px 14px; border-radius:20px;
+        ">
+            <div style="width:7px;height:7px;background:#22C55E;border-radius:50%;
+                        box-shadow:0 0 0 3px rgba(34,197,94,0.2);"></div>
+            <span style="font-size:12.5px; font-weight:600; color:#166534;">Live</span>
         </div>
     </div>
 </div>
@@ -365,14 +380,17 @@ for key, val in [("results", []), ("running", False), ("chain_results", None)]:
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("""
-    <div style="padding: 4px 0 18px 0; border-bottom: 1px solid #F3F4F6; margin-bottom: 6px;">
+    <div style="padding: 4px 0 18px; border-bottom: 1px solid #F0F0EE; margin-bottom: 8px;">
         <div style="display:flex; align-items:center; gap:10px;">
-            <div style="width:30px;height:30px;background:#F5820D;border-radius:6px;
-                        display:flex;align-items:center;justify-content:center;
-                        font-size:15px;font-weight:800;color:white;line-height:1;">a</div>
+            <div style="
+                width:32px; height:32px; background:#F5820D; border-radius:8px;
+                display:flex; align-items:center; justify-content:center;
+                font-size:16px; font-weight:800; color:#fff; line-height:1;
+                box-shadow:0 2px 6px rgba(245,130,13,0.25);
+            ">a</div>
             <div>
-                <div style="color:#111827; font-size:14px; font-weight:700; letter-spacing:-0.2px; line-height:1.2;">Agent QA</div>
-                <div style="color:#9CA3AF; font-size:11px;">AI Front Desk</div>
+                <div style="color:#111; font-size:14px; font-weight:700; letter-spacing:-0.2px;">Agent QA</div>
+                <div style="color:#ADADAD; font-size:11px; margin-top:1px;">AI Front Desk</div>
             </div>
         </div>
     </div>
@@ -399,8 +417,8 @@ with st.sidebar:
 
     st.divider()
     st.markdown("""
-    <div style="padding: 4px 0 2px;">
-        <div style="color:#9CA3AF; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.1em; margin-bottom:8px;">Status</div>
+    <div style="padding:4px 0 4px;">
+        <div style="color:#ADADAD; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.1em; margin-bottom:8px;">Status</div>
     </div>
     """, unsafe_allow_html=True)
     st.caption(f"Agent · Siriyaa (Test QA)")
@@ -830,9 +848,9 @@ def display_result(r: SimResult, expanded: bool = True):
             <span style="font-size:16px;">{icon}</span>
             <div>
                 <span style="font-weight:700; color:{color}; font-size:13px;">{label}</span>
-                {'<span style="color:#64748B; font-size:12px; margin-left:8px;">— Direct booking by agent</span>' if r.outcome_type == "booking_confirmed" else
-                 '<span style="color:#64748B; font-size:12px; margin-left:8px;">— Agent collected info and created a task for the team (valid flow)</span>' if r.outcome_type == "task_created" else
-                 f'<span style="color:#64748B; font-size:12px; margin-left:8px;">{r.failure_reason[:80]}</span>' if r.outcome_type in ("error","incomplete") else ""}
+                {'<span style="color:#888888; font-size:12px; margin-left:8px;">— Direct booking by agent</span>' if r.outcome_type == "booking_confirmed" else
+                 '<span style="color:#888888; font-size:12px; margin-left:8px;">— Agent collected info and created a task for the team (valid flow)</span>' if r.outcome_type == "task_created" else
+                 f'<span style="color:#888888; font-size:12px; margin-left:8px;">{r.failure_reason[:80]}</span>' if r.outcome_type in ("error","incomplete") else ""}
             </div>
             <div style="margin-left:auto; background:white; border:1px solid {border}; border-radius:6px; padding:4px 12px; text-align:center;">
                 <div style="font-size:10px; color:#94A3B8; font-weight:600; text-transform:uppercase; letter-spacing:0.05em;">Score</div>
@@ -893,12 +911,12 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 # ────────────────────────────────────────────────────────────────────────────────
 with tab1:
     st.markdown("""
-    <div style="margin-bottom:20px;">
-        <h2 style="margin:0 0 4px 0;">Smart Simulations</h2>
-        <p style="margin:0; color:#64748B; font-size:13.5px;">
+    <div style="margin-bottom:24px;">
+        <div style="font-size:20px; font-weight:800; color:#111; letter-spacing:-0.4px; margin-bottom:5px;">Smart Simulations</div>
+        <div style="font-size:13.5px; color:#888; line-height:1.5;">
             GPT-4o-mini acts as the patient — reads every agent reply and responds naturally.
             Runs until booking is confirmed or a task is created.
-        </p>
+        </div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -979,12 +997,12 @@ with tab1:
 # ────────────────────────────────────────────────────────────────────────────────
 with tab2:
     st.markdown("""
-    <div style="margin-bottom:20px;">
-        <h2 style="margin:0 0 4px 0;">Full E2E Chain</h2>
-        <p style="margin:0; color:#64748B; font-size:13.5px;">
-            Book → Reschedule → Cancel using one phone number. Each phase
-            looks up the appointment from the previous — exercises the full API chain.
-        </p>
+    <div style="margin-bottom:24px;">
+        <div style="font-size:20px; font-weight:800; color:#111; letter-spacing:-0.4px; margin-bottom:5px;">Full E2E Chain</div>
+        <div style="font-size:13.5px; color:#888; line-height:1.5;">
+            Book → Reschedule → Cancel on one phone number. Each phase looks up the appointment
+            from the previous — exercises the full API chain end-to-end.
+        </div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -992,7 +1010,7 @@ with tab2:
     <div style="display:flex; gap:16px; margin-bottom:24px; flex-wrap:wrap;">
         <div style="flex:1; min-width:220px; background:white; border:1px solid #E2E8F0; border-radius:12px; padding:20px; border-top:3px solid #2563EB;">
             <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.08em; color:#94A3B8; margin-bottom:12px;">Three Phases</div>
-            <div style="font-size:13.5px; color:#334155; line-height:2;">
+            <div style="font-size:13.5px; color:#444444; line-height:2;">
                 <div>1 &nbsp;·&nbsp; 🆕 Book new appointment</div>
                 <div>2 &nbsp;·&nbsp; 🔄 Reschedule that appointment</div>
                 <div>3 &nbsp;·&nbsp; ❌ Cancel the appointment</div>
@@ -1000,7 +1018,7 @@ with tab2:
         </div>
         <div style="flex:1; min-width:220px; background:white; border:1px solid #E2E8F0; border-radius:12px; padding:20px; border-top:3px solid #10B981;">
             <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.08em; color:#94A3B8; margin-bottom:12px;">API Chain Covered</div>
-            <div style="font-size:13.5px; color:#334155; line-height:2;">
+            <div style="font-size:13.5px; color:#444444; line-height:2;">
                 <div>· Create New Patient</div>
                 <div>· Get Available Slots</div>
                 <div>· Book / Modify / Cancel Appointment</div>
@@ -1046,12 +1064,12 @@ with tab2:
 # ────────────────────────────────────────────────────────────────────────────────
 with tab3:
     st.markdown("""
-    <div style="margin-bottom:20px;">
-        <h2 style="margin:0 0 4px 0;">Screenshot Reproduce</h2>
-        <p style="margin:0; color:#64748B; font-size:13.5px;">
+    <div style="margin-bottom:24px;">
+        <div style="font-size:20px; font-weight:800; color:#111; letter-spacing:-0.4px; margin-bottom:5px;">Screenshot Reproduce</div>
+        <div style="font-size:13.5px; color:#888; line-height:1.5;">
             Upload a conversation screenshot — GPT-4o Vision identifies the issue
             and auto-runs a reproduction simulation.
-        </p>
+        </div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -1121,12 +1139,12 @@ with tab3:
 # ────────────────────────────────────────────────────────────────────────────────
 with tab4:
     st.markdown("""
-    <div style="margin-bottom:20px;">
-        <h2 style="margin:0 0 4px 0;">Test Generator</h2>
-        <p style="margin:0; color:#64748B; font-size:13.5px;">
+    <div style="margin-bottom:24px;">
+        <div style="font-size:20px; font-weight:800; color:#111; letter-spacing:-0.4px; margin-bottom:5px;">Test Generator</div>
+        <div style="font-size:13.5px; color:#888; line-height:1.5;">
             Describe what you want to test in plain English — GPT-4o-mini generates
             realistic scenarios and runs them automatically.
-        </p>
+        </div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -1177,11 +1195,11 @@ with tab4:
 # ────────────────────────────────────────────────────────────────────────────────
 with tab5:
     st.markdown("""
-    <div style="margin-bottom:20px;">
-        <h2 style="margin:0 0 4px 0;">Results Dashboard</h2>
-        <p style="margin:0; color:#64748B; font-size:13.5px;">
+    <div style="margin-bottom:24px;">
+        <div style="font-size:20px; font-weight:800; color:#111; letter-spacing:-0.4px; margin-bottom:5px;">Results Dashboard</div>
+        <div style="font-size:13.5px; color:#888; line-height:1.5;">
             Aggregated pass rates, scores and latency across all simulation runs.
-        </p>
+        </div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -1197,7 +1215,7 @@ with tab5:
         st.markdown("""
         <div style="text-align:center; padding:60px 20px; color:#94A3B8;">
             <div style="font-size:40px; margin-bottom:12px;">📊</div>
-            <div style="font-size:16px; font-weight:600; color:#64748B;">No results yet</div>
+            <div style="font-size:16px; font-weight:600; color:#888888;">No results yet</div>
             <div style="font-size:13px; margin-top:6px;">Run simulations in the <strong>Simulations</strong> or <strong>E2E Chain</strong> tab to see results here.</div>
         </div>
         """, unsafe_allow_html=True)
