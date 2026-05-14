@@ -129,10 +129,10 @@ SCENARIOS: dict[str, dict] = {
         "persona_idx": 3,
     },
     "💊 Post-Treatment Follow-up": {
-        "goal": "Report sensitivity after treatment and book a follow-up check",
-        "opener": "I had a filling done last week and it's still sensitive to cold",
+        "goal": "Report sensitivity after treatment and book a follow-up check as an existing patient",
+        "opener": "I had a filling done last week and it's still sensitive to cold, I need a follow-up",
         "type": "book",
-        "persona_idx": 3,
+        "persona_idx": 2,   # Robert Lee – existing patient (is_new=False), correct for follow-up
     },
 }
 
@@ -289,7 +289,8 @@ RULES:
 12. If asked insurance → {persona.insurance}
 13. If asked for phone number / contact number → {patient_phone if patient_phone else "use the number I'm texting from"}
 14. If given a choice between two options → pick the first one
-15. Output ONLY your reply text. No quotes, no labels, no explanation."""
+15. If asked for full name / first and last name together → {persona.first_name} {persona.last_name}
+16. Output ONLY your reply text. No quotes, no labels, no explanation."""
 
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
