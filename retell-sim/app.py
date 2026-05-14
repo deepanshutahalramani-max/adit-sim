@@ -39,7 +39,7 @@ HOSTS = {
 }
 
 MAX_PARALLEL = 20
-DEFAULT_AGENT_PHONE = "+14122652546"   # Sofia – Elegant Dental
+DEFAULT_AGENT_PHONE = "+12673565689"   # Siriyaa – Test QA (live prod)
 
 # ── Preset scenarios ──────────────────────────────────────────────────────────
 PRESET_SCENARIOS: dict[str, list[str]] = {
@@ -165,7 +165,7 @@ with st.sidebar:
     use_llm_judge = st.toggle("LLM Judge (GPT-4o-mini)", value=True)
 
     st.divider()
-    st.caption(f"Agent: **Sofia** · Elegant Dental")
+    st.caption(f"Agent: **Siriyaa** · Test QA - AI Agent")
     st.caption(f"Phone: `{agent_phone}`")
     st.caption(f"Host: `{api_base}`")
 
