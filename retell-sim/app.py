@@ -33,7 +33,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── Global CSS — ADIT brand ───────────────────────────────────────────────────
+# ── Global CSS — ADIT brand (matches training.adit.com) ──────────────────────
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
@@ -49,262 +49,281 @@ footer { visibility: hidden; }
 [data-testid="stToolbar"] { display: none !important; }
 [data-testid="stDecoration"] { display: none !important; }
 
-/* App background */
-.stApp { background: #F0F4F9 !important; }
-.block-container { padding-top: 24px !important; padding-bottom: 40px !important; }
+/* ── White app background ────────────────────────────── */
+.stApp { background: #FFFFFF !important; }
+.block-container {
+    padding-top: 0 !important;
+    padding-bottom: 48px !important;
+    max-width: 1200px !important;
+}
 
-/* ── Sidebar ─────────────────────────────────────────── */
+/* ── Sidebar — dark navy ─────────────────────────────── */
 [data-testid="stSidebar"] {
-    background: #0C1526 !important;
-    border-right: 1px solid #1A2740 !important;
+    background: #0C1626 !important;
+    border-right: 1px solid #182236 !important;
 }
 [data-testid="stSidebar"] .stSelectbox label,
 [data-testid="stSidebar"] .stTextInput label,
 [data-testid="stSidebar"] .stToggle label,
 [data-testid="stSidebar"] .stNumberInput label {
     color: #7A90B0 !important;
-    font-size: 11px !important;
-    font-weight: 600 !important;
+    font-size: 10.5px !important;
+    font-weight: 700 !important;
     text-transform: uppercase !important;
-    letter-spacing: 0.07em !important;
+    letter-spacing: 0.09em !important;
 }
 [data-testid="stSidebar"] .stTextInput input,
 [data-testid="stSidebar"] [data-baseweb="select"] > div {
-    background: #1A2740 !important;
-    border: 1px solid #253550 !important;
+    background: #182236 !important;
+    border: 1px solid #243249 !important;
     color: #E2E8F0 !important;
-    border-radius: 8px !important;
+    border-radius: 6px !important;
+    font-size: 13px !important;
 }
 [data-testid="stSidebar"] p,
 [data-testid="stSidebar"] .stCaption,
 [data-testid="stSidebar"] small { color: #7A90B0 !important; }
-[data-testid="stSidebar"] code { background: #1A2740 !important; color: #93C5FD !important; }
-[data-testid="stSidebar"] hr { border-color: #1A2740 !important; margin: 16px 0 !important; }
+[data-testid="stSidebar"] code {
+    background: #182236 !important;
+    color: #F5820D !important;
+    border-radius: 4px !important;
+    padding: 1px 5px !important;
+    font-size: 11px !important;
+}
+[data-testid="stSidebar"] hr { border-color: #182236 !important; margin: 14px 0 !important; }
+[data-testid="stSidebar"] .stToggle > label > div { background: #243249 !important; }
+[data-testid="stSidebar"] .stToggle > label > div[data-checked="true"] { background: #F5820D !important; }
 
-/* ── Primary button ─────────────────────────────────── */
+/* ── Primary button — ADIT orange ────────────────────── */
 .stButton > button[kind="primary"] {
-    background: linear-gradient(135deg, #1740B8 0%, #2563EB 100%) !important;
+    background: #F5820D !important;
     color: white !important;
     border: none !important;
-    border-radius: 8px !important;
+    border-radius: 6px !important;
     font-weight: 600 !important;
-    font-size: 14px !important;
+    font-size: 13.5px !important;
     padding: 10px 24px !important;
-    box-shadow: 0 2px 12px rgba(37, 99, 235, 0.35) !important;
-    transition: all 0.18s ease !important;
+    transition: background 0.15s ease !important;
+    letter-spacing: 0.01em !important;
 }
 .stButton > button[kind="primary"]:hover {
-    transform: translateY(-1px) !important;
-    box-shadow: 0 6px 20px rgba(37, 99, 235, 0.45) !important;
+    background: #E0720A !important;
 }
 .stButton > button[kind="secondary"] {
     background: white !important;
-    color: #2563EB !important;
-    border: 1.5px solid #BFDBFE !important;
-    border-radius: 8px !important;
-    font-weight: 500 !important;
+    color: #F5820D !important;
+    border: 1.5px solid #F5820D !important;
+    border-radius: 6px !important;
+    font-weight: 600 !important;
+    font-size: 13.5px !important;
+}
+.stButton > button[kind="secondary"]:hover {
+    background: #FFF7ED !important;
 }
 
-/* ── Tabs ────────────────────────────────────────────── */
+/* ── Tabs — matches ADIT nav style ───────────────────── */
 .stTabs [data-baseweb="tab-list"] {
-    background: white !important;
-    border-radius: 10px !important;
-    padding: 5px !important;
-    gap: 3px !important;
-    border: 1px solid #E2E8F0 !important;
+    background: transparent !important;
+    border-bottom: 2px solid #F0F0F0 !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    gap: 0 !important;
     margin-bottom: 28px !important;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.05) !important;
+    box-shadow: none !important;
 }
 .stTabs [data-baseweb="tab"] {
-    border-radius: 7px !important;
+    border-radius: 0 !important;
     font-weight: 500 !important;
-    font-size: 13.5px !important;
-    color: #64748B !important;
-    padding: 8px 18px !important;
+    font-size: 14px !important;
+    color: #6B7280 !important;
+    padding: 10px 20px !important;
     background: transparent !important;
     border: none !important;
-    transition: all 0.15s ease !important;
+    border-bottom: 2px solid transparent !important;
+    margin-bottom: -2px !important;
 }
 .stTabs [aria-selected="true"] {
-    background: #2563EB !important;
-    color: white !important;
-    box-shadow: 0 2px 8px rgba(37,99,235,0.3) !important;
+    color: #0C1626 !important;
+    font-weight: 600 !important;
+    background: transparent !important;
+    border-bottom: 2px solid #F5820D !important;
+    box-shadow: none !important;
 }
 
-/* ── Metric cards ────────────────────────────────────── */
+/* ── Metric / stat cards — orange border like training.adit.com ── */
 [data-testid="stMetric"] {
     background: white !important;
-    border-radius: 12px !important;
-    padding: 20px 24px !important;
-    border: 1px solid #E2E8F0 !important;
-    box-shadow: 0 1px 6px rgba(0,0,0,0.05) !important;
+    border-radius: 6px !important;
+    padding: 18px 20px !important;
+    border: 1px solid #F5820D !important;
 }
 [data-testid="stMetricLabel"] > div {
-    font-size: 11px !important;
-    font-weight: 600 !important;
+    font-size: 10.5px !important;
+    font-weight: 700 !important;
     text-transform: uppercase !important;
-    letter-spacing: 0.06em !important;
-    color: #94A3B8 !important;
+    letter-spacing: 0.08em !important;
+    color: #6B7280 !important;
 }
 [data-testid="stMetricValue"] > div {
-    font-size: 30px !important;
+    font-size: 28px !important;
     font-weight: 700 !important;
-    color: #0F172A !important;
+    color: #0C1626 !important;
     letter-spacing: -0.5px !important;
+    margin-top: 4px !important;
 }
+[data-testid="stMetricDelta"] { display: none !important; }
 
-/* ── Expander / result cards ────────────────────────── */
+/* ── Expander / result cards ─────────────────────────── */
 .stExpander {
     background: white !important;
-    border: 1px solid #E2E8F0 !important;
-    border-radius: 12px !important;
+    border: 1px solid #F5820D !important;
+    border-radius: 6px !important;
     margin-bottom: 10px !important;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.04) !important;
     overflow: hidden !important;
 }
-details[open].stExpander { border-top: 3px solid #2563EB !important; }
 .stExpander summary {
     font-weight: 600 !important;
     font-size: 13.5px !important;
-    color: #0F172A !important;
-    padding: 14px 20px !important;
+    color: #0C1626 !important;
+    padding: 14px 18px !important;
 }
 
 /* ── Inputs ─────────────────────────────────────────── */
-.stTextInput input, .stTextArea textarea,
-.stNumberInput input {
-    border-radius: 8px !important;
-    border: 1.5px solid #E2E8F0 !important;
-    font-size: 14px !important;
+.stTextInput input, .stTextArea textarea, .stNumberInput input {
+    border-radius: 6px !important;
+    border: 1px solid #D1D5DB !important;
+    font-size: 13.5px !important;
     background: white !important;
+    color: #0C1626 !important;
     transition: border-color 0.15s !important;
 }
-.stTextInput input:focus, .stTextArea textarea:focus,
-.stNumberInput input:focus {
-    border-color: #2563EB !important;
-    box-shadow: 0 0 0 3px rgba(37,99,235,0.1) !important;
+.stTextInput input:focus, .stTextArea textarea:focus, .stNumberInput input:focus {
+    border-color: #F5820D !important;
+    box-shadow: 0 0 0 3px rgba(245,130,13,0.12) !important;
 }
 [data-baseweb="select"] > div {
-    border-radius: 8px !important;
-    border: 1.5px solid #E2E8F0 !important;
+    border-radius: 6px !important;
+    border: 1px solid #D1D5DB !important;
     background: white !important;
+}
+.stMultiSelect [data-baseweb="tag"] {
+    background: #FFF7ED !important;
+    border: 1px solid #FED7AA !important;
+    color: #C2540A !important;
+    border-radius: 4px !important;
 }
 
 /* ── Alerts ─────────────────────────────────────────── */
-.stSuccess, .stInfo, .stError, .stWarning {
-    border-radius: 8px !important;
-    font-size: 14px !important;
-}
+.stSuccess { background: #F0FDF4 !important; border: 1px solid #BBF7D0 !important; border-radius: 6px !important; }
+.stInfo    { background: #FFF7ED !important; border: 1px solid #FED7AA !important; border-radius: 6px !important; }
+.stError   { background: #FEF2F2 !important; border: 1px solid #FECACA !important; border-radius: 6px !important; }
+.stWarning { background: #FFFBEB !important; border: 1px solid #FDE68A !important; border-radius: 6px !important; }
 
 /* ── Progress bar ────────────────────────────────────── */
 [data-testid="stProgressBar"] > div > div {
-    background: linear-gradient(90deg, #1740B8, #3B82F6) !important;
+    background: #F5820D !important;
     border-radius: 4px !important;
 }
 
 /* ── Dataframe ───────────────────────────────────────── */
 [data-testid="stDataFrame"] {
-    border-radius: 12px !important;
+    border-radius: 6px !important;
     overflow: hidden !important;
-    border: 1px solid #E2E8F0 !important;
-    box-shadow: 0 1px 6px rgba(0,0,0,0.05) !important;
+    border: 1px solid #E5E7EB !important;
 }
 
 /* ── Typography ──────────────────────────────────────── */
-h1 { color: #0F172A !important; font-weight: 700 !important; font-size: 22px !important; letter-spacing: -0.3px !important; }
-h2 { color: #0F172A !important; font-weight: 600 !important; font-size: 18px !important; }
-h3 { color: #1E293B !important; font-weight: 600 !important; font-size: 15px !important; }
-p  { color: #334155 !important; font-size: 14px !important; }
-.stCaption > div { color: #94A3B8 !important; font-size: 12.5px !important; }
-hr { border-color: #E2E8F0 !important; }
+h1 { color: #0C1626 !important; font-weight: 700 !important; font-size: 22px !important; letter-spacing: -0.3px !important; }
+h2 { color: #0C1626 !important; font-weight: 700 !important; font-size: 20px !important; letter-spacing: -0.2px !important; }
+h3 { color: #1F2937 !important; font-weight: 600 !important; font-size: 15px !important; }
+p  { color: #4B5563 !important; font-size: 14px !important; line-height: 1.6 !important; }
+.stCaption > div { color: #9CA3AF !important; font-size: 12.5px !important; }
+hr { border-color: #F3F4F6 !important; }
 
-/* ── Chat bubble overrides ───────────────────────────── */
+/* ── Chat bubbles ────────────────────────────────────── */
 .patient-bubble {
-    background: #F1F5F9;
-    border-radius: 12px 12px 12px 4px;
+    background: #F3F4F6;
+    border-radius: 0 12px 12px 12px;
     padding: 10px 14px;
     font-size: 13.5px;
-    color: #1E293B;
-    margin: 4px 0;
+    color: #1F2937;
+    margin: 2px 0;
     display: inline-block;
-    max-width: 85%;
+    max-width: 80%;
+    line-height: 1.5;
 }
 .agent-bubble {
-    background: #EFF6FF;
-    border: 1px solid #BFDBFE;
-    border-radius: 12px 12px 4px 12px;
+    background: #FFF7ED;
+    border: 1px solid #FED7AA;
+    border-radius: 12px 0 12px 12px;
     padding: 10px 14px;
     font-size: 13.5px;
-    color: #1E3A6E;
-    margin: 4px 0;
+    color: #7C2D12;
+    margin: 2px 0;
     display: inline-block;
-    max-width: 85%;
+    max-width: 80%;
+    line-height: 1.5;
 }
 .latency-badge {
     font-size: 11px;
-    color: #94A3B8;
+    color: #9CA3AF;
     margin-left: 6px;
+    font-weight: 400;
 }
 </style>
 """, unsafe_allow_html=True)
 
-# ── Page header ───────────────────────────────────────────────────────────────
+# ── Top nav bar — dark navy like training.adit.com ────────────────────────────
 st.markdown("""
 <div style="
-    background: linear-gradient(135deg, #0C1E3E 0%, #1740B8 60%, #2563EB 100%);
-    padding: 28px 36px;
-    border-radius: 16px;
-    margin-bottom: 28px;
+    background: #0C1626;
+    padding: 0 32px;
+    height: 52px;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    box-shadow: 0 4px 24px rgba(23, 64, 184, 0.25);
+    margin: -1rem -1rem 0 -1rem;
+    position: sticky;
+    top: 0;
+    z-index: 999;
 ">
-    <div>
+    <div style="display:flex; align-items:center; gap:12px;">
         <div style="
-            color: rgba(255,255,255,0.55);
-            font-size: 11px;
-            font-weight: 700;
-            letter-spacing: 0.18em;
-            text-transform: uppercase;
-            margin-bottom: 6px;
-        ">ADIT · AI FRONT DESK</div>
-        <div style="
-            color: white;
-            font-size: 30px;
-            font-weight: 800;
-            letter-spacing: -0.8px;
-            line-height: 1.1;
-        ">Agent QA Platform</div>
-        <div style="
-            color: rgba(255,255,255,0.6);
-            font-size: 14px;
-            margin-top: 8px;
-            font-weight: 400;
-        ">Simulate, evaluate and debug your AI dental receptionist at scale</div>
+            width: 32px; height: 32px;
+            background: #F5820D;
+            border-radius: 6px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 16px; font-weight: 800; color: white;
+            letter-spacing: -1px;
+        ">a</div>
+        <span style="color: white; font-size: 14px; font-weight: 600; letter-spacing: -0.1px;">Agent QA Platform</span>
+        <span style="color: #3D5275; font-size: 14px; margin: 0 4px;">·</span>
+        <span style="color: #7A90B0; font-size: 13px;">AI Front Desk</span>
     </div>
-    <div style="
-        background: rgba(255,255,255,0.1);
-        border: 1px solid rgba(255,255,255,0.15);
-        border-radius: 14px;
-        padding: 16px 24px;
-        text-align: center;
-        backdrop-filter: blur(4px);
-    ">
-        <div style="color: rgba(255,255,255,0.5); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em;">Active Agent</div>
-        <div style="color: white; font-size: 18px; font-weight: 700; margin-top: 4px; letter-spacing: -0.3px;">Siriyaa</div>
-        <div style="margin-top: 6px;">
-            <span style="
-                background: rgba(16,185,129,0.2);
-                border: 1px solid rgba(16,185,129,0.4);
-                color: #6EE7B7;
-                font-size: 11px;
-                font-weight: 600;
-                padding: 2px 10px;
-                border-radius: 20px;
-            ">● Live Production</span>
-        </div>
+    <div style="display:flex; align-items:center; gap:16px;">
+        <span style="
+            background: rgba(245,130,13,0.15);
+            border: 1px solid rgba(245,130,13,0.3);
+            color: #F5820D;
+            font-size: 11px; font-weight: 700;
+            padding: 3px 10px; border-radius: 20px;
+            text-transform: uppercase; letter-spacing: 0.06em;
+        ">● Live Production</span>
+        <span style="color: #7A90B0; font-size: 13px;">Siriyaa · Test QA Agent</span>
     </div>
+</div>
+<div style="height: 32px;"></div>
+""", unsafe_allow_html=True)
+
+# ── Page title ────────────────────────────────────────────────────────────────
+st.markdown("""
+<div style="margin-bottom: 28px;">
+    <h1 style="margin:0 0 4px 0; font-size:26px; font-weight:700; color:#0C1626; letter-spacing:-0.5px;">
+        Agent Simulations
+    </h1>
+    <p style="margin:0; color:#6B7280; font-size:14px;">
+        Simulate patient conversations, evaluate quality, and debug your AI receptionist.
+    </p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -438,9 +457,16 @@ for key, val in [("results", []), ("running", False), ("chain_results", None)]:
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("""
-    <div style="padding: 8px 0 20px 0; border-bottom: 1px solid #1A2740; margin-bottom: 4px;">
-        <div style="color: #3B82F6; font-size: 10px; font-weight: 800; letter-spacing: 0.2em; text-transform: uppercase; margin-bottom: 4px;">ADIT</div>
-        <div style="color: #F1F5F9; font-size: 17px; font-weight: 700; letter-spacing: -0.3px;">Agent QA Platform</div>
+    <div style="padding: 8px 0 20px 0; border-bottom: 1px solid #182236; margin-bottom: 4px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+            <div style="width:28px;height:28px;background:#F5820D;border-radius:5px;
+                        display:flex;align-items:center;justify-content:center;
+                        font-size:14px;font-weight:800;color:white;">a</div>
+            <div>
+                <div style="color: #F1F5F9; font-size: 14px; font-weight: 700; letter-spacing: -0.2px; line-height:1.2;">Agent QA</div>
+                <div style="color: #4A6080; font-size: 11px; font-weight: 500;">AI Front Desk</div>
+            </div>
+        </div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -873,16 +899,16 @@ def generate_test_scenarios(instruction: str, oai_key: str) -> list[dict]:
 # ── Display helper ─────────────────────────────────────────────────────────────
 def display_result(r: SimResult, expanded: bool = True):
     OUTCOME_META = {
-        "booking_confirmed": ("📅", "Booking Confirmed", "#059669", "#ECFDF5", "#A7F3D0"),
-        "task_created":      ("📋", "Task Created",      "#2563EB", "#EFF6FF", "#BFDBFE"),
-        "incomplete":        ("⏳", "Incomplete",         "#D97706", "#FFFBEB", "#FDE68A"),
+        "booking_confirmed": ("📅", "Booking Confirmed", "#059669", "#F0FDF4", "#BBF7D0"),
+        "task_created":      ("📋", "Task Created",      "#C2540A", "#FFF7ED", "#FED7AA"),
+        "incomplete":        ("⏳", "Incomplete",         "#B45309", "#FFFBEB", "#FDE68A"),
         "error":             ("🚨", "Error",              "#DC2626", "#FEF2F2", "#FECACA"),
-        "":                  ("",   "",                   "#64748B", "#F8FAFC", "#E2E8F0"),
+        "":                  ("",   "",                   "#6B7280", "#F9FAFB", "#E5E7EB"),
     }
     icon, label, color, bg, border = OUTCOME_META.get(r.outcome_type, OUTCOME_META[""])
 
     status_icon = "✅" if r.passed else "❌"
-    score_color = "#059669" if r.score >= 80 else "#D97706" if r.score >= 60 else "#DC2626"
+    score_color = "#F5820D" if r.score >= 80 else "#B45309" if r.score >= 60 else "#DC2626"
     header = f"{status_icon}  {r.scenario}   ·   {icon} {label}   ·   Score {r.score}/100   ·   {r.total_ms/1000:.1f}s   ·   {len(r.turns)//2} turns"
 
     with st.expander(header, expanded=expanded):
