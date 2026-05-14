@@ -56,9 +56,11 @@ BOOKING_CONFIRMED_KWS = [
 TASK_CREATED_KWS = [
     "i've created a note", "i have created a note", "created a note for the team",
     "note for the team", "team will contact", "team member will",
-    "someone will reach out", "team will reach out", "i've made a note",
-    "passed this along", "i'll have someone", "i will have someone",
-    "created a task", "i've noted", "i have noted",
+    "a team member will", "someone will reach out", "team will reach out",
+    "i've made a note", "passed this along", "i'll have someone",
+    "i will have someone", "created a task", "i've noted", "i have noted",
+    "your request has been sent", "request has been sent",
+    "will contact you soon", "will reach out soon",
 ]
 ALL_SUCCESS_KWS = BOOKING_CONFIRMED_KWS + TASK_CREATED_KWS
 
@@ -222,6 +224,7 @@ def smart_patient_reply(
     history: list[Turn],
     goal: str,
     oai_key: str,
+    patient_phone: str = "",
 ) -> tuple[str, bool]:
     """
     GPT-4o-mini reads the agent's actual message and generates a realistic
@@ -267,6 +270,7 @@ YOUR DETAILS — reveal ONLY when the agent's question asks for that specific pi
 - Preferred day: {persona.preferred_day}
 - Preferred time of day: {persona.preferred_time}
 - Are you new or existing: {"New patient" if persona.is_new else "Existing patient"}
+- Phone number: {patient_phone if patient_phone else "the number I'm texting from"}
 
 YOUR GOAL: {goal}
 
@@ -283,8 +287,9 @@ RULES:
 10. If asked last name → {persona.last_name}
 11. If asked date of birth / DOB → {persona.dob}
 12. If asked insurance → {persona.insurance}
-13. If given a choice between two options → pick the first one
-14. Output ONLY your reply text. No quotes, no labels, no explanation."""
+13. If asked for phone number / contact number → {patient_phone if patient_phone else "use the number I'm texting from"}
+14. If given a choice between two options → pick the first one
+15. Output ONLY your reply text. No quotes, no labels, no explanation."""
 
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -404,7 +409,7 @@ def run_simulation(
             last_agent = next((t.message for t in reversed(turns) if t.role == "agent"), "")
             if last_agent and oai_key:
                 try:
-                    current_msg, should_end = smart_patient_reply(last_agent, persona, turns, config["goal"], oai_key)
+                    current_msg, should_end = smart_patient_reply(last_agent, persona, turns, config["goal"], oai_key, patient_phone)
                     if should_end:
                         passed = True
                         outcome_type = "task_created" if any(kw in last_agent.lower() for kw in TASK_CREATED_KWS) else "booking_confirmed"
@@ -438,15 +443,14 @@ def run_simulation(
 
         try:
             current_msg, should_end = smart_patient_reply(
-                agent_msg, persona, turns, config["goal"], oai_key
+                agent_msg, persona, turns, config["goal"], oai_key, patient_phone
             )
             if should_end:
                 passed = True
-                # Detect outcome type from last agent message
                 outcome_type = (
                     "booking_confirmed" if any(kw in agent_lower for kw in BOOKING_CONFIRMED_KWS)
                     else "task_created" if any(kw in agent_lower for kw in TASK_CREATED_KWS)
-                    else "booking_confirmed"  # smart patient said DONE → assume confirmed
+                    else "booking_confirmed"
                 )
                 break
         except Exception as e:
