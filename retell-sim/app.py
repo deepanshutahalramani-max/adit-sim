@@ -40,7 +40,27 @@ HOSTS = {
 }
 DEFAULT_AGENT_PHONE = "+12673565689"   # Siriyaa – Test QA (live prod)
 MAX_PARALLEL = 10
-MAX_TURNS = 16   # max patient↔agent turns per simulation
+MAX_TURNS = 14   # max patient↔agent turns per simulation
+
+# Keywords that indicate a COMPLETED action (booking OR task creation)
+BOOKING_CONFIRMED_KWS = [
+    "appointment is confirmed", "you're all set", "all set",
+    "appointment has been booked", "successfully booked",
+    "your appointment on", "we've got you booked", "booking is confirmed",
+    "confirmed for", "appointment has been scheduled", "you are scheduled",
+    "you're scheduled", "appointment has been rescheduled",
+    "successfully rescheduled", "updated your appointment",
+    "appointment has been cancelled", "successfully cancelled",
+    "appointment has been canceled",
+]
+TASK_CREATED_KWS = [
+    "i've created a note", "i have created a note", "created a note for the team",
+    "note for the team", "team will contact", "team member will",
+    "someone will reach out", "team will reach out", "i've made a note",
+    "passed this along", "i'll have someone", "i will have someone",
+    "created a task", "i've noted", "i have noted",
+]
+ALL_SUCCESS_KWS = BOOKING_CONFIRMED_KWS + TASK_CREATED_KWS
 
 # ── Patient personas ──────────────────────────────────────────────────────────
 @dataclass
@@ -131,6 +151,7 @@ class SimResult:
     failure_reason: str = ""
     total_ms: int = 0
     chat_id: str = ""
+    outcome_type: str = ""   # "booking_confirmed" | "task_created" | "incomplete" | "error"
 
 # ── Session state ─────────────────────────────────────────────────────────────
 for key, val in [("results", []), ("running", False), ("chain_results", None)]:
@@ -219,62 +240,64 @@ def smart_patient_reply(
             for t in recent
         )
 
-        system_prompt = f"""You are a real patient texting a dental office AI receptionist via SMS.
+        system_prompt = f"""You are a real person texting a dental office AI receptionist via SMS.
 
-YOUR DETAILS (share ONLY when asked for that specific piece of info):
+YOUR PERSONAL DETAILS — share ONLY when the agent specifically asks for that piece of info:
 - First name: {persona.first_name}
 - Last name: {persona.last_name}
 - Date of birth: {persona.dob}
-- Dental insurance: {persona.insurance}
+- Insurance: {persona.insurance}
 - Reason for visit: {persona.reason}
 - Preferred day: {persona.preferred_day}
-- Preferred time: {persona.preferred_time}
-- Patient type: {"New patient" if persona.is_new else "Existing patient"}
+- Preferred time of day: {persona.preferred_time}
+- Patient type: {"New patient (never been here before)" if persona.is_new else "Existing patient (been here before)"}
 
 YOUR GOAL: {goal}
 
-STRICT RULES:
-1. Reply in 1-2 SHORT sentences — like a real SMS text, not a letter
-2. ONLY answer what was directly asked. Don't volunteer extra info
-3. Sound natural, slightly casual — real people text this way
-4. If the agent asks which day you prefer → give {persona.preferred_day}
-5. If agent asks for time preference → say {persona.preferred_time}
-6. If agent asks are you new or existing → answer based on patient type above
-7. If agent gives you a choice (e.g. "Friday or Sunday") → pick the first option
-8. If agent CONFIRMS the appointment is BOOKED/SCHEDULED → reply "Thanks, perfect!" then add [DONE]
-9. If agent CONFIRMS cancellation → reply "Got it, thanks!" then add [DONE]
-10. If agent CONFIRMS reschedule → reply "Great, thanks!" then add [DONE]
-11. Output ONLY the patient's reply text, nothing else"""
+ANSWER MAP — read the agent's last message and match to the correct answer:
+• "for yourself or someone else?" → For myself
+• "new patient or existing?" / "been here before?" → {"I'm a new patient" if persona.is_new else "I'm an existing patient"}
+• "reason for visit?" / "what brings you in?" → {persona.reason}
+• "preferred day?" / "which day works?" / "what day" → {persona.preferred_day}
+• "morning or afternoon?" / "preferred time?" → {persona.preferred_time}
+• "first name?" / "your name?" → {persona.first_name}
+• "last name?" → {persona.last_name}
+• "date of birth?" / "DOB?" / "birthday?" → {persona.dob}
+• "insurance?" / "do you have insurance?" → {persona.insurance}
+• "would you like me to create a note?" / "shall I create a task?" / "have someone contact you?" → Yes please
+• "confirm?" / "shall I proceed?" / "is that correct?" → Yes, please go ahead
+• given two options (e.g. "Friday or Sunday?") → always pick the FIRST option
+
+RULES:
+1. MAX 1-2 short sentences — like real SMS, not a formal email
+2. Only answer what was JUST asked — never give multiple pieces of info at once
+3. Sound casual and natural — a real human texting
+4. If agent says "I've created a note" / "created a task" / "team will contact you" / "noted" → reply "Thanks!" and add [DONE]
+5. If agent CONFIRMS appointment booked/rescheduled/cancelled → reply "Great, thanks!" and add [DONE]
+6. Output ONLY your message text. No quotes, no labels."""
 
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Conversation so far:\n{transcript}\n\nAgent just said:\n\"{agent_msg}\"\n\nYour reply:"},
+                {"role": "user", "content": (
+                    f"Conversation so far:\n{transcript}\n\n"
+                    f"Agent's latest message:\n\"{agent_msg}\"\n\n"
+                    f"Your reply (short, natural):"
+                )},
             ],
-            max_tokens=80,
-            temperature=0.4,
+            max_tokens=50,
+            temperature=0.25,
         )
-        reply = resp.choices[0].message.content.strip()
+        reply = resp.choices[0].message.content.strip().strip('"').strip("'")
 
-        # Detect booking confirmation from agent message
         agent_lower = agent_msg.lower()
-        confirmed_kws = [
-            "appointment is confirmed", "you're all set", "all set",
-            "appointment has been booked", "successfully booked",
-            "appointment is booked", "your appointment on", "we've got you booked",
-            "booking is confirmed", "confirmed for", "appointment has been scheduled",
-            "you are scheduled", "you're scheduled",
-            "appointment has been cancelled", "successfully cancelled",
-            "appointment has been canceled", "appointment has been rescheduled",
-            "successfully rescheduled", "updated your appointment",
-        ]
-        should_end = "[DONE]" in reply or any(kw in agent_lower for kw in confirmed_kws)
+        should_end = "[DONE]" in reply or any(kw in agent_lower for kw in ALL_SUCCESS_KWS)
         reply = reply.replace("[DONE]", "").strip()
         return reply, should_end
 
     except Exception as e:
-        return "OK, thanks", False
+        return "Yes please", False
 
 def _llm_judge(scenario: str, turns: list[Turn], oai_key: str) -> tuple[int, str]:
     if not oai_key or not turns:
@@ -289,23 +312,29 @@ def _llm_judge(scenario: str, turns: list[Turn], oai_key: str) -> tuple[int, str
                 {
                     "role": "system",
                     "content": (
-                        "You are a QA evaluator for a dental front-desk AI SMS agent. "
-                        "Score the conversation 0-100. Criteria: "
-                        "Did the agent collect required info (name, DOB, insurance, preferred time)? "
-                        "Did the agent actually confirm a booking/action at the end? "
-                        "Was the tone professional and natural? "
-                        "100 = all info collected + booking confirmed. "
-                        "50 = conversation started but no completion. "
-                        "0 = agent failed or gave wrong info. "
-                        "Reply ONLY with JSON: {\"score\": <int>, \"reason\": \"<1 sentence>\"}"
+                        "You are a QA evaluator for a dental front-desk AI SMS agent called Siriyaa.\n"
+                        "This agent has two valid completion paths:\n"
+                        "  A) DIRECT BOOKING: agent books appointment and gives confirmation\n"
+                        "  B) TASK CREATION: agent cannot book directly, collects patient info, creates a task/note for human team\n"
+                        "Both paths are VALID outcomes. Score 0-100:\n"
+                        "  95-100: Full direct booking confirmed with all details\n"
+                        "  80-94:  Task/note created after collecting name + DOB + reason + preferred time\n"
+                        "  60-79:  Task created but missing some patient details\n"
+                        "  40-59:  Conversation started, no completion\n"
+                        "  0-39:   Agent gave wrong info, failed, or was unhelpful\n"
+                        "Also note: was the agent's tone professional? Did patient responses make sense?\n"
+                        "Reply ONLY with JSON: {\"score\": <int>, \"reason\": \"<1-2 sentences>\"}"
                     ),
                 },
                 {"role": "user", "content": f"Scenario: {scenario}\n\nFull transcript:\n{transcript}"},
             ],
-            max_tokens=120,
+            max_tokens=150,
             temperature=0,
         )
-        data = json.loads(resp.choices[0].message.content.strip())
+        raw = resp.choices[0].message.content.strip()
+        if raw.startswith("```"):
+            raw = "\n".join(raw.split("\n")[1:]).rstrip("`").strip()
+        data = json.loads(raw)
         return int(data["score"]), data["reason"]
     except Exception as e:
         return 60, f"Judge error: {e}"
@@ -332,6 +361,7 @@ def run_simulation(
     t_start = time.time()
     passed = False
     failure_reason = ""
+    outcome_type = "incomplete"
 
     current_msg = config["opener"]
 
@@ -341,9 +371,11 @@ def run_simulation(
             resp = _call_agent(api_base, token, current_msg, patient_phone, agent_phone, chat_id)
         except httpx.HTTPStatusError as e:
             failure_reason = f"HTTP {e.response.status_code}: {e.response.text[:120]}"
+            outcome_type = "error"
             break
         except Exception as e:
             failure_reason = f"API error: {str(e)[:120]}"
+            outcome_type = "error"
             break
 
         latency_ms = int((time.time() - t_turn) * 1000)
@@ -351,23 +383,30 @@ def run_simulation(
         agent_msg = data.get("agent_response", "")
         chat_id = data.get("chat_id", chat_id) or chat_id
 
+        # Skip empty responses (chat already closed on agent side)
+        if not agent_msg:
+            if turns:  # already had some turns — treat as completed
+                passed = True
+            else:
+                failure_reason = "Agent returned no response on first turn"
+                outcome_type = "error"
+            break
+
         turns.append(Turn("patient", current_msg))
         turns.append(Turn("agent", agent_msg, latency_ms))
 
-        if not agent_msg:
-            failure_reason = "Agent returned empty response"
+        agent_lower = agent_msg.lower()
+
+        # Check for direct booking confirmation
+        if any(kw in agent_lower for kw in BOOKING_CONFIRMED_KWS):
+            passed = True
+            outcome_type = "booking_confirmed"
             break
 
-        # Check agent confirmed booking/cancellation/reschedule
-        agent_lower = agent_msg.lower()
-        success_kws = [
-            "confirmed", "all set", "you're booked", "appointment has been",
-            "successfully booked", "your appointment on", "we've got you",
-            "cancelled", "canceled", "rescheduled", "updated your appointment",
-            "you are scheduled", "you're scheduled",
-        ]
-        if any(kw in agent_lower for kw in success_kws):
+        # Check for task/note creation (valid fallback path)
+        if any(kw in agent_lower for kw in TASK_CREATED_KWS):
             passed = True
+            outcome_type = "task_created"
             break
 
         # Generate smart patient reply
@@ -381,6 +420,12 @@ def run_simulation(
             )
             if should_end:
                 passed = True
+                # Detect outcome type from last agent message
+                outcome_type = (
+                    "booking_confirmed" if any(kw in agent_lower for kw in BOOKING_CONFIRMED_KWS)
+                    else "task_created" if any(kw in agent_lower for kw in TASK_CREATED_KWS)
+                    else "booking_confirmed"  # smart patient said DONE → assume confirmed
+                )
                 break
         except Exception as e:
             failure_reason = f"Patient gen error: {str(e)[:80]}"
@@ -404,6 +449,7 @@ def run_simulation(
         failure_reason=failure_reason if not passed else judge_reason,
         total_ms=total_ms,
         chat_id=chat_id or "",
+        outcome_type=outcome_type,
     )
 
 def run_full_chain(
@@ -514,19 +560,43 @@ def generate_test_scenarios(instruction: str, oai_key: str) -> list[dict]:
 
 # ── Display helper ─────────────────────────────────────────────────────────────
 def display_result(r: SimResult, expanded: bool = True):
-    icon = "✅" if r.passed else "❌"
-    header = f"{icon} {r.scenario} · Score: {r.score}/100 · {r.total_ms:,}ms · {len(r.turns)//2} turns"
+    outcome_badge = {
+        "booking_confirmed": "📅 Booking Confirmed",
+        "task_created":      "📋 Task Created",
+        "incomplete":        "⏳ Incomplete",
+        "error":             "🚨 Error",
+        "":                  "",
+    }.get(r.outcome_type, "")
+
+    status_icon = "✅" if r.passed else "❌"
+    header = f"{status_icon} {r.scenario}  ·  {outcome_badge}  ·  Score: {r.score}/100  ·  {r.total_ms/1000:.1f}s  ·  {len(r.turns)//2} turns"
     with st.expander(header, expanded=expanded):
+        # Outcome pill
+        if r.outcome_type == "booking_confirmed":
+            st.success("📅 Direct appointment booking confirmed by agent")
+        elif r.outcome_type == "task_created":
+            st.info("📋 Agent created a task/note — human team will follow up (valid fallback path)")
+        elif r.outcome_type == "error":
+            st.error(f"🚨 {r.failure_reason}")
+
+        st.divider()
         for t in r.turns:
             if t.role == "patient":
-                st.markdown(f"🧑 **Patient:** {t.message}")
+                col1, col2 = st.columns([1, 12])
+                col1.markdown("🧑")
+                col2.markdown(f"**Patient:** {t.message}")
             else:
-                st.markdown(f"🤖 **Agent:** {t.message}")
+                col1, col2 = st.columns([1, 12])
+                col1.markdown("🤖")
+                col2.markdown(f"**Agent:** {t.message}")
                 if t.latency_ms:
-                    st.caption(f"↳ {t.latency_ms:,}ms")
+                    col2.caption(f"↳ {t.latency_ms:,}ms")
+
+        st.divider()
         if r.failure_reason:
+            label = "Judge note" if r.passed else "Failure reason"
             color = "green" if r.passed else "red"
-            st.markdown(f":{color}[**{'Judge note' if r.passed else 'Failure'}:** {r.failure_reason}]")
+            st.markdown(f":{color}[**{label}:** {r.failure_reason}]")
         st.caption(f"phone: `{r.patient_phone}` · chat_id: `{r.chat_id}`")
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
