@@ -45,7 +45,8 @@ st.markdown("""
 
 /* chrome */
 #MainMenu, footer, [data-testid="stToolbar"],
-[data-testid="stDecoration"], .stDeployButton { display: none !important; }
+[data-testid="stDecoration"], .stDeployButton,
+[data-testid="stHeader"], header { display: none !important; }
 
 /* layout */
 .stApp { background: #FAFAF8 !important; }
