@@ -240,9 +240,25 @@ def smart_patient_reply(
             for t in recent
         )
 
+        # ── PRIORITY INTERCEPT: task creation / booking completion ──────────────
+        agent_lower_check = agent_msg.lower()
+        task_trigger_phrases = [
+            "would you like me to create a note", "create a note so",
+            "team member will reach out", "have someone contact",
+            "team will reach out", "team will contact",
+            "shall i create", "should i create a note",
+            "like me to note", "create a task",
+        ]
+        if any(ph in agent_lower_check for ph in task_trigger_phrases):
+            return "Yes please", False
+        completion_phrases = [kw for kw in ALL_SUCCESS_KWS if kw in agent_lower_check]
+        if completion_phrases:
+            return "Great, thanks!", True
+        # ─────────────────────────────────────────────────────────────────────
+
         system_prompt = f"""You are a real person texting a dental office AI receptionist via SMS.
 
-YOUR PERSONAL DETAILS — share ONLY when the agent specifically asks for that piece of info:
+YOUR DETAILS — reveal ONLY when the agent's question asks for that specific piece:
 - First name: {persona.first_name}
 - Last name: {persona.last_name}
 - Date of birth: {persona.dob}
@@ -250,31 +266,25 @@ YOUR PERSONAL DETAILS — share ONLY when the agent specifically asks for that p
 - Reason for visit: {persona.reason}
 - Preferred day: {persona.preferred_day}
 - Preferred time of day: {persona.preferred_time}
-- Patient type: {"New patient (never been here before)" if persona.is_new else "Existing patient (been here before)"}
+- Are you new or existing: {"New patient" if persona.is_new else "Existing patient"}
 
 YOUR GOAL: {goal}
 
-ANSWER MAP — read the agent's last message and match to the correct answer:
-• "for yourself or someone else?" → For myself
-• "new patient or existing?" / "been here before?" → {"I'm a new patient" if persona.is_new else "I'm an existing patient"}
-• "reason for visit?" / "what brings you in?" → {persona.reason}
-• "preferred day?" / "which day works?" / "what day" → {persona.preferred_day}
-• "morning or afternoon?" / "preferred time?" → {persona.preferred_time}
-• "first name?" / "your name?" → {persona.first_name}
-• "last name?" → {persona.last_name}
-• "date of birth?" / "DOB?" / "birthday?" → {persona.dob}
-• "insurance?" / "do you have insurance?" → {persona.insurance}
-• "would you like me to create a note?" / "shall I create a task?" / "have someone contact you?" → Yes please
-• "confirm?" / "shall I proceed?" / "is that correct?" → Yes, please go ahead
-• given two options (e.g. "Friday or Sunday?") → always pick the FIRST option
-
 RULES:
-1. MAX 1-2 short sentences — like real SMS, not a formal email
-2. Only answer what was JUST asked — never give multiple pieces of info at once
-3. Sound casual and natural — a real human texting
-4. If agent says "I've created a note" / "created a task" / "team will contact you" / "noted" → reply "Thanks!" and add [DONE]
-5. If agent CONFIRMS appointment booked/rescheduled/cancelled → reply "Great, thanks!" and add [DONE]
-6. Output ONLY your message text. No quotes, no labels."""
+1. Reply in 1 SHORT sentence — like a real SMS text
+2. ONLY answer what the agent's last question asked. Nothing else.
+3. Sound casual and human — not robotic
+4. If asked "for yourself or someone else?" → For myself
+5. If asked "new or existing patient?" / "been here before?" → {"New patient" if persona.is_new else "Existing patient, I've been there before"}
+6. If asked reason/purpose for visit → {persona.reason}
+7. If asked preferred day/date → {persona.preferred_day}
+8. If asked morning/afternoon/time → {persona.preferred_time}
+9. If asked first name → {persona.first_name}
+10. If asked last name → {persona.last_name}
+11. If asked date of birth / DOB → {persona.dob}
+12. If asked insurance → {persona.insurance}
+13. If given a choice between two options → pick the first one
+14. Output ONLY your reply text. No quotes, no labels, no explanation."""
 
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -282,12 +292,12 @@ RULES:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": (
                     f"Conversation so far:\n{transcript}\n\n"
-                    f"Agent's latest message:\n\"{agent_msg}\"\n\n"
-                    f"Your reply (short, natural):"
+                    f"Agent's latest question:\n\"{agent_msg}\"\n\n"
+                    f"Your 1-sentence reply:"
                 )},
             ],
-            max_tokens=50,
-            temperature=0.25,
+            max_tokens=40,
+            temperature=0.15,
         )
         reply = resp.choices[0].message.content.strip().strip('"').strip("'")
 
@@ -383,14 +393,26 @@ def run_simulation(
         agent_msg = data.get("agent_response", "")
         chat_id = data.get("chat_id", chat_id) or chat_id
 
-        # Skip empty responses (chat already closed on agent side)
+        # Handle empty agent response
         if not agent_msg:
-            if turns:  # already had some turns — treat as completed
-                passed = True
-            else:
-                failure_reason = "Agent returned no response on first turn"
+            if turn_num == 0:
+                failure_reason = "Agent returned no response on first message"
                 outcome_type = "error"
-            break
+                break
+            # Empty mid-conversation: agent may be async-processing.
+            # Re-generate patient reply from last known agent message and continue.
+            last_agent = next((t.message for t in reversed(turns) if t.role == "agent"), "")
+            if last_agent and oai_key:
+                try:
+                    current_msg, should_end = smart_patient_reply(last_agent, persona, turns, config["goal"], oai_key)
+                    if should_end:
+                        passed = True
+                        outcome_type = "task_created" if any(kw in last_agent.lower() for kw in TASK_CREATED_KWS) else "booking_confirmed"
+                        break
+                    continue  # retry loop with new patient msg, no turn appended
+                except Exception:
+                    pass
+            continue  # skip empty turn silently
 
         turns.append(Turn("patient", current_msg))
         turns.append(Turn("agent", agent_msg, latency_ms))
