@@ -12,9 +12,9 @@ import { Dashboard } from "./pages/Dashboard";
 import type { SimResult } from "./types";
 
 const TABS = [
+  { id: "debug",         label: "Debug Suite" },
   { id: "simulations",   label: "Simulations" },
   { id: "chain",         label: "E2E Chain" },
-  { id: "debug",         label: "Debug Suite" },
   { id: "evaluator",     label: "Call Evaluator" },
   { id: "generator",     label: "Test Generator" },
   { id: "dashboard",     label: "Dashboard" },
@@ -23,7 +23,7 @@ const TABS = [
 type TabId = typeof TABS[number]["id"];
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<TabId>("simulations");
+  const [activeTab, setActiveTab] = useState<TabId>("debug");
   const [config, setConfig] = useState<Config>({
     environment: "live",
     apiBase: "https://frontdeskchatagent.adit.com",
