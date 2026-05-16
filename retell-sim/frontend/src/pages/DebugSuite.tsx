@@ -5,7 +5,9 @@ import {
 } from "lucide-react";
 import clsx from "clsx";
 import {
-  analyzeDebug, analyzeDebugText, applyFix, runRegression, fetchRetellPrompt,
+  analyzeDebug, analyzeDebugText, applyFix, runRegression,
+  fetchRetellPrompt, fetchPromptVariants, fetchPromptVariant,
+  type PromptVariantMeta,
 } from "../api";
 import type { Config, DebugAnalysis, SimResult } from "../types";
 import { SimResultCard } from "../components/SimResultCard";
@@ -70,16 +72,47 @@ export function DebugSuite({ config, onResults }: Props) {
   const [extraContext, setExtraContext] = useState("");
   const [promptLoading, setPromptLoading] = useState(true);
   const [promptError, setPromptError] = useState("");
+  const [variants, setVariants] = useState<PromptVariantMeta[]>([]);
+  const [selectedVariant, setSelectedVariant] = useState("all_on");
   const fileRef = useRef<HTMLInputElement>(null);
 
-  /* ── Auto-fetch live Retell prompt on mount ── */
+  /* ── Load variant list + default prompt on mount ── */
   useEffect(() => {
+    // Load variant metadata
+    fetchPromptVariants()
+      .then(vs => setVariants(vs))
+      .catch(() => {/* variants menu will be empty, that's OK */});
+
+    // Load default variant (all_on) — fall back to live Retell fetch if that fails
     setPromptLoading(true);
-    fetchRetellPrompt()
-      .then(data => { setSystemPrompt(data.prompt); setPromptError(""); })
-      .catch(e => setPromptError(e.message ?? "Failed to load prompt"))
+    fetchPromptVariant("all_on")
+      .then(d => { setSystemPrompt(d.prompt); setPromptError(""); })
+      .catch(() =>
+        fetchRetellPrompt()
+          .then(d => { setSystemPrompt(d.prompt); setPromptError(""); })
+          .catch(e => setPromptError(e.message ?? "Failed to load prompt"))
+      )
       .finally(() => setPromptLoading(false));
   }, []);
+
+  const handleVariantChange = (variantId: string) => {
+    setSelectedVariant(variantId);
+    if (variantId === "live") {
+      setPromptLoading(true);
+      setPromptError("");
+      fetchRetellPrompt()
+        .then(d => { setSystemPrompt(d.prompt); })
+        .catch(e => setPromptError(e.message ?? "Failed to load prompt"))
+        .finally(() => setPromptLoading(false));
+    } else {
+      setPromptLoading(true);
+      setPromptError("");
+      fetchPromptVariant(variantId)
+        .then(d => { setSystemPrompt(d.prompt); })
+        .catch(e => setPromptError(e.message ?? "Failed to load variant"))
+        .finally(() => setPromptLoading(false));
+    }
+  };
 
   /* ── Wizard state ── */
   const [step, setStep] = useState<WizardStep>("input");
@@ -297,28 +330,35 @@ export function DebugSuite({ config, onResults }: Props) {
             {/* Left */}
             <div className="space-y-4">
               <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-[10px] font-bold uppercase tracking-widest text-[#ADADAD]">Retell System Prompt</label>
-                  <button
-                    onClick={() => {
-                      setPromptLoading(true); setPromptError("");
-                      fetchRetellPrompt()
-                        .then(d => { setSystemPrompt(d.prompt); })
-                        .catch(e => setPromptError(e.message))
-                        .finally(() => setPromptLoading(false));
-                    }}
-                    className="flex items-center gap-1 text-[11px] font-semibold text-brand-500 hover:underline disabled:opacity-40"
-                    disabled={promptLoading}
-                  >
-                    <RefreshCw className={clsx("w-3 h-3", promptLoading && "animate-spin")} />
-                    {promptLoading ? "Loading…" : "Refresh from Retell"}
-                  </button>
+                <label className="text-[10px] font-bold uppercase tracking-widest text-[#ADADAD] block mb-1.5">Retell System Prompt</label>
+                {/* Variant selector row */}
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="flex gap-1 flex-wrap">
+                    {[
+                      { id: "all_on",          label: "🟢 All Enabled" },
+                      { id: "scheduling_only", label: "📅 Scheduling Only" },
+                      { id: "all_off",         label: "⛔ All Disabled" },
+                      { id: "live",            label: "⚡ Live (Retell)" },
+                    ].map(v => (
+                      <button key={v.id} onClick={() => handleVariantChange(v.id)}
+                        disabled={promptLoading}
+                        className={clsx(
+                          "px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors disabled:opacity-40",
+                          selectedVariant === v.id
+                            ? "bg-brand-500 text-white border-brand-500"
+                            : "bg-white text-[#888] border-[#E5E5E5] hover:border-brand-500 hover:text-brand-500",
+                        )}>
+                        {v.label}
+                      </button>
+                    ))}
+                  </div>
+                  {promptLoading && <RefreshCw className="w-3.5 h-3.5 text-brand-500 animate-spin ml-1" />}
                 </div>
                 {promptError && (
                   <div className="text-[11px] text-red-500 mb-1">⚠ {promptError} — paste manually below</div>
                 )}
                 <textarea value={systemPrompt} onChange={e => setSystemPrompt(e.target.value)} rows={9}
-                  placeholder={promptLoading ? "Loading live prompt from Retell…" : "Paste your full Retell agent system prompt here.\n\nInclude everything: instructions, API call descriptions, edge cases."}
+                  placeholder={promptLoading ? "Loading prompt…" : "Prompt loaded — or paste/edit manually"}
                   className={clsx(
                     "w-full border rounded-xl px-4 py-3 text-[13px] text-[#111] resize-none focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10",
                     promptLoading ? "border-[#E5E5E5] bg-[#FAFAF8] text-[#ADADAD]" : "border-[#E5E5E5]"

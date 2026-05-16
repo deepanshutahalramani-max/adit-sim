@@ -138,6 +138,24 @@ export async function applyFix(params: {
   return post("/debug/apply-fix", params);
 }
 
+export interface PromptVariantMeta {
+  id: string;
+  label: string;
+  description: string;
+}
+
+export async function fetchPromptVariants(): Promise<PromptVariantMeta[]> {
+  const r = await fetch(`${BASE}/retell/prompt-variants`);
+  if (!r.ok) throw new Error(r.statusText);
+  return r.json();
+}
+
+export async function fetchPromptVariant(id: string): Promise<{ id: string; label: string; prompt: string }> {
+  const r = await fetch(`${BASE}/retell/prompt-variants/${id}`);
+  if (!r.ok) throw new Error(r.statusText);
+  return r.json();
+}
+
 export async function fetchRetellPrompt(): Promise<{
   prompt: string;
   llm_id: string;
