@@ -524,11 +524,16 @@ def smart_patient_reply(
         # ── PRIORITY INTERCEPT: task creation / booking completion ──────────────
         agent_lower_check = agent_msg.lower()
         task_trigger_phrases = [
-            "would you like me to create a note", "create a note so",
-            "team member will reach out", "have someone contact",
-            "team will reach out", "team will contact",
-            "shall i create", "should i create a note",
-            "like me to note", "create a task",
+            "would you like me to create a note",
+            "would you like me to create a task",
+            "shall i create a note",
+            "should i create a note",
+            "i can create a note for",
+            "i can have a team member",
+            "would you like me to pass",
+            "like me to pass this along",
+            "shall i have someone",
+            "would you like someone from our team",
         ]
         if any(ph in agent_lower_check for ph in task_trigger_phrases):
             return "Yes please", False
@@ -591,7 +596,16 @@ RULES:
         return reply, should_end
 
     except Exception as e:
-        return "Yes please", False
+        # Never return "Yes please" on failure — that triggers task-creation acceptance.
+        # Return a neutral reply so the simulation keeps running.
+        import random as _r
+        return _r.choice([
+            "Sure, that works for me.",
+            "Okay, sounds good.",
+            "Alright, thank you.",
+            "That's fine with me.",
+            "Yes, that's correct.",
+        ]), False
 
 def _llm_judge(scenario: str, turns: list[Turn], oai_key: str) -> tuple[int, str]:
     if not oai_key or not turns:

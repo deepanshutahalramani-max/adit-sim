@@ -55,12 +55,19 @@ TASK_CREATED_KWS = [
 ]
 ALL_SUCCESS_KWS = BOOKING_CONFIRMED_KWS + TASK_CREATED_KWS
 
+# More precise: these must clearly be the agent OFFERING to create a task/note.
+# Keep phrases long enough to avoid false positives on common sentences.
 TASK_TRIGGER_PHRASES = [
-    "would you like me to create a note", "create a note so",
-    "team member will reach out", "have someone contact",
-    "team will reach out", "team will contact",
-    "shall i create", "should i create a note",
-    "like me to note", "create a task",
+    "would you like me to create a note",
+    "would you like me to create a task",
+    "shall i create a note",
+    "should i create a note",
+    "i can create a note for",
+    "i can have a team member",
+    "would you like me to pass",
+    "like me to pass this along",
+    "shall i have someone",
+    "would you like someone from our team",
 ]
 
 # ── Personas ──────────────────────────────────────────────────────────────────
@@ -246,8 +253,19 @@ RULES:
         should_end = "[DONE]" in reply or any(kw in agent_lower for kw in ALL_SUCCESS_KWS)
         reply = reply.replace("[DONE]", "").strip()
         return reply, should_end
-    except Exception:
-        return "Yes please", False
+    except Exception as exc:
+        # Never return "Yes please" on failure — that triggers task-creation acceptance.
+        # Log and return a neutral patient reply so the simulation can continue.
+        import logging
+        logging.getLogger(__name__).warning("smart_patient_reply OpenAI error: %s", exc)
+        neutral_fallbacks = [
+            "Sure, that works for me.",
+            "Okay, sounds good.",
+            "Alright, thank you.",
+            "That's fine with me.",
+            "Yes, that's correct.",
+        ]
+        return random.choice(neutral_fallbacks), False
 
 def _llm_judge(scenario_label, turns, oai_key):
     if not oai_key or not turns:
