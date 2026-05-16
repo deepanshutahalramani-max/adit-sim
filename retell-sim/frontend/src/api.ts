@@ -120,3 +120,34 @@ export async function runGeneratedScenario(params: {
   }
   return r.json();
 }
+
+export async function analyzeDebugText(params: {
+  description: string;
+  system_prompt: string;
+  extra_context: string;
+  openai_key: string;
+}): Promise<import("./types").DebugAnalysis> {
+  return post("/debug/analyze-text", params);
+}
+
+export async function applyFix(params: {
+  prompt_text: string;
+  section_at_fault: string;
+  suggested_fix: string;
+}): Promise<{ modified_prompt: string; applied_inline: boolean }> {
+  return post("/debug/apply-fix", params);
+}
+
+export async function runRegression(params: {
+  api_base: string;
+  bearer_token: string;
+  agent_phone: string;
+  openai_key: string;
+  use_judge: boolean;
+  scenario_ids?: string[];
+}): Promise<{
+  results: SimResult[];
+  summary: { total: number; passed: number; failed: number; pass_rate: number; avg_score: number };
+}> {
+  return post("/debug/regression", params);
+}

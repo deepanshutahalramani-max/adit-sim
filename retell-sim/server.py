@@ -556,6 +556,60 @@ Return ONLY valid JSON (no markdown, no explanation):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+class AnalyzeTextRequest(BaseModel):
+    description: str
+    system_prompt: str = ""
+    extra_context: str = ""
+    openai_key: str
+
+@app.post("/api/debug/analyze-text")
+def debug_analyze_text(req: AnalyzeTextRequest):
+    """Text-only escalation analysis (no screenshot)."""
+    if not req.openai_key:
+        raise HTTPException(status_code=400, detail="OpenAI API key required")
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=req.openai_key)
+        prompt_block = f"\n\nSYSTEM PROMPT (full Retell agent prompt):\n```\n{req.system_prompt}\n```" if req.system_prompt.strip() else ""
+        context_block = f"\n\nADDITIONAL CONTEXT FROM TESTER: {req.extra_context}" if req.extra_context.strip() else ""
+
+        analysis_prompt = f"""You are a senior QA engineer debugging Siriyaa, an AI dental front-desk SMS receptionist.
+
+A client has escalated this issue:{prompt_block}{context_block}
+
+ESCALATION DESCRIPTION:
+{req.description}
+
+Based on this description, identify exactly what went wrong.
+
+Return ONLY valid JSON (no markdown, no explanation):
+{{
+    "what_happened": "1-2 sentences describing what the agent did wrong",
+    "severity": "low|medium|high|critical",
+    "scenario_type": "booking|reschedule|cancel|insurance|hours|emergency|other",
+    "root_cause": "Specific technical reason the agent failed",
+    "prompt_section_at_fault": "The exact text from the system prompt that is wrong or missing — quote it verbatim. If no prompt was provided, describe what instruction is likely missing.",
+    "suggested_fix": "The exact replacement text or addition to make in the system prompt to fix this issue",
+    "fix_explanation": "1-2 sentences explaining why this change fixes the issue",
+    "repro_opener": "The exact first patient message that would reproduce this bug",
+    "repro_followups": ["patient msg 2", "patient msg 3", "patient msg 4"],
+    "confidence": "high|medium|low"
+}}"""
+
+        resp = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": analysis_prompt}],
+            max_tokens=1400, temperature=0,
+        )
+        raw = resp.choices[0].message.content.strip()
+        if raw.startswith("```"):
+            raw = "\n".join(raw.split("\n")[1:]).rstrip("`").strip()
+        return json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=422, detail=f"Parse error: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/debug/validate")
 def debug_validate(req: ValidationRequest):
     # Temporarily inject a custom repro scenario
@@ -664,6 +718,69 @@ def run_generated_scenario(
     result = _run_simulation_sync(gen_id, api_base, bearer_token, agent_phone, openai_key)
     SCENARIOS.pop(gen_id, None)
     return _result_to_dict(result)
+
+# ── Debug: apply fix to prompt ───────────────────────────────────────────────
+class ApplyFixRequest(BaseModel):
+    prompt_text: str
+    section_at_fault: str
+    suggested_fix: str
+
+@app.post("/api/debug/apply-fix")
+def apply_fix(req: ApplyFixRequest):
+    """
+    String-replace the faulty section with the suggested fix.
+    Returns the modified prompt and whether the replacement was found.
+    """
+    if req.section_at_fault.strip() and req.section_at_fault.strip() in req.prompt_text:
+        modified = req.prompt_text.replace(req.section_at_fault.strip(), req.suggested_fix.strip(), 1)
+        applied = True
+    else:
+        # Section not found verbatim — append the fix as a new instruction
+        modified = req.prompt_text.rstrip() + "\n\n" + req.suggested_fix.strip()
+        applied = False
+    return {"modified_prompt": modified, "applied_inline": applied}
+
+
+# ── Debug: full regression ────────────────────────────────────────────────────
+class RegressionRequest(BaseModel):
+    api_base: str = "https://frontdeskchatagent.adit.com"
+    bearer_token: str
+    agent_phone: str = DEFAULT_AGENT_PHONE
+    openai_key: str = ""
+    use_judge: bool = True
+    scenario_ids: list[str] = []   # empty = run all 8 standard scenarios
+
+@app.post("/api/debug/regression")
+def run_regression(req: RegressionRequest):
+    """Run all (or specified) scenarios in parallel and return pass/fail summary."""
+    ids = req.scenario_ids if req.scenario_ids else list(SCENARIOS.keys())
+    results = []
+    with ThreadPoolExecutor(max_workers=min(8, len(ids))) as ex:
+        futures = [
+            ex.submit(
+                _run_simulation_sync,
+                sid, req.api_base, req.bearer_token,
+                req.agent_phone, req.openai_key, req.use_judge,
+            )
+            for sid in ids
+        ]
+        for fut in futures:
+            try:
+                results.append(_result_to_dict(fut.result()))
+            except Exception as e:
+                results.append({"error": str(e), "passed": False, "score": 0, "scenario_label": "unknown"})
+    n_pass = sum(1 for r in results if r.get("passed"))
+    return {
+        "results": results,
+        "summary": {
+            "total": len(results),
+            "passed": n_pass,
+            "failed": len(results) - n_pass,
+            "pass_rate": round(100 * n_pass / len(results)) if results else 0,
+            "avg_score": round(sum(r.get("score", 0) for r in results) / len(results)) if results else 0,
+        }
+    }
+
 
 # ── Serve built React frontend ─────────────────────────────────────────────────
 _dist = Path(__file__).parent / "frontend" / "dist"
