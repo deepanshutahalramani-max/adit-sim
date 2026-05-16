@@ -2,6 +2,7 @@ export interface Turn {
   role: "patient" | "agent";
   message: string;
   latency_ms: number;
+  api_events?: string[];
 }
 
 export interface ApiCall {

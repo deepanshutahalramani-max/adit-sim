@@ -107,6 +107,7 @@ class Turn:
     role: str
     message: str
     latency_ms: int = 0
+    api_events: list = field(default_factory=list)  # inline API call indicators
 
 @dataclass
 class SimResult:
@@ -303,6 +304,47 @@ def _llm_judge(scenario_label, turns, oai_key):
     except Exception as e:
         return 60, f"Judge error: {e}"
 
+def _infer_api_events(agent_msg: str, latency_ms: int, turn_num: int) -> list[str]:
+    """Detect which internal Siriyaa APIs were likely called based on message content + latency."""
+    events = []
+    m = agent_msg.lower()
+
+    # Booking / scheduling
+    if any(kw in m for kw in ["appointment has been booked", "appointment is booked", "appointment is confirmed",
+                                "appointment has been scheduled", "you are scheduled", "you're scheduled",
+                                "we've got you booked", "booking is confirmed", "successfully booked",
+                                "confirmed for", "your appointment on", "booked on", "booked for",
+                                "scheduled you for", "scheduled for"]):
+        events.append("📅 Book Appointment API → called")
+
+    # Reschedule
+    if any(kw in m for kw in ["appointment has been rescheduled", "successfully rescheduled",
+                                "updated your appointment", "rescheduled to", "moved your appointment"]):
+        events.append("🔄 Reschedule Appointment API → called")
+
+    # Cancel
+    if any(kw in m for kw in ["appointment has been cancelled", "appointment has been canceled",
+                                "successfully cancelled", "successfully canceled", "cancellation confirmed"]):
+        events.append("❌ Cancel Appointment API → called")
+
+    # Task / note creation
+    if any(kw in m for kw in ["i've created a note", "created a note", "i've made a note",
+                                "created a task", "passed this along", "i'll have someone",
+                                "team will contact", "team member will", "someone will reach out",
+                                "your request has been sent", "i've noted"]):
+        events.append("📋 Create Task / Note API → called")
+
+    # New patient creation (inferred from asking for DOB + confirmation)
+    if any(kw in m for kw in ["new patient", "added you", "created your profile",
+                                "set you up", "registered you"]):
+        events.append("👤 Create New Patient API → called")
+
+    # High latency on non-first turn = external API round-trip happening
+    if latency_ms > 3500 and turn_num > 0 and not events:
+        events.append(f"⚡ External API call detected ({latency_ms}ms)")
+
+    return events
+
 def _fmt_error(s: str) -> str:
     if not s:
         return ""
@@ -392,8 +434,9 @@ def _run_simulation_sync(
                     pass
             continue
 
+        api_events = _infer_api_events(agent_msg, latency_ms, turn_num)
         turns.append(Turn("patient", current_msg))
-        turns.append(Turn("agent", agent_msg, latency_ms))
+        turns.append(Turn("agent", agent_msg, latency_ms, api_events))
         agent_lower = agent_msg.lower()
 
         if any(kw in agent_lower for kw in BOOKING_CONFIRMED_KWS):
@@ -466,7 +509,10 @@ def _run_simulation_sync(
 
 def _result_to_dict(r: SimResult) -> dict:
     d = asdict(r)
-    d["turns"] = [{"role": t["role"], "message": t["message"], "latency_ms": t["latency_ms"]} for t in d["turns"]]
+    d["turns"] = [
+        {"role": t["role"], "message": t["message"], "latency_ms": t["latency_ms"], "api_events": t.get("api_events", [])}
+        for t in d["turns"]
+    ]
     d["failure_reason_clean"] = _fmt_error(r.failure_reason)
     return d
 
@@ -893,10 +939,11 @@ async def stream_repro(req: StreamReproRequest):
             if not agent_msg:
                 continue
 
+            api_events = _infer_api_events(agent_msg, api_ms, turn_num)
             turns.append(Turn("patient", current_msg))
-            turns.append(Turn("agent", agent_msg, api_ms))
+            turns.append(Turn("agent", agent_msg, api_ms, api_events))
 
-            yield f"data: {json.dumps({'type': 'agent', 'message': agent_msg, 'latency_ms': api_ms, 'chat_id': chat_id or '', 'api_calls': api_calls})}\n\n"
+            yield f"data: {json.dumps({'type': 'agent', 'message': agent_msg, 'latency_ms': api_ms, 'chat_id': chat_id or '', 'api_calls': api_calls, 'api_events': api_events})}\n\n"
             await asyncio.sleep(0.02)
 
             agent_lower = agent_msg.lower()

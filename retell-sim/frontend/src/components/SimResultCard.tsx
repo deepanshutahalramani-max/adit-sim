@@ -102,15 +102,28 @@ export function SimResultCard({ result: r, defaultExpanded = false }: Props) {
                       </div>
                     </div>
                   ) : (
-                    <div key={i} className="flex items-start gap-2.5 flex-row-reverse">
-                      <div className="w-7 h-7 bg-[#FFF3E8] rounded-full flex items-center justify-center text-[13px] flex-shrink-0 mt-0.5">
-                        🤖
-                      </div>
-                      <div className="text-right">
-                        <div className="text-[10px] font-bold text-[#D4620A] uppercase tracking-widest mb-1">
-                          Siriyaa {t.latency_ms ? <span className="text-[#ADADAD] normal-case font-normal">· {t.latency_ms.toLocaleString()}ms</span> : null}
+                    <div key={i}>
+                      {/* API event pills — shown BEFORE the agent bubble that triggered them */}
+                      {t.api_events && t.api_events.length > 0 && (
+                        <div className="flex flex-col items-center gap-1 my-2">
+                          {t.api_events.map((ev, j) => (
+                            <div key={j} className="flex items-center gap-2 bg-[#F0F5FF] border border-[#C7D7FD] rounded-full px-3 py-1">
+                              <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse flex-shrink-0" />
+                              <span className="text-[11px] font-semibold text-blue-700">{ev}</span>
+                            </div>
+                          ))}
                         </div>
-                        <div className="agent-bubble">{t.message}</div>
+                      )}
+                      <div className="flex items-start gap-2.5 flex-row-reverse">
+                        <div className="w-7 h-7 bg-[#FFF3E8] rounded-full flex items-center justify-center text-[13px] flex-shrink-0 mt-0.5">
+                          🤖
+                        </div>
+                        <div className="text-right">
+                          <div className="text-[10px] font-bold text-[#D4620A] uppercase tracking-widest mb-1">
+                            Siriyaa {t.latency_ms ? <span className="text-[#ADADAD] normal-case font-normal">· {t.latency_ms.toLocaleString()}ms</span> : null}
+                          </div>
+                          <div className="agent-bubble">{t.message}</div>
+                        </div>
                       </div>
                     </div>
                   )

@@ -27,6 +27,7 @@ interface ChatMsg {
   role: "patient" | "agent";
   message: string;
   latency_ms?: number;
+  api_events?: string[];
 }
 
 interface Props {
@@ -96,6 +97,7 @@ export function LiveChat({ params, onDone, onError }: Props) {
                 role: "agent",
                 message: ev.message as string,
                 latency_ms: ev.latency_ms as number,
+                api_events: ev.api_events as string[] | undefined,
               }]);
               if (ev.api_calls) setApiCalls(ev.api_calls as ApiCall[]);
             } else if (ev.type === "error") {
@@ -159,13 +161,26 @@ export function LiveChat({ params, onDone, onError }: Props) {
               </div>
             </div>
           ) : (
-            <div key={i} className="flex items-start gap-2.5 flex-row-reverse">
-              <div className="w-6 h-6 bg-[#FFF3E8] rounded-full flex items-center justify-center text-[12px] flex-shrink-0 mt-0.5">🤖</div>
-              <div className="text-right">
-                <div className="text-[9.5px] font-bold uppercase tracking-widest text-[#D4620A] mb-1">
-                  Siriyaa {m.latency_ms ? <span className="text-[#ADADAD] normal-case font-normal">· {m.latency_ms}ms</span> : null}
+            <div key={i}>
+              {/* Inline API event pills */}
+              {m.api_events && m.api_events.length > 0 && (
+                <div className="flex flex-col items-center gap-1 my-2">
+                  {m.api_events.map((ev, j) => (
+                    <div key={j} className="flex items-center gap-2 bg-[#F0F5FF] border border-[#C7D7FD] rounded-full px-3 py-1">
+                      <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse flex-shrink-0" />
+                      <span className="text-[11px] font-semibold text-blue-700">{ev}</span>
+                    </div>
+                  ))}
                 </div>
-                <div className="agent-bubble text-[13px] max-w-[340px]">{m.message}</div>
+              )}
+              <div className="flex items-start gap-2.5 flex-row-reverse">
+                <div className="w-6 h-6 bg-[#FFF3E8] rounded-full flex items-center justify-center text-[12px] flex-shrink-0 mt-0.5">🤖</div>
+                <div className="text-right">
+                  <div className="text-[9.5px] font-bold uppercase tracking-widest text-[#D4620A] mb-1">
+                    Siriyaa {m.latency_ms ? <span className="text-[#ADADAD] normal-case font-normal">· {m.latency_ms}ms</span> : null}
+                  </div>
+                  <div className="agent-bubble text-[13px] max-w-[340px]">{m.message}</div>
+                </div>
               </div>
             </div>
           )
