@@ -810,6 +810,53 @@ class ApplyFixRequest(BaseModel):
     section_at_fault: str
     suggested_fix: str
 
+# ── Retell: fetch live agent prompt ──────────────────────────────────────────
+RETELL_API_KEY  = "key_fb275adbb9a079ffa32be77492db"
+RETELL_AGENT_ID = "agent_ee5d7e7f782caa9f1789765182"
+
+@app.get("/api/retell/fetch-prompt")
+async def fetch_retell_prompt():
+    """
+    Fetches the live system prompt from Retell for the configured agent.
+    Retell agent → response_engine.llm_id → Retell LLM → general_prompt.
+    """
+    headers = {"Authorization": f"Bearer {RETELL_API_KEY}"}
+    async with httpx.AsyncClient(timeout=15) as client:
+        # Step 1: get agent to find the LLM id
+        agent_resp = await client.get(
+            f"https://api.retell.ai/get-agent/{RETELL_AGENT_ID}",
+            headers=headers,
+        )
+        if agent_resp.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"Retell agent fetch failed: {agent_resp.text}")
+        agent_data = agent_resp.json()
+
+        # Support both old (response_engine.llm_id) and new (llm_id) shapes
+        llm_id = (
+            agent_data.get("llm_id")
+            or (agent_data.get("response_engine") or {}).get("llm_id")
+        )
+        if not llm_id:
+            raise HTTPException(status_code=502, detail=f"No llm_id found in agent response: {agent_data}")
+
+        # Step 2: get the LLM to find the system prompt
+        llm_resp = await client.get(
+            f"https://api.retell.ai/get-retell-llm/{llm_id}",
+            headers=headers,
+        )
+        if llm_resp.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"Retell LLM fetch failed: {llm_resp.text}")
+        llm_data = llm_resp.json()
+
+        prompt = llm_data.get("general_prompt") or llm_data.get("system_prompt") or ""
+        return {
+            "prompt": prompt,
+            "llm_id": llm_id,
+            "agent_id": RETELL_AGENT_ID,
+            "model": llm_data.get("model", ""),
+        }
+
+
 @app.post("/api/debug/apply-fix")
 def apply_fix(req: ApplyFixRequest):
     """

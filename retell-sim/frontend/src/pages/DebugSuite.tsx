@@ -1,11 +1,11 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import {
   Upload, CheckCircle, AlertTriangle,
   RefreshCw, ChevronRight, Copy, Check, ArrowLeft,
 } from "lucide-react";
 import clsx from "clsx";
 import {
-  analyzeDebug, analyzeDebugText, applyFix, runRegression,
+  analyzeDebug, analyzeDebugText, applyFix, runRegression, fetchRetellPrompt,
 } from "../api";
 import type { Config, DebugAnalysis, SimResult } from "../types";
 import { SimResultCard } from "../components/SimResultCard";
@@ -68,7 +68,18 @@ export function DebugSuite({ config, onResults }: Props) {
   const [description, setDescription] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("");
   const [extraContext, setExtraContext] = useState("");
+  const [promptLoading, setPromptLoading] = useState(true);
+  const [promptError, setPromptError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
+
+  /* ── Auto-fetch live Retell prompt on mount ── */
+  useEffect(() => {
+    setPromptLoading(true);
+    fetchRetellPrompt()
+      .then(data => { setSystemPrompt(data.prompt); setPromptError(""); })
+      .catch(e => setPromptError(e.message ?? "Failed to load prompt"))
+      .finally(() => setPromptLoading(false));
+  }, []);
 
   /* ── Wizard state ── */
   const [step, setStep] = useState<WizardStep>("input");
@@ -286,10 +297,32 @@ export function DebugSuite({ config, onResults }: Props) {
             {/* Left */}
             <div className="space-y-4">
               <div>
-                <label className="text-[10px] font-bold uppercase tracking-widest text-[#ADADAD] block mb-1.5">Retell System Prompt</label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-[10px] font-bold uppercase tracking-widest text-[#ADADAD]">Retell System Prompt</label>
+                  <button
+                    onClick={() => {
+                      setPromptLoading(true); setPromptError("");
+                      fetchRetellPrompt()
+                        .then(d => { setSystemPrompt(d.prompt); })
+                        .catch(e => setPromptError(e.message))
+                        .finally(() => setPromptLoading(false));
+                    }}
+                    className="flex items-center gap-1 text-[11px] font-semibold text-brand-500 hover:underline disabled:opacity-40"
+                    disabled={promptLoading}
+                  >
+                    <RefreshCw className={clsx("w-3 h-3", promptLoading && "animate-spin")} />
+                    {promptLoading ? "Loading…" : "Refresh from Retell"}
+                  </button>
+                </div>
+                {promptError && (
+                  <div className="text-[11px] text-red-500 mb-1">⚠ {promptError} — paste manually below</div>
+                )}
                 <textarea value={systemPrompt} onChange={e => setSystemPrompt(e.target.value)} rows={9}
-                  placeholder={"Paste your full Retell agent system prompt here.\n\nInclude everything: instructions, API call descriptions, edge cases."}
-                  className="w-full border border-[#E5E5E5] rounded-xl px-4 py-3 text-[13px] text-[#111] resize-none focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10" />
+                  placeholder={promptLoading ? "Loading live prompt from Retell…" : "Paste your full Retell agent system prompt here.\n\nInclude everything: instructions, API call descriptions, edge cases."}
+                  className={clsx(
+                    "w-full border rounded-xl px-4 py-3 text-[13px] text-[#111] resize-none focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10",
+                    promptLoading ? "border-[#E5E5E5] bg-[#FAFAF8] text-[#ADADAD]" : "border-[#E5E5E5]"
+                  )} />
               </div>
               <div>
                 <label className="text-[10px] font-bold uppercase tracking-widest text-[#ADADAD] block mb-1.5">
@@ -509,7 +542,7 @@ export function DebugSuite({ config, onResults }: Props) {
             )}
           </div>
           {!systemPrompt.trim() && totalRuns > 0 && !isStreaming && (
-            <p className="text-[12px] text-[#888] mt-2">Paste your Retell prompt in Step 1 to enable fix application.</p>
+            <p className="text-[12px] text-[#888] mt-2">Retell prompt not loaded — go back to Step 1 and refresh.</p>
           )}
         </div>
       )}

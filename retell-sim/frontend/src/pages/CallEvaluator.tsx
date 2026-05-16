@@ -1,6 +1,6 @@
-import { useState } from "react";
-import { BarChart2, Play } from "lucide-react";
-import { evaluateTranscript, runParallel } from "../api";
+import { useState, useEffect } from "react";
+import { BarChart2, Play, RefreshCw } from "lucide-react";
+import { evaluateTranscript, runParallel, fetchRetellPrompt } from "../api";
 import type { Config, AppConfig, TranscriptEval, SimResult } from "../types";
 import { SimResultCard } from "../components/SimResultCard";
 
@@ -24,9 +24,19 @@ export function CallEvaluator({ config, appConfig, onResults }: Props) {
   // Transcript Analyzer state
   const [transcript, setTranscript] = useState("");
   const [sysPrompt, setSysPrompt] = useState("");
+  const [promptLoading, setPromptLoading] = useState(true);
+  const [promptLoadError, setPromptLoadError] = useState("");
   const [analyzing, setAnalyzing] = useState(false);
   const [evalResult, setEvalResult] = useState<TranscriptEval | null>(null);
   const [evalError, setEvalError] = useState("");
+
+  // Auto-fetch live Retell prompt on mount
+  useEffect(() => {
+    fetchRetellPrompt()
+      .then(d => { setSysPrompt(d.prompt); setPromptLoadError(""); })
+      .catch(e => setPromptLoadError(e.message ?? "Failed to load prompt"))
+      .finally(() => setPromptLoading(false));
+  }, []);
 
   // Call Simulation state
   const scenarios = appConfig?.scenarios ?? [];
@@ -123,15 +133,34 @@ export function CallEvaluator({ config, appConfig, onResults }: Props) {
               className="w-full border border-[#E5E5E5] rounded-xl px-4 py-3 text-[13px] text-[#111] resize-none focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10"
             />
             <div>
-              <div className="text-[10px] font-bold uppercase tracking-widest text-[#ADADAD] mb-1.5">
-                System Prompt (optional)
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="text-[10px] font-bold uppercase tracking-widest text-[#ADADAD]">
+                  System Prompt
+                </div>
+                <button
+                  onClick={() => {
+                    setPromptLoading(true); setPromptLoadError("");
+                    fetchRetellPrompt()
+                      .then(d => { setSysPrompt(d.prompt); })
+                      .catch(e => setPromptLoadError(e.message))
+                      .finally(() => setPromptLoading(false));
+                  }}
+                  disabled={promptLoading}
+                  className="flex items-center gap-1 text-[11px] font-semibold text-brand-500 hover:underline disabled:opacity-40"
+                >
+                  <RefreshCw className={`w-3 h-3 ${promptLoading ? "animate-spin" : ""}`} />
+                  {promptLoading ? "Loading…" : "Refresh from Retell"}
+                </button>
               </div>
+              {promptLoadError && (
+                <div className="text-[11px] text-red-500 mb-1">⚠ {promptLoadError} — paste manually</div>
+              )}
               <textarea
                 value={sysPrompt}
                 onChange={e => setSysPrompt(e.target.value)}
                 rows={9}
-                placeholder="Paste the Retell system prompt to get prompt-violation detection"
-                className="w-full border border-[#E5E5E5] rounded-xl px-4 py-3 text-[13px] text-[#111] resize-none focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10"
+                placeholder={promptLoading ? "Loading live prompt from Retell…" : "System prompt loaded from Retell"}
+                className={`w-full border rounded-xl px-4 py-3 text-[13px] text-[#111] resize-none focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10 ${promptLoading ? "border-[#E5E5E5] bg-[#FAFAF8]" : "border-[#E5E5E5]"}`}
               />
             </div>
           </div>

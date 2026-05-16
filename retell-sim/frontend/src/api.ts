@@ -138,6 +138,20 @@ export async function applyFix(params: {
   return post("/debug/apply-fix", params);
 }
 
+export async function fetchRetellPrompt(): Promise<{
+  prompt: string;
+  llm_id: string;
+  agent_id: string;
+  model: string;
+}> {
+  const r = await fetch(`${BASE}/retell/fetch-prompt`);
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(err.detail ?? r.statusText);
+  }
+  return r.json();
+}
+
 export async function runRegression(params: {
   api_base: string;
   bearer_token: string;
