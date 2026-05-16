@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, Check } from "lucide-react";
 import type { Config } from "../types";
 
 interface Props {
@@ -20,17 +20,31 @@ function Label({ children }: { children: React.ReactNode }) {
   );
 }
 
+function SavedBadge({ saved }: { saved: boolean }) {
+  if (!saved) return null;
+  return (
+    <span className="flex items-center gap-0.5 text-[10px] font-semibold text-green-600">
+      <Check className="w-2.5 h-2.5" /> Saved
+    </span>
+  );
+}
+
 function SideInput({
-  label, value, onChange, type = "text", placeholder,
+  label, value, onChange, type = "text", placeholder, savedFromStorage,
 }: {
   label: string; value: string; onChange: (v: string) => void;
-  type?: string; placeholder?: string;
+  type?: string; placeholder?: string; savedFromStorage?: boolean;
 }) {
   const [show, setShow] = useState(false);
   const isPassword = type === "password";
+  const hasValue = value.length > 0;
+
   return (
     <div className="mb-4">
-      <Label>{label}</Label>
+      <div className="flex items-center justify-between mb-1.5">
+        <Label>{label}</Label>
+        {isPassword && <SavedBadge saved={!!savedFromStorage && hasValue} />}
+      </div>
       <div className="relative">
         <input
           type={isPassword && !show ? "password" : "text"}
@@ -38,7 +52,7 @@ function SideInput({
           onChange={e => onChange(e.target.value)}
           placeholder={placeholder}
           className="w-full bg-[#F7F7F5] border border-[#E5E5E5] rounded-lg px-3 py-2 text-[13px] text-[#111]
-                     focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10"
+                     focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10 pr-8"
         />
         {isPassword && (
           <button
@@ -50,32 +64,56 @@ function SideInput({
           </button>
         )}
       </div>
+      {isPassword && !hasValue && (
+        <p className="text-[10.5px] text-[#ADADAD] mt-1">Enter once — saved automatically</p>
+      )}
     </div>
   );
 }
 
 export function Sidebar({ config, onChange }: Props) {
+  // Track which keys came from localStorage (already persisted)
+  const bearerFromStorage = !!(localStorage.getItem("adit_bearer"));
+  const openaiFromStorage = !!(localStorage.getItem("adit_openai_key"));
+
   const set = (k: keyof Config, v: unknown) => {
     if (k === "openaiKey") localStorage.setItem("adit_openai_key", v as string);
     if (k === "bearerToken") localStorage.setItem("adit_bearer", v as string);
     onChange({ ...config, [k]: v });
   };
 
+  const allGood = !!config.bearerToken && !!config.openaiKey;
+
   return (
     <aside className="w-64 bg-white border-r border-[#EAEAEA] flex flex-col flex-shrink-0 overflow-y-auto">
-      <div className="p-5 border-b border-[#F0F0EE]">
+      {/* Logo */}
+      <div className="px-5 py-4 border-b border-[#F0F0EE]">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 bg-brand-500 rounded-lg flex items-center justify-center text-white font-extrabold text-base shadow-sm">
+          <div className="w-8 h-8 bg-brand-500 rounded-lg flex items-center justify-center text-white font-extrabold text-base shadow-sm flex-shrink-0">
             a
           </div>
-          <div>
+          <div className="min-w-0">
             <div className="text-[14px] font-bold text-[#111] leading-tight">Agent QA</div>
             <div className="text-[11px] text-[#ADADAD]">AI Front Desk</div>
           </div>
         </div>
       </div>
 
-      <div className="flex-1 p-5 space-y-0">
+      <div className="flex-1 px-5 py-4 overflow-y-auto">
+        {/* Missing keys warning */}
+        {!allGood && (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-4">
+            <p className="text-[11px] font-semibold text-amber-700">
+              {!config.bearerToken && !config.openaiKey
+                ? "Enter bearer token + OpenAI key to run simulations"
+                : !config.bearerToken
+                  ? "Bearer token required to run simulations"
+                  : "OpenAI key required for AI judge & patient simulation"}
+            </p>
+          </div>
+        )}
+
+        {/* Environment */}
         <div className="mb-4">
           <Label>Environment</Label>
           <select
@@ -86,11 +124,12 @@ export function Sidebar({ config, onChange }: Props) {
               set("apiBase", HOSTS[env] ?? HOSTS.live);
             }}
             className="w-full bg-[#F7F7F5] border border-[#E5E5E5] rounded-lg px-3 py-2 text-[13px] text-[#111]
-                       focus:outline-none focus:border-brand-500"
+                       focus:outline-none focus:border-brand-500 truncate"
           >
-            <option value="live">🟢 Live (frontdeskchatagent.adit.com)</option>
-            <option value="dev">🔵 Dev (RunPod beta)</option>
+            <option value="live">🟢 Live</option>
+            <option value="dev">🔵 Dev (RunPod)</option>
           </select>
+          <p className="text-[10.5px] text-[#ADADAD] mt-1 truncate">{config.apiBase}</p>
         </div>
 
         <SideInput
@@ -99,6 +138,7 @@ export function Sidebar({ config, onChange }: Props) {
           onChange={v => set("bearerToken", v)}
           type="password"
           placeholder="Paste bearer token…"
+          savedFromStorage={bearerFromStorage}
         />
 
         <SideInput
@@ -113,37 +153,66 @@ export function Sidebar({ config, onChange }: Props) {
           value={config.openaiKey}
           onChange={v => set("openaiKey", v)}
           type="password"
-          placeholder="sk-…"
+          placeholder="sk-proj-…"
+          savedFromStorage={openaiFromStorage}
         />
 
+        {/* LLM Judge toggle */}
         <div className="mb-4">
           <Label>LLM Judge Scoring</Label>
-          <button
-            onClick={() => set("useLlmJudge", !config.useLlmJudge)}
-            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-              config.useLlmJudge ? "bg-brand-500" : "bg-[#E5E5E5]"
-            }`}
-          >
-            <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
-              config.useLlmJudge ? "translate-x-6" : "translate-x-1"
-            }`} />
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => set("useLlmJudge", !config.useLlmJudge)}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ${
+                config.useLlmJudge ? "bg-brand-500" : "bg-[#E5E5E5]"
+              }`}
+            >
+              <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                config.useLlmJudge ? "translate-x-6" : "translate-x-1"
+              }`} />
+            </button>
+            <span className="text-[12px] text-[#888]">{config.useLlmJudge ? "On" : "Off"}</span>
+          </div>
         </div>
 
         <hr className="border-[#F0F0EE] my-4" />
 
+        {/* Status */}
         <div>
           <Label>Status</Label>
-          <p className="text-[12px] text-[#ADADAD] mb-1">Agent · Siriyaa (Test QA)</p>
-          <p className="text-[12px] text-[#ADADAD] mb-1">
-            Phone ·{" "}
-            <code className="bg-[#FFF3E8] text-[#D4620A] rounded px-1 py-0.5 text-[11.5px]">
-              {config.agentPhone}
-            </code>
-          </p>
-          <p className="text-[12px] text-[#ADADAD]">
-            Env · {config.environment === "live" ? "Live Production" : "Dev / RunPod"}
-          </p>
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2">
+              <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${config.bearerToken ? "bg-green-500" : "bg-[#DADAD8]"}`} />
+              <span className="text-[12px] text-[#666]">Bearer token</span>
+              <span className={`text-[11px] font-semibold ml-auto ${config.bearerToken ? "text-green-600" : "text-[#ADADAD]"}`}>
+                {config.bearerToken ? "Set" : "Missing"}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${config.openaiKey ? "bg-green-500" : "bg-amber-400"}`} />
+              <span className="text-[12px] text-[#666]">OpenAI key</span>
+              <span className={`text-[11px] font-semibold ml-auto ${config.openaiKey ? "text-green-600" : "text-amber-600"}`}>
+                {config.openaiKey ? "Set" : "Missing"}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-500" />
+              <span className="text-[12px] text-[#666]">Agent</span>
+              <span className="text-[11px] font-semibold ml-auto text-[#555]">Siriyaa</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-500" />
+              <span className="text-[12px] text-[#666]">Phone</span>
+              <code className="text-[10.5px] font-mono text-[#D4620A] bg-[#FFF3E8] rounded px-1 ml-auto">{config.agentPhone}</code>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${config.environment === "live" ? "bg-green-500" : "bg-blue-400"}`} />
+              <span className="text-[12px] text-[#666]">Env</span>
+              <span className="text-[11px] font-semibold ml-auto text-[#555]">
+                {config.environment === "live" ? "Production" : "Dev"}
+              </span>
+            </div>
+          </div>
         </div>
       </div>
     </aside>
