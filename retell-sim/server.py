@@ -667,9 +667,19 @@ def run_generated_scenario(
 
 # ── Serve built React frontend ─────────────────────────────────────────────────
 _dist = Path(__file__).parent / "frontend" / "dist"
-if _dist.exists():
+_index = _dist / "index.html"
+
+# Mount static assets directory (CSS/JS chunks)
+if _dist.exists() and (_dist / "assets").exists():
     app.mount("/assets", StaticFiles(directory=str(_dist / "assets")), name="assets")
 
-    @app.get("/{full_path:path}", include_in_schema=False)
-    def serve_spa(full_path: str):
-        return FileResponse(str(_dist / "index.html"))
+# Catch-all for SPA — MUST come last and must not intercept /api/* routes
+@app.get("/{full_path:path}", include_in_schema=False)
+def serve_spa(full_path: str):
+    # Never intercept API routes — let FastAPI return its own 404
+    if full_path.startswith("api/"):
+        raise HTTPException(status_code=404, detail="API route not found")
+    if _index.exists():
+        return FileResponse(str(_index))
+    # Fallback: no React build present yet
+    return {"status": "ok", "message": "ADIT Agent QA Platform API", "version": "2.0.0"}
