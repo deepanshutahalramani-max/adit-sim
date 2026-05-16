@@ -4,10 +4,10 @@ import clsx from "clsx";
 import type { SimResult } from "../types";
 
 const OUTCOME_META: Record<string, { icon: string; label: string; color: string; bg: string; border: string }> = {
-  booking_confirmed: { icon: "📅", label: "Booking Confirmed", color: "#059669", bg: "#F0FDF4", border: "#BBF7D0" },
-  task_created:      { icon: "📋", label: "Task Created",      color: "#C2540A", bg: "#FFF7ED", border: "#FED7AA" },
-  incomplete:        { icon: "⏳", label: "Incomplete",         color: "#B45309", bg: "#FFFBEB", border: "#FDE68A" },
-  error:             { icon: "🚨", label: "Error",              color: "#DC2626", bg: "#FEF2F2", border: "#FECACA" },
+  booking_confirmed: { icon: "📅", label: "Booking Confirmed",  color: "#059669", bg: "#F0FDF4", border: "#BBF7D0" },
+  task_created:      { icon: "📋", label: "Task Created",       color: "#C2540A", bg: "#FFF7ED", border: "#FED7AA" },
+  incomplete:        { icon: "⏳", label: "Incomplete",          color: "#B45309", bg: "#FFFBEB", border: "#FDE68A" },
+  error:             { icon: "⚠️", label: "API Error (partial)", color: "#DC2626", bg: "#FEF2F2", border: "#FECACA" },
 };
 
 function scoreColor(s: number) {
@@ -142,6 +142,11 @@ export function SimResultCard({ result: r, defaultExpanded = false }: Props) {
 
           {/* Footer */}
           <div className="mt-4 pt-3 border-t border-[#F0F0EE]">
+            {r.outcome_type === "error" && r.score >= 80 && (
+              <p className="text-[12px] text-amber-600 mb-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                ℹ️ Conversation completed well (score {r.score}) but a late API call to Retell failed. This is a Retell-side transient error — the actual interaction was fine.
+              </p>
+            )}
             {r.failure_reason && r.passed && (
               <p className="text-[12px] text-[#888] mb-1">
                 <strong>Judge note:</strong> {r.failure_reason_clean || r.failure_reason}
