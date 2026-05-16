@@ -1,0 +1,79 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * { font-family: "Inter", -apple-system, BlinkMacSystemFont, sans-serif; }
+  body { background: #FAFAF8; }
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #E5E5E5; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #CFCFCF; }
+
+/* Chat bubbles */
+.patient-bubble {
+  background: #F2F2F0;
+  border-radius: 4px 14px 14px 14px;
+  padding: 10px 14px;
+  font-size: 13.5px;
+  color: #222;
+  display: inline-block;
+  max-width: 76%;
+  line-height: 1.55;
+}
+
+.agent-bubble {
+  background: #FFF4E6;
+  border: 1px solid #FBCF9A;
+  border-radius: 14px 4px 14px 14px;
+  padding: 10px 14px;
+  font-size: 13.5px;
+  color: #7C3A0A;
+  display: inline-block;
+  max-width: 76%;
+  line-height: 1.55;
+}
+
+/* Diff view */
+.diff-old {
+  background: #FEF2F2;
+  border-left: 3px solid #EF4444;
+  padding: 10px 14px;
+  border-radius: 0 6px 6px 0;
+  font-size: 13px;
+  font-family: "SF Mono", "Fira Code", monospace;
+  line-height: 1.6;
+  color: #7F1D1D;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.diff-new {
+  background: #F0FDF4;
+  border-left: 3px solid #22C55E;
+  padding: 10px 14px;
+  border-radius: 0 6px 6px 0;
+  font-size: 13px;
+  font-family: "SF Mono", "Fira Code", monospace;
+  line-height: 1.6;
+  color: #14532D;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.prompt-highlight {
+  background: #FFFBEB;
+  border: 1px solid #FDE68A;
+  border-left: 3px solid #F59E0B;
+  padding: 10px 14px;
+  border-radius: 0 6px 6px 0;
+  font-size: 13px;
+  font-family: "SF Mono", "Fira Code", monospace;
+  line-height: 1.6;
+  color: #78350F;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

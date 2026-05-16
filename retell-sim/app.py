@@ -191,6 +191,46 @@ p  { color: #555 !important; font-size: 14px !important; line-height: 1.65 !impo
 hr { border-color: #F0F0EE !important; }
 label { color: #333 !important; font-size: 13.5px !important; }
 
+/* ─ Fix Streamlit expander icon rendering as "arrow_down" text ── */
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=block');
+[data-testid="stExpanderToggleIcon"] {
+    font-family: 'Material Symbols Rounded' !important;
+    font-size: 18px !important;
+    color: #ADADAD !important;
+}
+
+/* ─ Step labels for Debug Suite ─────────────────────────── */
+.step-label {
+    font-size: 11px !important; font-weight: 700 !important;
+    text-transform: uppercase !important; letter-spacing: 0.09em !important;
+    color: #ADADAD !important; margin-bottom: 6px !important; margin-top: 16px !important;
+    display: block !important;
+}
+.step-label:first-child { margin-top: 0 !important; }
+
+/* ─ Diff view ────────────────────────────────────────────── */
+.diff-old {
+    background: #FEF2F2; border-left: 3px solid #EF4444;
+    padding: 10px 14px; border-radius: 0 6px 6px 0;
+    font-size: 13px; font-family: 'SF Mono', 'Fira Code', monospace;
+    line-height: 1.6; color: #7F1D1D; margin-bottom: 6px;
+    white-space: pre-wrap; word-break: break-word;
+}
+.diff-new {
+    background: #F0FDF4; border-left: 3px solid #22C55E;
+    padding: 10px 14px; border-radius: 0 6px 6px 0;
+    font-size: 13px; font-family: 'SF Mono', 'Fira Code', monospace;
+    line-height: 1.6; color: #14532D; margin-bottom: 6px;
+    white-space: pre-wrap; word-break: break-word;
+}
+.prompt-highlight {
+    background: #FFFBEB; border: 1px solid #FDE68A; border-left: 3px solid #F59E0B;
+    padding: 10px 14px; border-radius: 0 6px 6px 0;
+    font-size: 13px; font-family: 'SF Mono', 'Fira Code', monospace;
+    line-height: 1.6; color: #78350F;
+    white-space: pre-wrap; word-break: break-word;
+}
+
 /* ─ Chat bubbles ─────────────────────────────────────────── */
 .patient-bubble {
     background: #F2F2F0; border-radius: 4px 14px 14px 14px;
@@ -745,26 +785,43 @@ def run_full_chain(
     st.session_state["chain_status"] = "✅ Chain complete"
     return results
 
-def analyze_screenshot(image_bytes: bytes, oai_key: str, extra_context: str = "") -> dict:
-    """GPT-4o Vision: analyse a screenshot → identify issue → generate reproduction steps."""
+def analyze_prompt_bug(
+    image_bytes: bytes,
+    system_prompt: str,
+    extra_context: str,
+    oai_key: str,
+) -> dict:
+    """
+    GPT-4o Vision: screenshot + system prompt → exact diagnosis + suggested fix.
+    Returns structured dict with root_cause, prompt_section_at_fault, suggested_fix, repro info.
+    """
     if not oai_key:
-        return {"analysis": "No OpenAI key provided.", "repro_scenario": None}
+        return {"error": "OpenAI API key required"}
     try:
         from openai import OpenAI
         client = OpenAI(api_key=oai_key)
         b64 = base64.b64encode(image_bytes).decode()
-        prompt = (
-            "You are a QA engineer analysing a dental AI receptionist SMS conversation screenshot.\n\n"
-            "1. Describe exactly what is shown (conversation flow, agent responses, any errors).\n"
-            "2. Identify if there is a bug, unexpected response, or broken flow.\n"
-            "3. If there is an issue, describe how to reproduce it: what patient message triggers it.\n"
-            "4. Output JSON only:\n"
-            '{"summary": "...", "issue_found": true/false, "issue_description": "...", '
-            '"repro_opener": "exact first patient message to reproduce", '
-            '"repro_followups": ["msg2", "msg3"], "severity": "low|medium|high"}'
-        )
-        if extra_context:
-            prompt += f"\n\nAdditional context from user: {extra_context}"
+
+        prompt_block = f"\n\nSYSTEM PROMPT (full Retell agent prompt):\n```\n{system_prompt}\n```" if system_prompt.strip() else ""
+        context_block = f"\n\nADDITIONAL CONTEXT FROM TESTER: {extra_context}" if extra_context.strip() else ""
+
+        analysis_prompt = f"""You are a senior QA engineer debugging Siriyaa, an AI dental front-desk SMS receptionist.
+
+Analyze the conversation screenshot and identify exactly what went wrong.{prompt_block}{context_block}
+
+Return ONLY valid JSON (no markdown, no explanation):
+{{
+    "what_happened": "1-2 sentences describing what the agent did wrong",
+    "severity": "low|medium|high|critical",
+    "scenario_type": "booking|reschedule|cancel|insurance|hours|emergency|other",
+    "root_cause": "Specific technical reason the agent failed (e.g. did not collect DOB, answered wrong question)",
+    "prompt_section_at_fault": "The exact text from the system prompt that is wrong or missing — quote it verbatim. If no prompt was provided, describe what instruction is likely missing.",
+    "suggested_fix": "The exact replacement text or addition to make in the system prompt to fix this issue",
+    "fix_explanation": "1-2 sentences explaining why this change fixes the issue",
+    "repro_opener": "The exact first patient message that would reproduce this bug",
+    "repro_followups": ["patient msg 2", "patient msg 3", "patient msg 4"],
+    "confidence": "high|medium|low"
+}}"""
 
         resp = client.chat.completions.create(
             model="gpt-4o",
@@ -772,22 +829,63 @@ def analyze_screenshot(image_bytes: bytes, oai_key: str, extra_context: str = ""
                 "role": "user",
                 "content": [
                     {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}", "detail": "high"}},
-                    {"type": "text", "text": prompt},
+                    {"type": "text", "text": analysis_prompt},
                 ],
             }],
-            max_tokens=600,
+            max_tokens=1400,
+            temperature=0,
         )
         raw = resp.choices[0].message.content.strip()
-        # Strip markdown fences if present
         if raw.startswith("```"):
-            raw = "\n".join(raw.split("\n")[1:])
-        if raw.endswith("```"):
-            raw = "\n".join(raw.split("\n")[:-1])
+            raw = "\n".join(raw.split("\n")[1:]).rstrip("`").strip()
         return json.loads(raw)
-    except json.JSONDecodeError:
-        return {"summary": raw, "issue_found": False, "issue_description": "", "repro_opener": None, "repro_followups": []}
+    except json.JSONDecodeError as e:
+        return {"error": f"Parse error: {str(e)}", "raw": raw[:300]}
     except Exception as e:
-        return {"analysis": f"Error: {e}", "issue_found": False, "repro_opener": None}
+        return {"error": str(e)}
+
+
+def analyze_call_transcript(transcript: str, system_prompt: str, oai_key: str) -> dict:
+    """Score and QA-analyze a pasted Retell call or SMS transcript."""
+    if not oai_key:
+        return {"error": "OpenAI key required"}
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=oai_key)
+        prompt_ctx = f"\n\nSystem Prompt:\n```\n{system_prompt}\n```" if system_prompt.strip() else ""
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a QA evaluator for Siriyaa, an AI dental front desk agent.\n"
+                        "Evaluate this transcript and return ONLY valid JSON:\n"
+                        "{\n"
+                        "  \"score\": 0-100,\n"
+                        "  \"outcome\": \"booking_confirmed|task_created|incomplete|error\",\n"
+                        "  \"passed\": true|false,\n"
+                        "  \"what_went_well\": [\"point1\", \"point2\"],\n"
+                        "  \"issues\": [\"issue1\", \"issue2\"],\n"
+                        "  \"prompt_violations\": [\"specific instruction violated if prompt provided\"],\n"
+                        "  \"tone\": \"professional|neutral|poor\",\n"
+                        "  \"summary\": \"1-2 sentence summary\"\n"
+                        "}\n"
+                        "Scoring: 95-100 direct booking confirmed, 80-94 task created with full patient info, "
+                        "60-79 partial completion, <60 failure or unhelpful."
+                    ),
+                },
+                {"role": "user", "content": f"Transcript:\n{transcript}{prompt_ctx}"},
+            ],
+            max_tokens=700,
+            temperature=0,
+        )
+        raw = resp.choices[0].message.content.strip()
+        if raw.startswith("```"):
+            raw = "\n".join(raw.split("\n")[1:]).rstrip("`").strip()
+        return json.loads(raw)
+    except Exception as e:
+        return {"error": str(e)}
 
 def generate_test_scenarios(instruction: str, oai_key: str) -> list[dict]:
     if not oai_key:
@@ -823,6 +921,28 @@ def generate_test_scenarios(instruction: str, oai_key: str) -> list[dict]:
         st.error(f"Generation error: {e}")
         return []
 
+def _fmt_error(s: str) -> str:
+    """Parse raw HTTP error strings into clean human-readable text."""
+    if not s:
+        return ""
+    if "HTTP 4" in s or "HTTP 5" in s:
+        try:
+            j_start = s.find("{")
+            if j_start != -1:
+                data = json.loads(s[j_start:])
+                msg = data.get("message", data.get("error", ""))
+                code = s.split(":")[0].strip()  # "HTTP 400"
+                if msg:
+                    # Strip nested Retell error prefix if present
+                    if "Retell Create Completion API" in msg:
+                        msg = "Retell LLM completion failed — check agent configuration"
+                    return f"{code} — {msg[:120]}"
+        except Exception:
+            pass
+        # Fallback: truncate
+        return s[:100] + ("…" if len(s) > 100 else "")
+    return s[:140] + ("…" if len(s) > 140 else "")
+
 # ── Display helper ─────────────────────────────────────────────────────────────
 def display_result(r: SimResult, expanded: bool = True):
     OUTCOME_META = {
@@ -830,81 +950,101 @@ def display_result(r: SimResult, expanded: bool = True):
         "task_created":      ("📋", "Task Created",      "#C2540A", "#FFF7ED", "#FED7AA"),
         "incomplete":        ("⏳", "Incomplete",         "#B45309", "#FFFBEB", "#FDE68A"),
         "error":             ("🚨", "Error",              "#DC2626", "#FEF2F2", "#FECACA"),
-        "":                  ("",   "",                   "#6B7280", "#F9FAFB", "#E5E7EB"),
+        "":                  ("",   "",                   "#888",    "#FAFAF8", "#EAEAEA"),
     }
     icon, label, color, bg, border = OUTCOME_META.get(r.outcome_type, OUTCOME_META[""])
 
     status_icon = "✅" if r.passed else "❌"
     score_color = "#F5820D" if r.score >= 80 else "#B45309" if r.score >= 60 else "#DC2626"
-    header = f"{status_icon}  {r.scenario}   ·   {icon} {label}   ·   Score {r.score}/100   ·   {r.total_ms/1000:.1f}s   ·   {len(r.turns)//2} turns"
+    n_turns = len(r.turns) // 2
+    header = f"{status_icon}  {r.scenario}  ·  {icon} {label}  ·  {r.score}/100  ·  {r.total_ms/1000:.1f}s  ·  {n_turns} turns"
 
     with st.expander(header, expanded=expanded):
-        # Outcome banner
+        # ── Outcome banner
+        clean_err = _fmt_error(r.failure_reason)
+        outcome_detail = {
+            "booking_confirmed": "Direct appointment booking confirmed by agent",
+            "task_created": "Agent collected info and created a task — team will follow up",
+            "error": clean_err,
+            "incomplete": clean_err or "Conversation did not reach a conclusion",
+        }.get(r.outcome_type, "")
+
         st.markdown(f"""
-        <div style="
-            background:{bg}; border:1px solid {border}; border-radius:8px;
-            padding:10px 16px; margin-bottom:12px;
-            display:flex; align-items:center; gap:10px;
-        ">
-            <span style="font-size:16px;">{icon}</span>
-            <div>
-                <span style="font-weight:700; color:{color}; font-size:13px;">{label}</span>
-                {'<span style="color:#888888; font-size:12px; margin-left:8px;">— Direct booking by agent</span>' if r.outcome_type == "booking_confirmed" else
-                 '<span style="color:#888888; font-size:12px; margin-left:8px;">— Agent collected info and created a task for the team (valid flow)</span>' if r.outcome_type == "task_created" else
-                 f'<span style="color:#888888; font-size:12px; margin-left:8px;">{r.failure_reason[:80]}</span>' if r.outcome_type in ("error","incomplete") else ""}
+        <div style="background:{bg}; border:1px solid {border}; border-radius:8px;
+                    padding:11px 16px; margin-bottom:16px;
+                    display:flex; align-items:center; gap:12px;">
+            <span style="font-size:18px; flex-shrink:0;">{icon}</span>
+            <div style="flex:1; min-width:0;">
+                <span style="font-weight:700; color:{color}; font-size:13.5px;">{label}</span>
+                <span style="color:#888; font-size:12.5px; margin-left:8px;">{outcome_detail}</span>
             </div>
-            <div style="margin-left:auto; background:white; border:1px solid {border}; border-radius:6px; padding:4px 12px; text-align:center;">
-                <div style="font-size:10px; color:#94A3B8; font-weight:600; text-transform:uppercase; letter-spacing:0.05em;">Score</div>
-                <div style="font-size:20px; font-weight:800; color:{score_color}; letter-spacing:-0.5px;">{r.score}</div>
+            <div style="background:white; border:1px solid {border}; border-radius:6px;
+                        padding:4px 14px; text-align:center; flex-shrink:0;">
+                <div style="font-size:9.5px; color:#ADADAD; font-weight:700;
+                            text-transform:uppercase; letter-spacing:0.08em;">Score</div>
+                <div style="font-size:22px; font-weight:800; color:{score_color};
+                            letter-spacing:-1px; line-height:1.1;">{r.score}</div>
             </div>
         </div>
         """, unsafe_allow_html=True)
 
-        # Conversation transcript
-        st.markdown("""
-        <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.08em; color:#94A3B8; margin-bottom:12px;">
-            Conversation Transcript
-        </div>""", unsafe_allow_html=True)
+        if not r.turns:
+            st.markdown('<div style="color:#ADADAD; font-size:13px; padding:16px 0;">No conversation turns recorded.</div>', unsafe_allow_html=True)
+        else:
+            # ── Transcript header
+            st.markdown("""
+            <div style="font-size:10px; font-weight:700; text-transform:uppercase;
+                        letter-spacing:0.1em; color:#ADADAD; margin-bottom:14px;">
+                Conversation Transcript
+            </div>""", unsafe_allow_html=True)
 
-        for t in r.turns:
-            if t.role == "patient":
-                st.markdown(f"""
-                <div style="display:flex; align-items:flex-start; gap:10px; margin-bottom:8px;">
-                    <div style="width:28px; height:28px; background:#E2E8F0; border-radius:50%;
-                                display:flex; align-items:center; justify-content:center;
-                                font-size:13px; flex-shrink:0;">👤</div>
-                    <div>
-                        <div style="font-size:10px; font-weight:600; color:#94A3B8; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:3px;">Patient</div>
-                        <div class="patient-bubble">{t.message}</div>
-                    </div>
-                </div>""", unsafe_allow_html=True)
-            else:
-                latency = f'<span class="latency-badge">· {t.latency_ms:,}ms</span>' if t.latency_ms else ""
-                st.markdown(f"""
-                <div style="display:flex; align-items:flex-start; gap:10px; margin-bottom:8px; flex-direction:row-reverse;">
-                    <div style="width:28px; height:28px; background:#DBEAFE; border-radius:50%;
-                                display:flex; align-items:center; justify-content:center;
-                                font-size:13px; flex-shrink:0;">🤖</div>
-                    <div style="text-align:right;">
-                        <div style="font-size:10px; font-weight:600; color:#93C5FD; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:3px;">Siriyaa {latency}</div>
-                        <div class="agent-bubble">{t.message}</div>
-                    </div>
-                </div>""", unsafe_allow_html=True)
+            for t in r.turns:
+                msg_escaped = t.message.replace("<", "&lt;").replace(">", "&gt;")
+                if t.role == "patient":
+                    st.markdown(f"""
+                    <div style="display:flex; align-items:flex-start; gap:10px; margin-bottom:10px;">
+                        <div style="width:28px; height:28px; background:#F0F0EE; border-radius:50%;
+                                    display:flex; align-items:center; justify-content:center;
+                                    font-size:13px; flex-shrink:0; margin-top:2px;">👤</div>
+                        <div>
+                            <div style="font-size:10px; font-weight:700; color:#ADADAD;
+                                        text-transform:uppercase; letter-spacing:0.08em; margin-bottom:4px;">Patient</div>
+                            <div class="patient-bubble">{msg_escaped}</div>
+                        </div>
+                    </div>""", unsafe_allow_html=True)
+                else:
+                    latency = f'<span class="latency-badge">· {t.latency_ms:,}ms</span>' if t.latency_ms else ""
+                    st.markdown(f"""
+                    <div style="display:flex; align-items:flex-start; gap:10px; margin-bottom:10px; flex-direction:row-reverse;">
+                        <div style="width:28px; height:28px; background:#FFF3E8; border-radius:50%;
+                                    display:flex; align-items:center; justify-content:center;
+                                    font-size:13px; flex-shrink:0; margin-top:2px;">🤖</div>
+                        <div style="text-align:right;">
+                            <div style="font-size:10px; font-weight:700; color:#D4620A;
+                                        text-transform:uppercase; letter-spacing:0.08em; margin-bottom:4px;">Siriyaa {latency}</div>
+                            <div class="agent-bubble">{msg_escaped}</div>
+                        </div>
+                    </div>""", unsafe_allow_html=True)
 
         st.divider()
-        if r.failure_reason:
-            label_txt = "Judge note" if r.passed else "Failure reason"
-            txt_color = "#059669" if r.passed else "#DC2626"
-            st.markdown(f'<div style="font-size:12.5px; color:{txt_color};"><strong>{label_txt}:</strong> {r.failure_reason}</div>', unsafe_allow_html=True)
-        st.markdown(f'<div style="font-size:11px; color:#94A3B8; margin-top:6px;">📞 {r.patient_phone} &nbsp;·&nbsp; 🔗 <code style="background:#F1F5F9;padding:1px 5px;border-radius:4px;font-size:11px;">{r.chat_id[:28] if r.chat_id else "—"}</code></div>', unsafe_allow_html=True)
+        # ── Footer: judge note + metadata
+        if r.failure_reason and r.passed:
+            st.markdown(f'<div style="font-size:12px; color:#888; margin-bottom:6px;"><strong>Judge note:</strong> {_fmt_error(r.failure_reason)}</div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div style="font-size:11px; color:#ADADAD;">📞 {r.patient_phone}'
+            f'&nbsp;·&nbsp;🔗 <code style="background:#F5F5F3;padding:1px 5px;border-radius:3px;font-size:10.5px;">'
+            f'{r.chat_id[:32] if r.chat_id else "—"}</code></div>',
+            unsafe_allow_html=True
+        )
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "Simulations",
     "E2E Chain",
-    "Screenshot",
+    "Debug Suite",
     "Test Generator",
     "Dashboard",
+    "Call Evaluator",
 ])
 
 # ────────────────────────────────────────────────────────────────────────────────
@@ -1061,79 +1201,223 @@ with tab2:
                 st.divider()
 
 # ────────────────────────────────────────────────────────────────────────────────
-# TAB 3 – Screenshot Reproduce
+# TAB 3 – Debug Suite
 # ────────────────────────────────────────────────────────────────────────────────
 with tab3:
     st.markdown("""
     <div style="margin-bottom:24px;">
-        <div style="font-size:20px; font-weight:800; color:#111; letter-spacing:-0.4px; margin-bottom:5px;">Screenshot Reproduce</div>
+        <div style="font-size:20px; font-weight:800; color:#111; letter-spacing:-0.4px; margin-bottom:5px;">Debug Suite</div>
         <div style="font-size:13.5px; color:#888; line-height:1.5;">
-            Upload a conversation screenshot — GPT-4o Vision identifies the issue
-            and auto-runs a reproduction simulation.
+            Upload a conversation screenshot → paste your Retell prompt → get the exact line causing the bug
+            + a suggested fix → auto-validate with simulations.
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-    uploaded = st.file_uploader("Upload screenshot (PNG/JPG)", type=["png", "jpg", "jpeg", "webp"])
-    extra_ctx = st.text_area("Extra context (optional)", placeholder="e.g. 'This happens when patient says they have no insurance'")
+    # ── Persistent prompt storage
+    for k, v in [("retell_prompt", ""), ("debug_result", None), ("debug_img", None), ("debug_repro_results", [])]:
+        if k not in st.session_state:
+            st.session_state[k] = v
 
-    if uploaded and st.button("🔍 Analyse & Reproduce", type="primary"):
-        if not openai_key:
-            st.error("OpenAI key required for vision analysis.")
+    # ── 3-column input layout
+    col_l, col_r = st.columns([1, 1], gap="large")
+
+    with col_l:
+        st.markdown('<span class="step-label">Step 1 — Paste Retell System Prompt</span>', unsafe_allow_html=True)
+        retell_prompt_input = st.text_area(
+            "system_prompt",
+            value=st.session_state["retell_prompt"],
+            height=220,
+            placeholder=(
+                "Paste your full Retell agent system prompt here.\n\n"
+                "Include everything: instructions, API call descriptions, edge cases.\n"
+                "The more complete this is, the more precise the diagnosis."
+            ),
+            label_visibility="collapsed",
+        )
+        if retell_prompt_input != st.session_state["retell_prompt"]:
+            st.session_state["retell_prompt"] = retell_prompt_input
+
+        st.markdown('<span class="step-label">Step 3 — What did you expect?</span>', unsafe_allow_html=True)
+        extra_ctx_debug = st.text_area(
+            "expected_behavior",
+            height=90,
+            placeholder="e.g. 'Agent should have collected DOB before creating the task' or 'Should have offered available slots on Monday'",
+            label_visibility="collapsed",
+        )
+
+    with col_r:
+        st.markdown('<span class="step-label">Step 2 — Upload Conversation Screenshot</span>', unsafe_allow_html=True)
+        uploaded_debug = st.file_uploader(
+            "screenshot", type=["png", "jpg", "jpeg", "webp"],
+            label_visibility="collapsed",
+            key="debug_uploader",
+        )
+        if uploaded_debug:
+            st.image(uploaded_debug, use_container_width=True)
         else:
-            img_bytes = uploaded.read()
-            with st.spinner("Analysing screenshot with GPT-4o Vision…"):
-                analysis = analyze_screenshot(img_bytes, openai_key, extra_ctx)
+            st.markdown("""
+            <div style="border:1.5px dashed #DADAD8; border-radius:8px; padding:40px 20px;
+                        text-align:center; color:#ADADAD; background:#FAFAF8;">
+                <div style="font-size:28px; margin-bottom:8px;">📸</div>
+                <div style="font-size:13px; font-weight:500;">Drop a screenshot here</div>
+                <div style="font-size:12px; margin-top:4px;">PNG, JPG, WEBP</div>
+            </div>
+            """, unsafe_allow_html=True)
 
-            st.subheader("Analysis")
-            col1, col2 = st.columns([1, 2])
-            with col1:
-                st.image(img_bytes, caption="Uploaded screenshot", use_container_width=True)
-            with col2:
-                if analysis.get("issue_found"):
-                    st.error(f"🐛 Issue found: **{analysis.get('issue_description', '')}**")
-                    st.markdown(f"**Severity:** {analysis.get('severity', 'unknown')}")
-                else:
-                    st.success("No obvious issue detected.")
-                st.markdown(f"**Summary:** {analysis.get('summary', '')}")
+    st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 
-            repro_opener = analysis.get("repro_opener")
+    analyze_btn = st.button(
+        "🔍  Analyze Bug",
+        type="primary",
+        use_container_width=True,
+        disabled=(not uploaded_debug),
+        help="Upload a screenshot to enable analysis",
+    )
+
+    if analyze_btn:
+        if not openai_key:
+            st.error("OpenAI API key required in sidebar.")
+        else:
+            img_bytes = uploaded_debug.read()
+            st.session_state["debug_img"] = img_bytes
+            st.session_state["debug_repro_results"] = []
+            with st.spinner("Analyzing with GPT-4o Vision…"):
+                result = analyze_prompt_bug(img_bytes, st.session_state["retell_prompt"], extra_ctx_debug, openai_key)
+            st.session_state["debug_result"] = result
+
+    # ── Results
+    if st.session_state["debug_result"]:
+        r = st.session_state["debug_result"]
+
+        if "error" in r:
+            st.error(f"Analysis failed: {r['error']}")
+        else:
+            st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+            st.markdown("""
+            <div style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.1em;
+                        color:#ADADAD; margin-bottom:16px;">Analysis Results</div>
+            """, unsafe_allow_html=True)
+
+            # ── What happened + severity
+            SEV_COLOR = {"critical": "#DC2626", "high": "#EA580C", "medium": "#D97706", "low": "#16A34A"}
+            sev = r.get("severity", "medium")
+            sev_color = SEV_COLOR.get(sev, "#888")
+            sev_bg = {"critical": "#FEF2F2", "high": "#FFF7ED", "medium": "#FFFBEB", "low": "#F0FDF4"}.get(sev, "#F9F9F9")
+
+            c1, c2, c3 = st.columns(3)
+            c1.markdown(f"""
+            <div style="background:white; border:1px solid #EAEAEA; border-radius:8px; padding:16px 18px; height:100%;">
+                <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.1em; color:#ADADAD; margin-bottom:6px;">What Happened</div>
+                <div style="font-size:13.5px; color:#222; line-height:1.5;">{r.get("what_happened", "—")}</div>
+            </div>""", unsafe_allow_html=True)
+            c2.markdown(f"""
+            <div style="background:white; border:1px solid #EAEAEA; border-radius:8px; padding:16px 18px; height:100%;">
+                <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.1em; color:#ADADAD; margin-bottom:6px;">Root Cause</div>
+                <div style="font-size:13.5px; color:#222; line-height:1.5;">{r.get("root_cause", "—")}</div>
+            </div>""", unsafe_allow_html=True)
+            c3.markdown(f"""
+            <div style="background:{sev_bg}; border:1px solid #EAEAEA; border-radius:8px; padding:16px 18px; height:100%;">
+                <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.1em; color:#ADADAD; margin-bottom:6px;">Severity · Confidence</div>
+                <div style="font-size:18px; font-weight:800; color:{sev_color}; text-transform:capitalize;">{sev}</div>
+                <div style="font-size:12px; color:#888; margin-top:2px;">Confidence: {r.get("confidence", "—")}</div>
+            </div>""", unsafe_allow_html=True)
+
+            st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+
+            # ── Prompt section at fault + suggested fix
+            if r.get("prompt_section_at_fault") or r.get("suggested_fix"):
+                col_fault, col_fix = st.columns(2, gap="large")
+
+                with col_fault:
+                    st.markdown("""
+                    <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.1em;
+                                color:#ADADAD; margin-bottom:8px;">Problematic Prompt Section</div>
+                    """, unsafe_allow_html=True)
+                    fault_text = r.get("prompt_section_at_fault", "No specific section identified")
+                    st.markdown(f'<div class="prompt-highlight">{fault_text}</div>', unsafe_allow_html=True)
+
+                with col_fix:
+                    st.markdown("""
+                    <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.1em;
+                                color:#ADADAD; margin-bottom:8px;">Suggested Fix</div>
+                    """, unsafe_allow_html=True)
+                    fix_text = r.get("suggested_fix", "No fix suggested")
+                    fix_explanation = r.get("fix_explanation", "")
+                    st.markdown(f'<div class="diff-new">{fix_text}</div>', unsafe_allow_html=True)
+                    if fix_explanation:
+                        st.markdown(f'<div style="font-size:12px; color:#888; margin-top:6px; line-height:1.5;">{fix_explanation}</div>', unsafe_allow_html=True)
+
+            # ── Diff view (if both sections exist)
+            if r.get("prompt_section_at_fault") and r.get("suggested_fix") and st.session_state["retell_prompt"]:
+                with st.expander("View Prompt Diff", expanded=False):
+                    st.markdown('<div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.1em; color:#EF4444; margin-bottom:4px;">Before (at fault)</div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="diff-old">{r["prompt_section_at_fault"]}</div>', unsafe_allow_html=True)
+                    st.markdown('<div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.1em; color:#22C55E; margin-bottom:4px; margin-top:8px;">After (suggested)</div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="diff-new">{r["suggested_fix"]}</div>', unsafe_allow_html=True)
+
+            st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+            st.divider()
+
+            # ── Reproduction & Validation
+            st.markdown("""
+            <div style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.1em;
+                        color:#ADADAD; margin-bottom:12px;">Reproduce & Validate</div>
+            """, unsafe_allow_html=True)
+
+            repro_opener = r.get("repro_opener", "")
+            repro_followups = r.get("repro_followups", [])
+
             if repro_opener:
-                st.subheader("Reproduction test")
-                st.markdown(f"**Opener:** `{repro_opener}`")
-                followups = analysis.get("repro_followups", [])
-                if followups:
-                    st.markdown("**Follow-ups:**")
-                    for i, msg in enumerate(followups, 1):
-                        st.markdown(f"{i}. `{msg}`")
+                st.markdown(f"""
+                <div style="background:#FAFAF8; border:1px solid #EAEAEA; border-radius:8px; padding:14px 18px; margin-bottom:12px;">
+                    <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.1em; color:#ADADAD; margin-bottom:8px;">Auto-Generated Repro Scenario</div>
+                    <div style="font-size:13px; color:#222;"><strong>Opener:</strong> {repro_opener}</div>
+                    {''.join(f'<div style="font-size:13px; color:#555; margin-top:4px;">↳ {f}</div>' for f in repro_followups)}
+                </div>""", unsafe_allow_html=True)
 
-                if st.button("▶ Run Reproduction Test"):
+                n_repro = st.number_input("Runs", 1, 5, 3, key="repro_n", label_visibility="visible")
+                run_repro = st.button("▶ Run Validation Simulations", type="primary")
+
+                if run_repro:
                     if not bearer_token:
-                        st.error("Bearer token required.")
+                        st.error("Bearer token required in sidebar.")
                     else:
-                        # Build a custom scenario from the analysis
-                        custom_scenario = {
-                            "goal": f"Reproduce: {analysis.get('issue_description', 'unknown issue')}",
+                        # Inject a custom repro scenario
+                        SCENARIOS["🔬 Debug Repro"] = {
+                            "goal": f"Reproduce: {r.get('root_cause', 'identified bug')}",
                             "opener": repro_opener,
                             "type": "repro",
                             "persona_idx": 0,
                         }
-                        SCENARIOS["🔬 Screenshot Repro"] = custom_scenario
+                        repro_results = []
+                        prog = st.progress(0, text="Running validation…")
+                        for i in range(int(n_repro)):
+                            res = run_simulation("🔬 Debug Repro", api_base, bearer_token, agent_phone, openai_key, use_judge=True)
+                            repro_results.append(res)
+                            st.session_state.results.append(res)
+                            prog.progress((i + 1) / n_repro)
+                        prog.empty()
+                        st.session_state["debug_repro_results"] = repro_results
 
-                        with st.spinner("Running reproduction…"):
-                            repro_result = run_simulation(
-                                "🔬 Screenshot Repro",
-                                api_base, bearer_token, agent_phone, openai_key,
-                                use_judge=True,
-                            )
-
-                        if repro_result.passed:
-                            st.warning("⚠️ Scenario ran to completion — issue may not be reproducible or behaves differently now.")
-                        else:
-                            st.error(f"❗ Reproduced: {repro_result.failure_reason}")
-
-                        display_result(repro_result, expanded=True)
-                        st.session_state.results.append(repro_result)
+            if st.session_state["debug_repro_results"]:
+                repro_res = st.session_state["debug_repro_results"]
+                n_p = sum(1 for x in repro_res if x.passed)
+                n_t = len(repro_res)
+                pass_color = "#059669" if n_p == n_t else "#DC2626" if n_p == 0 else "#D97706"
+                st.markdown(f"""
+                <div style="background:white; border:1px solid #EAEAEA; border-radius:8px;
+                            padding:14px 20px; margin:12px 0; display:flex; align-items:center; gap:16px;">
+                    <div style="font-size:28px; font-weight:800; color:{pass_color};">{n_p}/{n_t}</div>
+                    <div>
+                        <div style="font-size:14px; font-weight:700; color:#111;">Validation {('passed' if n_p == n_t else 'failed' if n_p == 0 else 'partial')}</div>
+                        <div style="font-size:12.5px; color:#888; margin-top:2px;">
+                            Avg score: {sum(x.score for x in repro_res)//n_t}/100
+                        </div>
+                    </div>
+                </div>""", unsafe_allow_html=True)
+                for res in repro_res:
+                    display_result(res, expanded=False)
 
 # ────────────────────────────────────────────────────────────────────────────────
 # TAB 4 – Instruction Tests
@@ -1266,3 +1550,162 @@ with tab5:
             f"adit_sim_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
             "text/csv",
         )
+
+# ────────────────────────────────────────────────────────────────────────────────
+# TAB 6 – Call Evaluator
+# ────────────────────────────────────────────────────────────────────────────────
+with tab6:
+    st.markdown("""
+    <div style="margin-bottom:24px;">
+        <div style="font-size:20px; font-weight:800; color:#111; letter-spacing:-0.4px; margin-bottom:5px;">Call Evaluator</div>
+        <div style="font-size:13.5px; color:#888; line-height:1.5;">
+            Evaluate Retell voice call quality — paste a call transcript for scoring,
+            or run a voice call simulation using the same AI engine.
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    call_tab_a, call_tab_b = st.tabs(["Transcript Analyzer", "Call Simulation"])
+
+    # ── A: Transcript Analyzer
+    with call_tab_a:
+        st.markdown("""
+        <div style="margin-bottom:16px;">
+            <div style="font-size:15px; font-weight:700; color:#111; margin-bottom:4px;">Paste a Retell Call Transcript</div>
+            <div style="font-size:13px; color:#888;">Copy the transcript from your Retell dashboard → paste it here → get a full QA score and issue breakdown.</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        col_ta, col_tb = st.columns([3, 2], gap="large")
+        with col_ta:
+            call_transcript = st.text_area(
+                "Call transcript",
+                height=280,
+                placeholder=(
+                    "Paste the full call transcript here.\n\n"
+                    "Format: Speaker labels are helpful but not required.\n"
+                    "Example:\n"
+                    "User: Hi I need to book an appointment\n"
+                    "Agent: Of course! Are you a new or existing patient?\n"
+                    "..."
+                ),
+                label_visibility="collapsed",
+            )
+        with col_tb:
+            st.markdown('<span class="step-label">System Prompt (optional)</span>', unsafe_allow_html=True)
+            call_system_prompt = st.text_area(
+                "call_sys_prompt",
+                value=st.session_state.get("retell_prompt", ""),
+                height=220,
+                placeholder="Paste the Retell system prompt to get prompt-violation detection",
+                label_visibility="collapsed",
+            )
+
+        analyze_call_btn = st.button("📊 Analyze Transcript", type="primary", disabled=not call_transcript.strip(), key="analyze_call_btn")
+
+        if analyze_call_btn:
+            if not openai_key:
+                st.error("OpenAI key required in sidebar.")
+            else:
+                with st.spinner("Evaluating transcript…"):
+                    call_result = analyze_call_transcript(call_transcript, call_system_prompt, openai_key)
+                st.session_state["call_result"] = call_result
+
+        if "call_result" in st.session_state and st.session_state["call_result"]:
+            cr = st.session_state["call_result"]
+            if "error" in cr:
+                st.error(f"Evaluation failed: {cr['error']}")
+            else:
+                st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+                score = cr.get("score", 0)
+                outcome = cr.get("outcome", "")
+                passed = cr.get("passed", score >= 75)
+                score_color = "#F5820D" if score >= 80 else "#B45309" if score >= 60 else "#DC2626"
+
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("Score", f"{score}/100")
+                m2.metric("Outcome", outcome.replace("_", " ").title())
+                m3.metric("Result", "✅ Pass" if passed else "❌ Fail")
+                m4.metric("Tone", cr.get("tone", "—").title())
+
+                st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+
+                col_ww, col_iss = st.columns(2, gap="large")
+                with col_ww:
+                    st.markdown('<div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.1em; color:#ADADAD; margin-bottom:8px;">What Went Well</div>', unsafe_allow_html=True)
+                    for item in cr.get("what_went_well", []):
+                        st.markdown(f'<div style="font-size:13px; color:#333; padding:6px 0; border-bottom:1px solid #F0F0EE;">✓ &nbsp;{item}</div>', unsafe_allow_html=True)
+
+                with col_iss:
+                    st.markdown('<div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.1em; color:#ADADAD; margin-bottom:8px;">Issues Found</div>', unsafe_allow_html=True)
+                    issues = cr.get("issues", [])
+                    if issues:
+                        for item in issues:
+                            st.markdown(f'<div style="font-size:13px; color:#DC2626; padding:6px 0; border-bottom:1px solid #FEE2E2;">✗ &nbsp;{item}</div>', unsafe_allow_html=True)
+                    else:
+                        st.markdown('<div style="font-size:13px; color:#888;">No issues found</div>', unsafe_allow_html=True)
+
+                if cr.get("prompt_violations"):
+                    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+                    st.markdown('<div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.1em; color:#ADADAD; margin-bottom:8px;">Prompt Violations</div>', unsafe_allow_html=True)
+                    for v in cr["prompt_violations"]:
+                        st.markdown(f'<div class="prompt-highlight" style="margin-bottom:4px;">{v}</div>', unsafe_allow_html=True)
+
+                if cr.get("summary"):
+                    st.markdown(f'<div style="font-size:13px; color:#555; font-style:italic; margin-top:12px; padding:12px 16px; background:#FAFAF8; border-radius:6px; border-left:3px solid #F5820D;">{cr["summary"]}</div>', unsafe_allow_html=True)
+
+    # ── B: Call Simulation
+    with call_tab_b:
+        st.markdown("""
+        <div style="margin-bottom:20px;">
+            <div style="font-size:15px; font-weight:700; color:#111; margin-bottom:4px;">Call Simulation</div>
+            <div style="font-size:13px; color:#888; line-height:1.6;">
+                Runs the same smart patient simulation engine as the SMS tab —
+                the agent logic is identical for voice and SMS. Displays results in
+                call transcript format.<br><br>
+                <strong>For live call testing via Retell API:</strong> provide your Retell API key below
+                to initiate real outbound call sessions.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Retell API key (for future live call support)
+        retell_api_key = st.text_input(
+            "Retell API Key (for live call creation)",
+            type="password",
+            placeholder="sk-... — optional, required only for real phone call initiation",
+        )
+
+        st.markdown("""
+        <div style="background:#FFF7ED; border:1px solid #FED7AA; border-radius:8px; padding:12px 16px; margin-bottom:20px; font-size:13px; color:#92400E;">
+            <strong>Note:</strong> Call simulation uses the same SMS conversation engine (identical booking logic).
+            Live phone call creation via Retell API requires a Retell API key + a test patient phone number
+            and will be billed per minute. The simulation below is free and functionally equivalent.
+        </div>
+        """, unsafe_allow_html=True)
+
+        call_scenario = st.selectbox("Scenario", list(SCENARIOS.keys()), key="call_scenario_select")
+        call_runs = st.number_input("Number of runs", 1, 5, 1, key="call_runs_n")
+
+        if st.button("▶ Run Call Simulation", type="primary", key="run_call_sim"):
+            if not bearer_token:
+                st.error("Bearer token required.")
+            elif not openai_key:
+                st.error("OpenAI key required for smart patient responses.")
+            else:
+                call_sim_results = []
+                prog = st.progress(0)
+                for i in range(int(call_runs)):
+                    res = run_simulation(call_scenario, api_base, bearer_token, agent_phone, openai_key, use_judge=use_llm_judge)
+                    call_sim_results.append(res)
+                    st.session_state.results.append(res)
+                    prog.progress((i + 1) / call_runs)
+                prog.empty()
+                st.session_state["call_sim_results"] = call_sim_results
+
+        if "call_sim_results" in st.session_state and st.session_state["call_sim_results"]:
+            st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+            for res in st.session_state["call_sim_results"]:
+                # Display in call transcript format
+                n_pass_call = sum(1 for r in st.session_state["call_sim_results"] if r.passed)
+                display_result(res, expanded=True)
