@@ -4,6 +4,13 @@ export interface Turn {
   latency_ms: number;
 }
 
+export interface ApiCall {
+  endpoint: string;
+  status: number;
+  latency_ms: number;
+  error?: string;
+}
+
 export interface SimResult {
   scenario: string;
   scenario_label: string;
@@ -16,6 +23,7 @@ export interface SimResult {
   total_ms: number;
   chat_id: string;
   outcome_type: "booking_confirmed" | "task_created" | "incomplete" | "error" | "";
+  api_calls?: ApiCall[];
   error?: string;
 }
 

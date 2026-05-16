@@ -55,7 +55,11 @@ function SideInput({
 }
 
 export function Sidebar({ config, onChange }: Props) {
-  const set = (k: keyof Config, v: unknown) => onChange({ ...config, [k]: v });
+  const set = (k: keyof Config, v: unknown) => {
+    if (k === "openaiKey") localStorage.setItem("adit_openai_key", v as string);
+    if (k === "bearerToken") localStorage.setItem("adit_bearer", v as string);
+    onChange({ ...config, [k]: v });
+  };
 
   return (
     <aside className="w-64 bg-white border-r border-[#EAEAEA] flex flex-col flex-shrink-0 overflow-y-auto">

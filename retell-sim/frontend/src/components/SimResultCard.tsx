@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
+import clsx from "clsx";
 import type { SimResult } from "../types";
 
 const OUTCOME_META: Record<string, { icon: string; label: string; color: string; bg: string; border: string }> = {
@@ -116,6 +117,27 @@ export function SimResultCard({ result: r, defaultExpanded = false }: Props) {
                 )}
               </div>
             </>
+          )}
+
+          {/* API calls */}
+          {r.api_calls && r.api_calls.length > 0 && (
+            <details className="mt-4 border border-[#F0F0EE] rounded-lg overflow-hidden">
+              <summary className="cursor-pointer px-3 py-2 text-[11px] font-semibold text-[#ADADAD] hover:bg-[#FAFAF8] select-none flex items-center gap-1.5">
+                <span className="text-brand-500">⚡</span>
+                {r.api_calls.length} API call{r.api_calls.length !== 1 ? "s" : ""}
+              </summary>
+              <div className="px-3 pb-2 space-y-1">
+                {r.api_calls.map((c, i) => (
+                  <div key={i} className="flex items-center gap-2 text-[11px]">
+                    <span className={clsx("font-bold w-8 text-right flex-shrink-0",
+                      c.status === 200 ? "text-green-600" : "text-red-500"
+                    )}>{c.status}</span>
+                    <span className="font-mono text-[#555] truncate">{c.endpoint}</span>
+                    {c.latency_ms > 0 && <span className="text-[#ADADAD] ml-auto flex-shrink-0">{c.latency_ms}ms</span>}
+                  </div>
+                ))}
+              </div>
+            </details>
           )}
 
           {/* Footer */}

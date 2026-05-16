@@ -24,14 +24,14 @@ type TabId = typeof TABS[number]["id"];
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabId>("debug");
-  const [config, setConfig] = useState<Config>({
+  const [config, setConfig] = useState<Config>(() => ({
     environment: "live",
     apiBase: "https://frontdeskchatagent.adit.com",
-    bearerToken: "",
+    bearerToken: localStorage.getItem("adit_bearer") ?? "",
     agentPhone: "+12673565689",
-    openaiKey: "",
+    openaiKey: localStorage.getItem("adit_openai_key") ?? "",
     useLlmJudge: true,
-  });
+  }));
   // Global results history shared between Simulations + Dashboard
   const [allResults, setAllResults] = useState<SimResult[]>([]);
   const [chainResults, setChainResults] = useState<Record<string, SimResult> | null>(null);

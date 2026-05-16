@@ -120,6 +120,7 @@ class SimResult:
     total_ms: int = 0
     chat_id: str = ""
     outcome_type: str = ""
+    api_calls: list = field(default_factory=list)
 
 # ── Pydantic request/response models ──────────────────────────────────────────
 class SimRequest(BaseModel):
@@ -336,16 +337,32 @@ def _run_simulation_sync(
     passed = False
     failure_reason = ""
     outcome_type = "incomplete"
+    api_calls: list[dict] = []
     current_msg = config["opener"]
 
     for turn_num in range(MAX_TURNS):
         t_turn = time.time()
+        t_api = time.time()
         try:
             resp = _call_agent(api_base, token, current_msg, patient_phone, agent_phone, chat_id)
+            api_calls.append({"endpoint": "/engage/forward-to-agent", "status": 200, "latency_ms": int((time.time()-t_api)*1000)})
         except httpx.HTTPStatusError as e:
-            failure_reason = f"HTTP {e.response.status_code}: {e.response.text[:200]}"
-            outcome_type = "error"
-            break
+            api_calls.append({"endpoint": "/engage/forward-to-agent", "status": e.response.status_code, "latency_ms": int((time.time()-t_api)*1000)})
+            # Retry once on 400 (Retell transient LLM failures)
+            if e.response.status_code == 400 and turn_num > 0:
+                time.sleep(1.5)
+                try:
+                    t_api2 = time.time()
+                    resp = _call_agent(api_base, token, current_msg, patient_phone, agent_phone, chat_id)
+                    api_calls.append({"endpoint": "/engage/forward-to-agent (retry)", "status": 200, "latency_ms": int((time.time()-t_api2)*1000)})
+                except Exception as e2:
+                    failure_reason = f"HTTP 400: {e.response.text[:200]}"
+                    outcome_type = "error"
+                    break
+            else:
+                failure_reason = f"HTTP {e.response.status_code}: {e.response.text[:200]}"
+                outcome_type = "error"
+                break
         except Exception as e:
             failure_reason = f"API error: {str(e)[:120]}"
             outcome_type = "error"
@@ -365,6 +382,7 @@ def _run_simulation_sync(
             if last_agent and oai_key:
                 try:
                     current_msg, should_end = smart_patient_reply(last_agent, persona, turns, config["goal"], oai_key, patient_phone)
+                    api_calls.append({"endpoint": "openai/gpt-4o-mini (patient)", "status": 200, "latency_ms": 0})
                     if should_end:
                         passed = True
                         outcome_type = "task_created" if any(kw in last_agent.lower() for kw in TASK_CREATED_KWS) else "booking_confirmed"
@@ -392,6 +410,7 @@ def _run_simulation_sync(
 
         try:
             current_msg, should_end = smart_patient_reply(agent_msg, persona, turns, config["goal"], oai_key, patient_phone)
+            api_calls.append({"endpoint": "openai/gpt-4o-mini (patient)", "status": 200, "latency_ms": 0})
             if should_end:
                 passed = True
                 outcome_type = (
@@ -423,6 +442,7 @@ def _run_simulation_sync(
         total_ms=total_ms,
         chat_id=chat_id or "",
         outcome_type=outcome_type,
+        api_calls=api_calls,
     )
 
 def _result_to_dict(r: SimResult) -> dict:
@@ -780,6 +800,118 @@ def run_regression(req: RegressionRequest):
             "avg_score": round(sum(r.get("score", 0) for r in results) / len(results)) if results else 0,
         }
     }
+
+
+class StreamReproRequest(BaseModel):
+    repro_opener: str
+    root_cause: str
+    prescribed_followups: list[str] = []
+    api_base: str = "https://frontdeskchatagent.adit.com"
+    bearer_token: str
+    agent_phone: str = DEFAULT_AGENT_PHONE
+    openai_key: str = ""
+    max_turns: int = 12
+
+@app.post("/api/simulate/stream-repro")
+async def stream_repro(req: StreamReproRequest):
+    """Stream a single repro simulation as Server-Sent Events."""
+    from fastapi.responses import StreamingResponse as SR
+
+    async def gen():
+        loop = asyncio.get_event_loop()
+        patient_phone = _phone()
+        turns: list[Turn] = []
+        chat_id = None
+        current_msg = req.repro_opener
+        persona = PERSONAS[0]
+        goal = f"Reproduce: {req.root_cause}"
+        api_calls: list[dict] = []
+        followup_idx = 0
+
+        for turn_num in range(req.max_turns):
+            yield f"data: {json.dumps({'type': 'patient', 'message': current_msg})}\n\n"
+            await asyncio.sleep(0.02)
+
+            t_api = time.time()
+            try:
+                resp = await loop.run_in_executor(
+                    None,
+                    lambda m=current_msg, c=chat_id: _call_agent(
+                        req.api_base, req.bearer_token, m, patient_phone, req.agent_phone, c
+                    ),
+                )
+                api_ms = int((time.time() - t_api) * 1000)
+                api_calls.append({"endpoint": "/engage/forward-to-agent", "status": 200, "latency_ms": api_ms})
+            except httpx.HTTPStatusError as e:
+                api_ms = int((time.time() - t_api) * 1000)
+                api_calls.append({"endpoint": "/engage/forward-to-agent", "status": e.response.status_code, "latency_ms": api_ms})
+                if e.response.status_code == 400 and turn_num > 0:
+                    await asyncio.sleep(1.5)
+                    try:
+                        resp = await loop.run_in_executor(
+                            None,
+                            lambda m=current_msg, c=chat_id: _call_agent(
+                                req.api_base, req.bearer_token, m, patient_phone, req.agent_phone, c
+                            ),
+                        )
+                        api_calls.append({"endpoint": "/engage/forward-to-agent (retry)", "status": 200, "latency_ms": 0})
+                    except Exception:
+                        yield f"data: {json.dumps({'type': 'error', 'message': _fmt_error(e.response.text[:200]), 'api_calls': api_calls})}\n\n"
+                        return
+                else:
+                    yield f"data: {json.dumps({'type': 'error', 'message': _fmt_error(e.response.text[:200]), 'api_calls': api_calls})}\n\n"
+                    return
+            except Exception as e:
+                yield f"data: {json.dumps({'type': 'error', 'message': str(e)[:120], 'api_calls': api_calls})}\n\n"
+                return
+
+            data = resp.get("data", {})
+            agent_msg = data.get("agent_response", "")
+            new_cid = data.get("chat_id", chat_id) or chat_id
+            if new_cid:
+                chat_id = new_cid
+
+            if not agent_msg:
+                continue
+
+            turns.append(Turn("patient", current_msg))
+            turns.append(Turn("agent", agent_msg, api_ms))
+
+            yield f"data: {json.dumps({'type': 'agent', 'message': agent_msg, 'latency_ms': api_ms, 'chat_id': chat_id or '', 'api_calls': api_calls})}\n\n"
+            await asyncio.sleep(0.02)
+
+            agent_lower = agent_msg.lower()
+            if any(kw in agent_lower for kw in BOOKING_CONFIRMED_KWS):
+                yield f"data: {json.dumps({'type': 'done', 'outcome': 'booking_confirmed', 'passed': True, 'api_calls': api_calls})}\n\n"
+                return
+            if any(kw in agent_lower for kw in TASK_CREATED_KWS):
+                yield f"data: {json.dumps({'type': 'done', 'outcome': 'task_created', 'passed': True, 'api_calls': api_calls})}\n\n"
+                return
+
+            if followup_idx < len(req.prescribed_followups):
+                current_msg = req.prescribed_followups[followup_idx]
+                followup_idx += 1
+            elif req.openai_key:
+                try:
+                    current_msg, should_end = await loop.run_in_executor(
+                        None,
+                        lambda m=agent_msg: smart_patient_reply(
+                            m, persona, turns, goal, req.openai_key, patient_phone
+                        ),
+                    )
+                    api_calls.append({"endpoint": "openai/gpt-4o-mini (patient)", "status": 200, "latency_ms": 0})
+                    if should_end:
+                        yield f"data: {json.dumps({'type': 'done', 'outcome': 'task_created', 'passed': True, 'api_calls': api_calls})}\n\n"
+                        return
+                except Exception as exc:
+                    yield f"data: {json.dumps({'type': 'error', 'message': f'Patient AI: {str(exc)[:80]}', 'api_calls': api_calls})}\n\n"
+                    return
+            else:
+                break
+
+        yield f"data: {json.dumps({'type': 'done', 'outcome': 'incomplete', 'passed': False, 'api_calls': api_calls})}\n\n"
+
+    return SR(gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 # ── Serve built React frontend ─────────────────────────────────────────────────
