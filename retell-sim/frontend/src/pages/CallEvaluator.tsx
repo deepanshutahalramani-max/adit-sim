@@ -1,8 +1,9 @@
-import { useState, useEffect } from "react";
-import { BarChart2, Play, RefreshCw } from "lucide-react";
-import { evaluateTranscript, runParallel, fetchRetellPrompt, fetchPromptVariant } from "../api";
+import { useState } from "react";
+import { BarChart2, Play } from "lucide-react";
+import { evaluateTranscript, runParallel } from "../api";
 import type { Config, AppConfig, TranscriptEval, SimResult } from "../types";
 import { SimResultCard } from "../components/SimResultCard";
+import { PromptConfigurator } from "../components/PromptConfigurator";
 
 interface Props {
   config: Config;
@@ -24,29 +25,9 @@ export function CallEvaluator({ config, appConfig, onResults }: Props) {
   // Transcript Analyzer state
   const [transcript, setTranscript] = useState("");
   const [sysPrompt, setSysPrompt] = useState("");
-  const [promptLoading, setPromptLoading] = useState(true);
-  const [promptLoadError, setPromptLoadError] = useState("");
   const [analyzing, setAnalyzing] = useState(false);
   const [evalResult, setEvalResult] = useState<TranscriptEval | null>(null);
   const [evalError, setEvalError] = useState("");
-
-  const [selectedVariant, setSelectedVariant] = useState("all_on");
-
-  const loadVariant = (variantId: string) => {
-    setSelectedVariant(variantId);
-    setPromptLoading(true);
-    setPromptLoadError("");
-    const loader = variantId === "live"
-      ? fetchRetellPrompt().then(d => d.prompt)
-      : fetchPromptVariant(variantId).then(d => d.prompt);
-    loader
-      .then(p => { setSysPrompt(p); })
-      .catch(e => setPromptLoadError(e.message ?? "Failed to load"))
-      .finally(() => setPromptLoading(false));
-  };
-
-  // Auto-load default variant on mount
-  useEffect(() => { loadVariant("all_on"); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Call Simulation state
   const scenarios = appConfig?.scenarios ?? [];
@@ -143,36 +124,13 @@ export function CallEvaluator({ config, appConfig, onResults }: Props) {
               className="w-full border border-[#E5E5E5] rounded-xl px-4 py-3 text-[13px] text-[#111] resize-none focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10"
             />
             <div>
-              <div className="text-[10px] font-bold uppercase tracking-widest text-[#ADADAD] mb-1.5">System Prompt</div>
-              {/* Variant picker */}
-              <div className="flex items-center gap-1.5 mb-2 flex-wrap">
-                {[
-                  { id: "all_on",          label: "🟢 All Enabled" },
-                  { id: "scheduling_only", label: "📅 Scheduling Only" },
-                  { id: "all_off",         label: "⛔ All Disabled" },
-                  { id: "live",            label: "⚡ Live (Retell)" },
-                ].map(v => (
-                  <button key={v.id} onClick={() => loadVariant(v.id)}
-                    disabled={promptLoading}
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors disabled:opacity-40 ${
-                      selectedVariant === v.id
-                        ? "bg-brand-500 text-white border-brand-500"
-                        : "bg-white text-[#888] border-[#E5E5E5] hover:border-brand-500 hover:text-brand-500"
-                    }`}>
-                    {v.label}
-                  </button>
-                ))}
-                {promptLoading && <RefreshCw className="w-3.5 h-3.5 text-brand-500 animate-spin" />}
-              </div>
-              {promptLoadError && (
-                <div className="text-[11px] text-red-500 mb-1">⚠ {promptLoadError} — paste manually</div>
-              )}
+              <PromptConfigurator onLoad={setSysPrompt} className="mb-2" />
               <textarea
                 value={sysPrompt}
                 onChange={e => setSysPrompt(e.target.value)}
                 rows={9}
-                placeholder={promptLoading ? "Loading prompt…" : "Prompt loaded — or paste/edit manually"}
-                className={`w-full border rounded-xl px-4 py-3 text-[13px] text-[#111] resize-none focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10 ${promptLoading ? "border-[#E5E5E5] bg-[#FAFAF8]" : "border-[#E5E5E5]"}`}
+                placeholder="Prompt loads automatically — or paste/edit manually"
+                className="w-full border border-[#E5E5E5] rounded-xl px-4 py-3 text-[13px] text-[#111] resize-none focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10"
               />
             </div>
           </div>

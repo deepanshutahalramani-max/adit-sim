@@ -138,24 +138,6 @@ export async function applyFix(params: {
   return post("/debug/apply-fix", params);
 }
 
-export interface PromptVariantMeta {
-  id: string;
-  label: string;
-  description: string;
-}
-
-export async function fetchPromptVariants(): Promise<PromptVariantMeta[]> {
-  const r = await fetch(`${BASE}/retell/prompt-variants`);
-  if (!r.ok) throw new Error(r.statusText);
-  return r.json();
-}
-
-export async function fetchPromptVariant(id: string): Promise<{ id: string; label: string; prompt: string }> {
-  const r = await fetch(`${BASE}/retell/prompt-variants/${id}`);
-  if (!r.ok) throw new Error(r.statusText);
-  return r.json();
-}
-
 export async function fetchRetellPrompt(): Promise<{
   prompt: string;
   llm_id: string;
@@ -168,6 +150,19 @@ export async function fetchRetellPrompt(): Promise<{
     throw new Error(err.detail ?? r.statusText);
   }
   return r.json();
+}
+
+export interface PromptToggles {
+  schedule_new: boolean;
+  schedule_existing: boolean;
+  rescheduling: boolean;
+  cancellation: boolean;
+}
+
+export async function resolvePrompt(params: {
+  template: string;
+} & PromptToggles): Promise<{ prompt: string; substitutions: PromptToggles }> {
+  return post("/retell/resolve-prompt", params);
 }
 
 export async function runRegression(params: {
