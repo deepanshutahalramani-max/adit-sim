@@ -43,6 +43,7 @@ export async function runParallel(params: {
   agent_phone: string;
   openai_key: string;
   use_judge: boolean;
+  extra_context?: string;
 }): Promise<{ results: SimResult[] }> {
   return post("/simulate/parallel", params);
 }

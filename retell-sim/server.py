@@ -158,6 +158,7 @@ class SimRequest(BaseModel):
     openai_key: str = ""
     use_judge: bool = True
     reuse_phone: Optional[str] = None
+    extra_context: str = ""
 
 class ParallelSimRequest(BaseModel):
     scenario_ids: list[str]
@@ -168,6 +169,7 @@ class ParallelSimRequest(BaseModel):
     agent_phone: str = DEFAULT_AGENT_PHONE
     openai_key: str = ""
     use_judge: bool = True
+    extra_context: str = ""
 
 class ChainRequest(BaseModel):
     api_base: str = "https://frontdeskchatagent.adit.com"
@@ -216,7 +218,7 @@ def _call_agent(api_base, token, message, patient_phone, agent_phone, chat_id=No
     r.raise_for_status()
     return r.json()
 
-def smart_patient_reply(agent_msg, persona, history, goal, oai_key, patient_phone=""):
+def smart_patient_reply(agent_msg, persona, history, goal, oai_key, patient_phone="", extra_context=""):
     if not oai_key:
         return "OK", False
     try:
@@ -233,7 +235,8 @@ def smart_patient_reply(agent_msg, persona, history, goal, oai_key, patient_phon
         transcript = "\n".join(
             f"{'You' if t.role == 'patient' else 'Agent'}: {t.message}" for t in recent
         )
-        system_prompt = f"""You are a real person texting a dental office AI receptionist via SMS.
+        extra_ctx_block = f"\n\nADDITIONAL SCENARIO CONTEXT (use to make your replies more realistic):\n{extra_context.strip()}" if extra_context.strip() else ""
+        system_prompt = f"""You are a real person texting a dental office AI receptionist via SMS.{extra_ctx_block}
 
 YOUR DETAILS — reveal ONLY when the agent's question asks for that specific piece:
 - First name: {persona.first_name}
@@ -393,6 +396,7 @@ def _fmt_error(s: str) -> str:
 def _run_simulation_sync(
     scenario_id: str, api_base: str, token: str, agent_phone: str,
     oai_key: str, use_judge: bool = True, reuse_phone: Optional[str] = None,
+    extra_context: str = "",
 ) -> SimResult:
     config = SCENARIOS.get(scenario_id)
     if not config:
@@ -449,7 +453,7 @@ def _run_simulation_sync(
             last_agent = next((t.message for t in reversed(turns) if t.role == "agent"), "")
             if last_agent and oai_key:
                 try:
-                    current_msg, should_end = smart_patient_reply(last_agent, persona, turns, config["goal"], oai_key, patient_phone)
+                    current_msg, should_end = smart_patient_reply(last_agent, persona, turns, config["goal"], oai_key, patient_phone, extra_context)
                     api_calls.append({"endpoint": "openai/gpt-4o-mini (patient)", "status": 200, "latency_ms": 0})
                     if should_end:
                         passed = True
@@ -478,7 +482,7 @@ def _run_simulation_sync(
             break
 
         try:
-            current_msg, should_end = smart_patient_reply(agent_msg, persona, turns, config["goal"], oai_key, patient_phone)
+            current_msg, should_end = smart_patient_reply(agent_msg, persona, turns, config["goal"], oai_key, patient_phone, extra_context)
             api_calls.append({"endpoint": "openai/gpt-4o-mini (patient)", "status": 200, "latency_ms": 0})
             if should_end:
                 passed = True
@@ -576,6 +580,7 @@ def simulate(req: SimRequest):
         result = _run_simulation_sync(
             req.scenario_id, req.api_base, req.bearer_token,
             req.agent_phone, req.openai_key, req.use_judge, req.reuse_phone,
+            req.extra_context,
         )
         return _result_to_dict(result)
     except ValueError as e:
@@ -592,7 +597,8 @@ def simulate_parallel(req: ParallelSimRequest):
             ex.submit(
                 _run_simulation_sync,
                 sid, req.api_base, req.bearer_token,
-                req.agent_phone, req.openai_key, req.use_judge,
+                req.agent_phone, req.openai_key, req.use_judge, None,
+                req.extra_context,
             )
             for sid, _ in tasks
         ]

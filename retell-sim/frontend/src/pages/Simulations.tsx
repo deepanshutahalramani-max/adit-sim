@@ -1,6 +1,6 @@
-import { useState } from "react";
-import { Play, Trash2 } from "lucide-react";
-import { runParallel } from "../api";
+import { useState, useRef } from "react";
+import { Play, Trash2, Paperclip, X } from "lucide-react";
+import { runParallel, extractContextFromImage } from "../api";
 import type { Config, AppConfig, SimResult } from "../types";
 import { SimResultCard } from "../components/SimResultCard";
 import { ManualSMS } from "../components/ManualSMS";
@@ -32,6 +32,28 @@ export function Simulations({ config, appConfig, onResults, results }: Props) {
   const [running, setRunning]   = useState(false);
   const [error, setError]       = useState("");
 
+  /* ── Scenario context ── */
+  const [simContext, setSimContext]      = useState("");
+  const [contextFile, setContextFile]   = useState<File | null>(null);
+  const [extracting, setExtracting]     = useState(false);
+  const [extractError, setExtractError] = useState("");
+  const contextFileRef                   = useRef<HTMLInputElement>(null);
+
+  const handleContextFile = async (file: File) => {
+    setContextFile(file);
+    setExtractError("");
+    if (!config.openaiKey) { setExtractError("OpenAI key required to extract context from image."); return; }
+    setExtracting(true);
+    try {
+      const { context } = await extractContextFromImage(file, config.openaiKey);
+      setSimContext(prev => prev ? `${prev}\n\n[From screenshot]: ${context}` : context);
+    } catch (e) {
+      setExtractError(e instanceof Error ? e.message : "Failed to extract context");
+    } finally {
+      setExtracting(false);
+    }
+  };
+
   const toggleScenario = (id: string) =>
     setSelected(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
   const toggleAll = () =>
@@ -47,6 +69,7 @@ export function Simulations({ config, appConfig, onResults, results }: Props) {
         api_base: config.apiBase, bearer_token: config.bearerToken,
         agent_phone: config.agentPhone, openai_key: config.openaiKey,
         use_judge: config.useLlmJudge,
+        extra_context: simContext,
       });
       onResults(res.results);
     } catch (e: unknown) {
@@ -127,6 +150,51 @@ export function Simulations({ config, appConfig, onResults, results }: Props) {
                 onChange={e => setParallel(+e.target.value)}
                 className="w-20 border border-[#E5E5E5] rounded-lg px-3 py-1.5 text-[13px] focus:outline-none focus:border-brand-500" />
             </div>
+          </div>
+
+          {/* ── Scenario Context (optional) ── */}
+          <div className="bg-white border border-[#EAEAEA] rounded-xl p-4 mb-4">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[10.5px] font-bold uppercase tracking-widest text-[#ADADAD]">
+                Scenario Context <span className="normal-case font-normal text-[#ADADAD]">(optional)</span>
+              </span>
+              {simContext && (
+                <button onClick={() => { setSimContext(""); setContextFile(null); setExtractError(""); }}
+                  className="flex items-center gap-1 text-[11px] text-[#ADADAD] hover:text-red-500 transition-colors">
+                  <X className="w-3 h-3" /> Clear
+                </button>
+              )}
+            </div>
+            <div className="text-[11px] text-[#ADADAD] mb-2">
+              Describe the patient or scenario — the AI patient will use this context during the simulation.
+            </div>
+            <textarea
+              value={simContext}
+              onChange={e => setSimContext(e.target.value)}
+              placeholder="e.g. Patient is calling about a broken crown, anxious about cost, has United Concordia insurance and wants to be seen today."
+              rows={3}
+              className="w-full text-[12px] border border-[#E5E5E5] rounded-lg px-3 py-2 resize-none focus:outline-none focus:border-brand-400 mb-2"
+            />
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => contextFileRef.current?.click()}
+                disabled={extracting}
+                className="flex items-center gap-1.5 text-[11.5px] font-medium text-[#555] border border-[#E5E5E5] rounded-lg px-3 py-1.5 hover:border-[#ADADAD] disabled:opacity-50 transition-colors bg-white"
+              >
+                <Paperclip className="w-3.5 h-3.5" />
+                {extracting ? "Extracting…" : contextFile ? contextFile.name : "Upload screenshot"}
+              </button>
+              {contextFile && !extracting && (
+                <button onClick={() => { setContextFile(null); if (contextFileRef.current) contextFileRef.current.value = ""; }}
+                  className="text-[11px] text-[#ADADAD] hover:text-red-500 transition-colors">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+              <span className="text-[10.5px] text-[#ADADAD]">GPT-4o will extract scenario details from the image</span>
+              <input ref={contextFileRef} type="file" accept="image/*" className="hidden"
+                onChange={e => { const f = e.target.files?.[0]; if (f) handleContextFile(f); }} />
+            </div>
+            {extractError && <div className="text-[11px] text-red-500 mt-1">{extractError}</div>}
           </div>
 
           {error && (
