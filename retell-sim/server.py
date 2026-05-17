@@ -26,32 +26,127 @@ import httpx
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 
 
-# ── DNS-over-HTTPS fallback for Railway (api.retell.ai fails system DNS) ──────
-# Two-layer approach:
-#  1. Eagerly resolve *.retell.ai at startup via Cloudflare DoH and inject
-#     directly into /etc/hosts — this fixes ALL DNS paths (C-level libc,
-#     Python socket, httpx async transport, anyio).
-#  2. Patch socket.getaddrinfo as a runtime fallback for any subsequent
-#     resolution attempts that miss the hosts file.
+# ── DNS resolution for Railway (api.retell.ai fails system DNS) ──────────────
+# Railway's DNS resolver does not resolve api.retell.ai and also blocks direct
+# HTTPS to 1.1.1.1 (so simple DoH-by-IP also fails).  We try five methods in
+# sequence; whichever succeeds first wins.
 
 _RETELL_HOSTS = ["api.retell.ai"]
 
-def _doh_resolve_ip(hostname: str) -> str | None:
-    """Resolve hostname → IP via Cloudflare DoH (1.1.1.1 by IP — no DNS needed)."""
+
+def _try_doh_by_ip(nameserver_ip: str, host_header: str, hostname: str) -> str | None:
+    """DoH via a nameserver specified by IP (no system DNS needed)."""
     try:
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
-        ctx.verify_mode    = ssl.CERT_NONE
+        ctx.verify_mode = ssl.CERT_NONE
         req = urllib.request.Request(
-            f"https://1.1.1.1/dns-query?name={hostname}&type=A",
-            headers={"Accept": "application/dns-json", "Host": "cloudflare-dns.com"},
+            f"https://{nameserver_ip}/dns-query?name={hostname}&type=A",
+            headers={"Accept": "application/dns-json", "Host": host_header},
         )
-        with urllib.request.urlopen(req, context=ctx, timeout=8) as resp:
+        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
             data = json.loads(resp.read())
             ips = [a["data"] for a in data.get("Answer", []) if a.get("type") == 1]
             return ips[0] if ips else None
     except Exception:
         return None
+
+
+def _try_doh_by_hostname(doh_host: str, hostname: str) -> str | None:
+    """DoH via a well-known hostname Railway CAN resolve (dns.google / cloudflare-dns.com)."""
+    try:
+        ctx = ssl.create_default_context()
+        req = urllib.request.Request(
+            f"https://{doh_host}/resolve?name={hostname}&type=A",
+            headers={"Accept": "application/dns-json"},
+        )
+        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
+            data = json.loads(resp.read())
+            ips = [a["data"] for a in data.get("Answer", []) if a.get("type") == 1]
+            return ips[0] if ips else None
+    except Exception:
+        return None
+
+
+def _try_udp_dns(hostname: str, nameserver: str) -> str | None:
+    """Raw UDP DNS query to nameserver:53 (bypasses all HTTP/HTTPS issues)."""
+    try:
+        import struct, random as _rand
+        tid = _rand.randint(1, 65535)
+        header = struct.pack(">HHHHHH", tid, 0x0100, 1, 0, 0, 0)
+        question = b""
+        for label in hostname.rstrip(".").split("."):
+            question += bytes([len(label)]) + label.encode("ascii")
+        question += b"\x00" + struct.pack(">HH", 1, 1)   # A record, IN class
+        packet = header + question
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(3)
+        try:
+            sock.sendto(packet, (nameserver, 53))
+            response, _ = sock.recvfrom(512)
+        finally:
+            sock.close()
+
+        # Skip header (12 bytes) then skip question section
+        offset = 12
+        while offset < len(response):
+            ln = response[offset]
+            if ln == 0:   offset += 1; break
+            if ln >= 0xC0: offset += 2; break
+            offset += ln + 1
+        offset += 4  # QTYPE + QCLASS
+
+        an_count = struct.unpack(">H", response[6:8])[0]
+        for _ in range(an_count):
+            if offset >= len(response): break
+            # skip name field
+            while offset < len(response):
+                ln = response[offset]
+                if ln == 0:    offset += 1; break
+                if ln >= 0xC0: offset += 2; break
+                offset += ln + 1
+            if offset + 10 > len(response): break
+            rtype, _, _, rdlen = struct.unpack(">HHIH", response[offset:offset + 10])
+            offset += 10
+            if rtype == 1 and rdlen == 4:  # A record
+                return ".".join(str(b) for b in response[offset:offset + 4])
+            offset += rdlen
+        return None
+    except Exception:
+        return None
+
+
+def _doh_resolve_ip(hostname: str) -> str | None:
+    """
+    Resolve hostname → IPv4, trying five methods in order:
+      1. Cloudflare DoH by IP  (1.1.1.1 — no DNS needed, but may be blocked)
+      2. Google DoH by IP      (8.8.8.8 — no DNS needed)
+      3. Google DoH by name    (dns.google — Railway can resolve this)
+      4. UDP DNS to 8.8.8.8:53 (bypasses HTTP entirely)
+      5. UDP DNS to 1.1.1.1:53
+    """
+    import logging
+    log = logging.getLogger(__name__)
+
+    methods = [
+        ("CF DoH/IP",    lambda: _try_doh_by_ip("1.1.1.1", "cloudflare-dns.com", hostname)),
+        ("Google DoH/IP",lambda: _try_doh_by_ip("8.8.8.8", "dns.google", hostname)),
+        ("Google DoH/HN",lambda: _try_doh_by_hostname("dns.google", hostname)),
+        ("UDP 8.8.8.8",  lambda: _try_udp_dns(hostname, "8.8.8.8")),
+        ("UDP 1.1.1.1",  lambda: _try_udp_dns(hostname, "1.1.1.1")),
+    ]
+    for name, method in methods:
+        try:
+            ip = method()
+            if ip:
+                log.info("DNS: resolved %s → %s via %s", hostname, ip, name)
+                return ip
+        except Exception:
+            pass
+        log.debug("DNS: %s failed for %s", name, hostname)
+    log.error("DNS: all methods failed for %s", hostname)
+    return None
 
 
 def _inject_hosts(hostname: str, ip: str) -> None:
