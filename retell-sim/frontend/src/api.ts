@@ -152,6 +152,26 @@ export async function fetchRetellPrompt(): Promise<{
   return r.json();
 }
 
+export async function runCallSimulation(params: {
+  scenario_id: string;
+  call_agent_prompt: string;
+  openai_key: string;
+  max_turns?: number;
+}): Promise<SimResult> {
+  return post("/simulate/call", params);
+}
+
+export async function runCallParallel(params: {
+  scenario_ids: string[];
+  repeats: number;
+  max_parallel: number;
+  call_agent_prompt: string;
+  openai_key: string;
+  max_turns?: number;
+}): Promise<{ results: SimResult[] }> {
+  return post("/simulate/call/parallel", params);
+}
+
 export async function fetchRetellCallPrompt(): Promise<{
   prompt: string;
   llm_id: string;

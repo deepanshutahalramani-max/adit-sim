@@ -4,6 +4,7 @@ import { fetchConfig } from "./api";
 import type { Config } from "./types";
 import { Sidebar } from "./components/Sidebar";
 import { Simulations } from "./pages/Simulations";
+import { CallSimulations } from "./pages/CallSimulations";
 import { E2EChain } from "./pages/E2EChain";
 import { DebugSuite } from "./pages/DebugSuite";
 import { CallEvaluator } from "./pages/CallEvaluator";
@@ -12,10 +13,11 @@ import { Dashboard } from "./pages/Dashboard";
 import type { SimResult } from "./types";
 
 const TABS = [
-  { id: "debug",         label: "Debug Suite" },
-  { id: "simulations",   label: "Simulations" },
+  { id: "debug",         label: "🔍 Debug Suite" },
+  { id: "simulations",   label: "💬 SMS Sim" },
+  { id: "call-sim",      label: "📞 Call Sim" },
   { id: "chain",         label: "E2E Chain" },
-  { id: "evaluator",     label: "Call Evaluator" },
+  { id: "evaluator",     label: "Evaluator" },
   { id: "generator",     label: "Test Generator" },
   { id: "dashboard",     label: "Dashboard" },
 ] as const;
@@ -45,8 +47,9 @@ export default function App() {
       useLlmJudge: true,
     };
   });
-  // Global results history shared between Simulations + Dashboard
+  // Global results history — SMS and call results tracked separately
   const [allResults, setAllResults] = useState<SimResult[]>([]);
+  const [callResults, setCallResults] = useState<SimResult[]>([]);
   const [chainResults, setChainResults] = useState<Record<string, SimResult> | null>(null);
 
   const { data: appConfig } = useQuery({ queryKey: ["config"], queryFn: fetchConfig });
@@ -54,6 +57,10 @@ export default function App() {
   const addResults = (rs: SimResult[]) => {
     if (rs.length === 0) setAllResults([]);
     else setAllResults(prev => [...rs, ...prev]);
+  };
+  const addCallResults = (rs: SimResult[]) => {
+    if (rs.length === 0) setCallResults([]);
+    else setCallResults(prev => [...rs, ...prev]);
   };
 
   return (
@@ -112,6 +119,14 @@ export default function App() {
                 appConfig={appConfig}
                 onResults={addResults}
                 results={allResults}
+              />
+            )}
+            {activeTab === "call-sim" && (
+              <CallSimulations
+                config={config}
+                appConfig={appConfig}
+                onResults={addCallResults}
+                results={callResults}
               />
             )}
             {activeTab === "chain" && (

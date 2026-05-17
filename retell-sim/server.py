@@ -945,6 +945,136 @@ def call_agent_llm_reply(
     return resp.choices[0].message.content.strip()
 
 
+# ── Call simulation: synchronous single + parallel ────────────────────────────
+
+def _run_call_simulation_sync(
+    scenario_id: str,
+    call_agent_prompt: str,
+    oai_key: str,
+    max_turns: int = 12,
+) -> SimResult:
+    """LLM-to-LLM call simulation — returns a SimResult (no streaming)."""
+    config = SCENARIOS.get(scenario_id, SCENARIOS["new-patient-cleaning"])
+    persona = PERSONAS[config["persona_idx"]]
+    patient_phone = _phone()
+    goal = config["goal"]
+
+    system_prompt = (
+        _fill_runtime_placeholders(call_agent_prompt)
+        if call_agent_prompt.strip()
+        else (
+            "You are Siriyaa, an AI voice receptionist for a dental office. "
+            "Help callers book, reschedule, or cancel appointments warmly and efficiently."
+        )
+    )
+
+    turns: list[Turn] = []
+    current_caller_msg = CALL_OPENERS.get(scenario_id, config["opener"])
+    passed = False
+    outcome_type = "incomplete"
+    failure_reason = ""
+    t_start = time.time()
+
+    for turn_num in range(max_turns):
+        t0 = time.time()
+        try:
+            agent_msg = call_agent_llm_reply(current_caller_msg, system_prompt, turns, oai_key)
+        except Exception as exc:
+            failure_reason = f"Agent LLM error: {str(exc)[:80]}"
+            outcome_type = "error"
+            break
+
+        latency_ms = int((time.time() - t0) * 1000)
+        api_events = _infer_api_events(agent_msg, latency_ms, turn_num)
+        turns.append(Turn("patient", current_caller_msg))
+        turns.append(Turn("agent", agent_msg, latency_ms, api_events))
+
+        agent_lower = agent_msg.lower()
+        if any(kw in agent_lower for kw in BOOKING_CONFIRMED_KWS):
+            passed = True; outcome_type = "booking_confirmed"; break
+        if any(kw in agent_lower for kw in TASK_CREATED_KWS):
+            passed = True; outcome_type = "task_created"; break
+
+        try:
+            current_caller_msg, should_end = smart_caller_reply(
+                agent_msg, persona, turns, goal, oai_key, patient_phone
+            )
+            if should_end:
+                passed = True; outcome_type = "booking_confirmed"; break
+        except Exception as exc:
+            failure_reason = f"Caller LLM error: {str(exc)[:80]}"; break
+    else:
+        failure_reason = f"Goal not reached in {max_turns} turns"
+
+    total_ms = int((time.time() - t_start) * 1000)
+    score, judge_reason = _llm_judge(config["label"], turns, oai_key) if turns else (0, "No turns")
+
+    return SimResult(
+        scenario=scenario_id,
+        scenario_label=config["label"],
+        patient_phone=patient_phone,
+        turns=turns,
+        passed=passed,
+        score=score,
+        failure_reason=failure_reason if not passed else judge_reason,
+        total_ms=total_ms,
+        chat_id="",
+        outcome_type=outcome_type,
+        api_calls=[],
+    )
+
+
+class CallSimRequest(BaseModel):
+    scenario_id: str = "new-patient-cleaning"
+    call_agent_prompt: str = ""
+    openai_key: str
+    max_turns: int = 12
+
+
+class CallParallelRequest(BaseModel):
+    scenario_ids: list[str]
+    repeats: int = 1
+    max_parallel: int = 3
+    call_agent_prompt: str = ""
+    openai_key: str
+    max_turns: int = 12
+
+
+@app.post("/api/simulate/call")
+def simulate_call(req: CallSimRequest):
+    """Single synchronous call simulation."""
+    if not req.openai_key:
+        raise HTTPException(status_code=400, detail="OpenAI key required")
+    result = _run_call_simulation_sync(
+        req.scenario_id, req.call_agent_prompt, req.openai_key, req.max_turns
+    )
+    return _result_to_dict(result)
+
+
+@app.post("/api/simulate/call/parallel")
+def simulate_call_parallel(req: CallParallelRequest):
+    """Parallel call simulations — LLM-to-LLM, no ADIT backend needed."""
+    if not req.openai_key:
+        raise HTTPException(status_code=400, detail="OpenAI key required")
+    tasks = [(sid, i) for sid in req.scenario_ids for i in range(req.repeats)]
+    results = []
+    with ThreadPoolExecutor(max_workers=min(req.max_parallel, 5)) as ex:
+        futures = [
+            ex.submit(
+                _run_call_simulation_sync,
+                sid, req.call_agent_prompt, req.openai_key, req.max_turns,
+            )
+            for sid, _ in tasks
+        ]
+        for fut in futures:
+            try:
+                results.append(_result_to_dict(fut.result()))
+            except Exception as exc:
+                results.append({"error": str(exc), "passed": False, "score": 0,
+                                "scenario_label": "Error", "turns": []})
+    return {"results": results}
+
+
 # ── Call simulation SSE stream ────────────────────────────────────────────────
 
 class StreamCallRequest(BaseModel):

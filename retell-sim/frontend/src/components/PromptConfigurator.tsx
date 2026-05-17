@@ -64,8 +64,9 @@ export function PromptConfigurator({ onLoad, agentType = "chat", className = "" 
     } finally {
       setLoading(false);
     }
+  // agentType is stable per mount — component is always remounted when mode changes
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [agentType]);
 
   useEffect(() => { fetchTemplate(); }, [fetchTemplate]);
 
