@@ -105,7 +105,10 @@ export function PromptConfigurator({ onLoad, agentType = "chat", className = "" 
       {/* Amber warning on fetch error — still show textarea below for manual paste */}
       {error && (
         <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-2">
-          ⚠ Could not auto-fetch prompt — paste it manually below.
+          {error.includes("custom-llm") || error.includes("ADIT backend")
+            ? "ℹ️ SMS agent uses a custom LLM — the prompt is stored in ADIT, not Retell. Paste it manually below."
+            : "⚠ Could not auto-fetch prompt — paste it manually below."
+          }
           <span className="block text-[10px] text-amber-600 mt-0.5 font-mono">{error}</span>
         </div>
       )}
