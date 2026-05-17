@@ -102,6 +102,59 @@ def _install_doh_fallback() -> None:
     socket.getaddrinfo = _patched_getaddrinfo
 
 _install_doh_fallback()
+
+# ── Retell API helpers: all calls go through here for DNS resilience ──────────
+# If normal httpx DNS fails, we resolve via DoH and retry using the IP address
+# directly.  check_hostname/verify are relaxed ONLY for the fallback path —
+# the primary path uses full TLS verification as normal.
+
+async def _retell_get(path: str, extra_headers: dict | None = None) -> dict:
+    """GET https://api.retell.ai{path} with transparent DoH retry on DNS failure."""
+    url = f"https://api.retell.ai{path}"
+    hdrs = {"Authorization": f"Bearer {RETELL_API_KEY}", **(extra_headers or {})}
+    async with httpx.AsyncClient(timeout=15) as client:
+        try:
+            r = await client.get(url, headers=hdrs)
+            return r
+        except (httpx.ConnectError, httpx.RemoteProtocolError, httpx.ConnectTimeout):
+            pass
+    # Fallback: resolve via DoH and connect to IP directly
+    ip = _doh_resolve_ip("api.retell.ai")
+    if not ip:
+        raise HTTPException(status_code=502, detail="api.retell.ai DNS resolution failed")
+    ssl_ctx = ssl.create_default_context()
+    ssl_ctx.check_hostname = False
+    ssl_ctx.verify_mode    = ssl.CERT_NONE
+    hdrs["Host"] = "api.retell.ai"
+    async with httpx.AsyncClient(timeout=15, verify=ssl_ctx, base_url=f"https://{ip}") as client:
+        return await client.get(path, headers=hdrs)
+
+
+async def _retell_post(path: str, body: dict, extra_headers: dict | None = None) -> dict:
+    """POST https://api.retell.ai{path} with transparent DoH retry on DNS failure."""
+    url = f"https://api.retell.ai{path}"
+    hdrs = {
+        "Authorization": f"Bearer {RETELL_API_KEY}",
+        "Content-Type": "application/json",
+        **(extra_headers or {}),
+    }
+    async with httpx.AsyncClient(timeout=15) as client:
+        try:
+            r = await client.post(url, headers=hdrs, json=body)
+            return r
+        except (httpx.ConnectError, httpx.RemoteProtocolError, httpx.ConnectTimeout):
+            pass
+    # Fallback: resolve via DoH and connect to IP directly
+    ip = _doh_resolve_ip("api.retell.ai")
+    if not ip:
+        raise HTTPException(status_code=502, detail="api.retell.ai DNS resolution failed")
+    ssl_ctx = ssl.create_default_context()
+    ssl_ctx.check_hostname = False
+    ssl_ctx.verify_mode    = ssl.CERT_NONE
+    hdrs["Host"] = "api.retell.ai"
+    async with httpx.AsyncClient(timeout=15, verify=ssl_ctx, base_url=f"https://{ip}") as client:
+        return await client.post(path, headers=hdrs, json=body)
+
 # ─────────────────────────────────────────────────────────────────────────────
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -1255,12 +1308,10 @@ async def stream_call(req: StreamCallRequest):
 @app.post("/api/retell/list-calls")
 async def list_calls(body: dict = None):
     """Proxy: list recent calls from Retell (for viewing real transcripts)."""
-    headers = {"Authorization": f"Bearer {RETELL_API_KEY}", "Content-Type": "application/json"}
     payload = body or {}
     try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            r = await client.post("https://api.retell.ai/v2/list-calls", headers=headers, json=payload)
-            return r.json()
+        r = await _retell_post("/v2/list-calls", payload)
+        return r.json()
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Retell list-calls failed: {exc}")
 
@@ -1343,39 +1394,31 @@ Return ONLY valid JSON (no markdown):
 @app.get("/api/retell/fetch-call-prompt")
 async def fetch_call_prompt():
     """Fetches the live system prompt for the voice call agent."""
-    headers = {"Authorization": f"Bearer {RETELL_API_KEY}"}
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            agent_resp = await client.get(
-                f"https://api.retell.ai/get-agent/{RETELL_CALL_AGENT_ID}",
-                headers=headers,
-            )
-            if agent_resp.status_code != 200:
-                raise HTTPException(status_code=502, detail=f"Retell call agent fetch failed: {agent_resp.text}")
-            agent_data = agent_resp.json()
+        agent_resp = await _retell_get(f"/get-agent/{RETELL_CALL_AGENT_ID}")
+        if agent_resp.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"Retell call agent fetch failed: {agent_resp.text}")
+        agent_data = agent_resp.json()
 
-            llm_id = (
-                agent_data.get("llm_id")
-                or (agent_data.get("response_engine") or {}).get("llm_id")
-            )
-            if not llm_id:
-                raise HTTPException(status_code=502, detail=f"No llm_id in call agent response: {agent_data}")
+        llm_id = (
+            agent_data.get("llm_id")
+            or (agent_data.get("response_engine") or {}).get("llm_id")
+        )
+        if not llm_id:
+            raise HTTPException(status_code=502, detail=f"No llm_id in call agent response: {agent_data}")
 
-            llm_resp = await client.get(
-                f"https://api.retell.ai/get-retell-llm/{llm_id}",
-                headers=headers,
-            )
-            if llm_resp.status_code != 200:
-                raise HTTPException(status_code=502, detail=f"Retell call LLM fetch failed: {llm_resp.text}")
-            llm_data = llm_resp.json()
+        llm_resp = await _retell_get(f"/get-retell-llm/{llm_id}")
+        if llm_resp.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"Retell call LLM fetch failed: {llm_resp.text}")
+        llm_data = llm_resp.json()
 
-            prompt = llm_data.get("general_prompt") or llm_data.get("system_prompt") or ""
-            return {
-                "prompt": prompt,
-                "llm_id": llm_id,
-                "agent_id": RETELL_CALL_AGENT_ID,
-                "model": llm_data.get("model", ""),
-            }
+        prompt = llm_data.get("general_prompt") or llm_data.get("system_prompt") or ""
+        return {
+            "prompt": prompt,
+            "llm_id": llm_id,
+            "agent_id": RETELL_CALL_AGENT_ID,
+            "model": llm_data.get("model", ""),
+        }
     except HTTPException:
         raise
     except Exception as exc:
@@ -1387,19 +1430,14 @@ async def fetch_retell_prompt():
     """
     Fetches the live system prompt from Retell for the configured agent.
     Retell agent → response_engine.llm_id → Retell LLM → general_prompt.
+    Uses _retell_get which auto-retries via DoH if system DNS fails.
     """
-    headers = {"Authorization": f"Bearer {RETELL_API_KEY}"}
-    async with httpx.AsyncClient(timeout=15) as client:
-        # Step 1: get agent to find the LLM id
-        agent_resp = await client.get(
-            f"https://api.retell.ai/get-agent/{RETELL_AGENT_ID}",
-            headers=headers,
-        )
+    try:
+        agent_resp = await _retell_get(f"/get-agent/{RETELL_AGENT_ID}")
         if agent_resp.status_code != 200:
             raise HTTPException(status_code=502, detail=f"Retell agent fetch failed: {agent_resp.text}")
         agent_data = agent_resp.json()
 
-        # Support both old (response_engine.llm_id) and new (llm_id) shapes
         llm_id = (
             agent_data.get("llm_id")
             or (agent_data.get("response_engine") or {}).get("llm_id")
@@ -1407,11 +1445,7 @@ async def fetch_retell_prompt():
         if not llm_id:
             raise HTTPException(status_code=502, detail=f"No llm_id found in agent response: {agent_data}")
 
-        # Step 2: get the LLM to find the system prompt
-        llm_resp = await client.get(
-            f"https://api.retell.ai/get-retell-llm/{llm_id}",
-            headers=headers,
-        )
+        llm_resp = await _retell_get(f"/get-retell-llm/{llm_id}")
         if llm_resp.status_code != 200:
             raise HTTPException(status_code=502, detail=f"Retell LLM fetch failed: {llm_resp.text}")
         llm_data = llm_resp.json()
@@ -1423,6 +1457,10 @@ async def fetch_retell_prompt():
             "agent_id": RETELL_AGENT_ID,
             "model": llm_data.get("model", ""),
         }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Retell prompt fetch failed: {exc}")
 
 
 # ── Retell: placeholder fill-in values (ON vs OFF per feature) ───────────────
@@ -1799,30 +1837,21 @@ async def create_web_call(req: CreateWebCallRequest):
     """
     Creates a Retell web call session.
     Returns access_token for the Retell JS SDK and call_id for tracking.
-    Used by both manual (user mic) and AI-caller (TTS injection) modes.
+    Uses _retell_post which auto-retries via DoH if system DNS fails.
     """
-    headers = {
-        "Authorization": f"Bearer {RETELL_API_KEY}",
-        "Content-Type": "application/json",
-    }
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            r = await client.post(
-                "https://api.retell.ai/v2/create-web-call",
-                headers=headers,
-                json={"agent_id": req.agent_id},
+        r = await _retell_post("/v2/create-web-call", {"agent_id": req.agent_id})
+        if r.status_code not in (200, 201):
+            raise HTTPException(
+                status_code=502,
+                detail=f"Retell create-web-call failed ({r.status_code}): {r.text[:300]}",
             )
-            if r.status_code != 201 and r.status_code != 200:
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"Retell create-web-call failed ({r.status_code}): {r.text[:300]}",
-                )
-            data = r.json()
-            return {
-                "call_id":      data.get("call_id", ""),
-                "access_token": data.get("access_token", ""),
-                "agent_id":     req.agent_id,
-            }
+        data = r.json()
+        return {
+            "call_id":      data.get("call_id", ""),
+            "access_token": data.get("access_token", ""),
+            "agent_id":     req.agent_id,
+        }
     except HTTPException:
         raise
     except Exception as exc:

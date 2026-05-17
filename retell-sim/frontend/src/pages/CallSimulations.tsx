@@ -121,21 +121,6 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
 
   return (
     <div>
-      {/* ── Header ── */}
-      <div className="mb-5">
-        <div className="flex items-center gap-2.5 mb-1">
-          <div className="w-8 h-8 bg-[#1A1A1A] rounded-xl flex items-center justify-center flex-shrink-0">
-            <Phone className="w-4 h-4 text-white" />
-          </div>
-          <h1 className="text-[20px] font-extrabold text-[#111] tracking-tight">Call Simulations</h1>
-        </div>
-        <p className="text-[13.5px] text-[#888] leading-relaxed">
-          {subTab === "manual"    ? "Your mic and speaker — live call with the real Retell voice agent." :
-           subTab === "ai-caller" ? "AI patient caller (GPT-4o-mini + TTS) speaks to the real Retell voice agent." :
-                                   "LLM-to-LLM fast simulation — good for batch regression testing."}
-        </p>
-      </div>
-
       {/* ── Sub-tab bar ── */}
       <div className="flex border-b border-[#EAEAEA] mb-6">
         {([

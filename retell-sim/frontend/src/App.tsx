@@ -3,8 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { fetchConfig } from "./api";
 import type { Config } from "./types";
 import { Sidebar } from "./components/Sidebar";
-import { Simulations } from "./pages/Simulations";
-import { CallSimulations } from "./pages/CallSimulations";
+import { SimulationsHub } from "./pages/SimulationsHub";
 import { E2EChain } from "./pages/E2EChain";
 import { DebugSuite } from "./pages/DebugSuite";
 import { CallEvaluator } from "./pages/CallEvaluator";
@@ -13,13 +12,12 @@ import { Dashboard } from "./pages/Dashboard";
 import type { SimResult } from "./types";
 
 const TABS = [
-  { id: "debug",         label: "🔍 Debug Suite" },
-  { id: "simulations",   label: "💬 SMS Sim" },
-  { id: "call-sim",      label: "📞 Call Sim" },
-  { id: "chain",         label: "E2E Chain" },
-  { id: "evaluator",     label: "Evaluator" },
-  { id: "generator",     label: "Test Generator" },
-  { id: "dashboard",     label: "Dashboard" },
+  { id: "debug",       label: "🔍 Debug Suite" },
+  { id: "simulations", label: "💬 Simulations" },
+  { id: "chain",       label: "E2E Chain" },
+  { id: "evaluator",   label: "Evaluator" },
+  { id: "generator",   label: "Test Generator" },
+  { id: "dashboard",   label: "Dashboard" },
 ] as const;
 
 type TabId = typeof TABS[number]["id"];
@@ -47,21 +45,25 @@ export default function App() {
       useLlmJudge: true,
     };
   });
-  // Global results history — SMS and call results tracked separately
-  const [allResults, setAllResults] = useState<SimResult[]>([]);
+
+  // Results tracked separately per channel
+  const [smsResults, setSmsResults]   = useState<SimResult[]>([]);
   const [callResults, setCallResults] = useState<SimResult[]>([]);
   const [chainResults, setChainResults] = useState<Record<string, SimResult> | null>(null);
 
   const { data: appConfig } = useQuery({ queryKey: ["config"], queryFn: fetchConfig });
 
-  const addResults = (rs: SimResult[]) => {
-    if (rs.length === 0) setAllResults([]);
-    else setAllResults(prev => [...rs, ...prev]);
+  const handleSmsResults = (rs: SimResult[]) => {
+    if (rs.length === 0) setSmsResults([]);
+    else setSmsResults(prev => [...rs, ...prev]);
   };
-  const addCallResults = (rs: SimResult[]) => {
+  const handleCallResults = (rs: SimResult[]) => {
     if (rs.length === 0) setCallResults([]);
     else setCallResults(prev => [...rs, ...prev]);
   };
+
+  // Dashboard gets all results combined
+  const allResults = [...smsResults, ...callResults];
 
   return (
     <div className="flex h-screen bg-[#FAFAF8] overflow-hidden">
@@ -113,37 +115,31 @@ export default function App() {
         {/* Page content */}
         <main className="flex-1 overflow-auto px-8 py-8">
           <div className="max-w-[1160px] mx-auto">
-            {activeTab === "simulations" && (
-              <Simulations
-                config={config}
-                appConfig={appConfig}
-                onResults={addResults}
-                results={allResults}
-              />
+            {activeTab === "debug" && (
+              <DebugSuite config={config} onResults={handleSmsResults} />
             )}
-            {activeTab === "call-sim" && (
-              <CallSimulations
+            {activeTab === "simulations" && (
+              <SimulationsHub
                 config={config}
                 appConfig={appConfig}
-                onResults={addCallResults}
-                results={callResults}
+                onSmsResults={handleSmsResults}
+                smsResults={smsResults}
+                onCallResults={handleCallResults}
+                callResults={callResults}
               />
             )}
             {activeTab === "chain" && (
               <E2EChain
                 config={config}
-                onResults={(rs) => { setChainResults(rs); addResults(Object.values(rs)); }}
+                onResults={(rs) => { setChainResults(rs); handleSmsResults(Object.values(rs)); }}
                 chainResults={chainResults}
               />
             )}
-            {activeTab === "debug" && (
-              <DebugSuite config={config} onResults={addResults} />
-            )}
             {activeTab === "evaluator" && (
-              <CallEvaluator config={config} appConfig={appConfig} onResults={addResults} />
+              <CallEvaluator config={config} appConfig={appConfig} onResults={handleCallResults} />
             )}
             {activeTab === "generator" && (
-              <TestGenerator config={config} onResults={addResults} />
+              <TestGenerator config={config} onResults={handleSmsResults} />
             )}
             {activeTab === "dashboard" && (
               <Dashboard results={allResults} chainResults={chainResults} />

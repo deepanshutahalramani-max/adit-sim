@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Play, Trash2, MessageSquare } from "lucide-react";
+import { Play, Trash2 } from "lucide-react";
 import { runParallel } from "../api";
 import type { Config, AppConfig, SimResult } from "../types";
 import { SimResultCard } from "../components/SimResultCard";
@@ -62,28 +62,11 @@ export function Simulations({ config, appConfig, onResults, results }: Props) {
 
   return (
     <div>
-      {/* Header */}
-      <div className="mb-5 flex items-start justify-between">
-        <div>
-          <div className="flex items-center gap-2.5 mb-1">
-            <div className="w-8 h-8 bg-brand-500 rounded-xl flex items-center justify-center flex-shrink-0">
-              <MessageSquare className="w-4 h-4 text-white" />
-            </div>
-            <h1 className="text-[20px] font-extrabold text-[#111] tracking-tight">SMS Simulations</h1>
-          </div>
-          <p className="text-[13.5px] text-[#888] leading-relaxed">
-            {subTab === "ai"
-              ? "GPT-4o-mini acts as the patient — messages go to the real ADIT/Retell SMS agent."
-              : "Type as a patient and chat live with the real Siriyaa SMS agent."}
-          </p>
-        </div>
-      </div>
-
       {/* Sub-tab bar */}
       <div className="flex border-b border-[#EAEAEA] mb-6">
         {([
-          { id: "ai",     label: "🤖  AI Simulation",  desc: "Automated patient, real agent" },
-          { id: "manual", label: "✏️  Manual Chat",    desc: "You chat with real agent" },
+          { id: "ai",     label: "🤖  AI Simulation",  desc: "Automated, real agent" },
+          { id: "manual", label: "✏️  Manual Chat",     desc: "You as patient, real agent" },
         ] as const).map(t => (
           <button
             key={t.id}
