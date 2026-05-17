@@ -299,43 +299,56 @@ export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWeb
         onError?.(msg);
       });
 
+      // update: sync transcript + infer API events. Never trigger AI reply here —
+      // the agent may still be mid-sentence. Reply is triggered by agent_stop_talking.
       client.on("update", (update: { transcript?: TranscriptEntry[] }) => {
         if (!update?.transcript) return;
         const entries = update.transcript;
-        transcriptRef.current = entries;  // keep ref in sync for call_ended handler
+        transcriptRef.current = entries;  // keep ref in sync
         setTranscript(entries);
 
-        // Detect API events from latest agent message
         const lastAgent = [...entries].reverse().find(e => e.role === "agent");
         if (lastAgent) {
-          setAgentSpeaking(true);
-          setTimeout(() => setAgentSpeaking(false), 1000);
+          // Track latest agent text so agent_stop_talking handler can use it
+          lastAgentTextRef.current = lastAgent.content;
 
           const evs = inferEvents(lastAgent.content);
           if (evs.length) {
             setApiEvents(prev => [...prev, ...evs.map(e => ({ text: e, ts: Date.now() }))]);
           }
-
-          // AI caller responds after agent finishes a new turn
-          if (params.mode === "ai" && lastAgent.content !== lastAgentTextRef.current) {
-            lastAgentTextRef.current = lastAgent.content;
-            // Check if done
-            if (DONE_KWS.some(kw => lastAgent.content.toLowerCase().includes(kw))) {
-              setTimeout(() => { if (callActiveRef.current) client.stopCall(); }, 1500);
-              return;
-            }
-            // Generate + speak AI reply with debounce
-            setTimeout(async () => {
-              if (!callActiveRef.current || speakingRef.current) return;
-              try {
-                const reply = await generateAiReply(lastAgent.content, entries);
-                if (callActiveRef.current) await speakAsPatient(reply);
-              } catch (e) {
-                console.warn("AI reply error:", e);
-              }
-            }, 800);
-          }
         }
+      });
+
+      // agent_start_talking / agent_stop_talking: SDK fires these when Retell's
+      // agent audio actually starts and stops — the correct moment to respond.
+      client.on("agent_start_talking", () => {
+        setAgentSpeaking(true);
+      });
+
+      client.on("agent_stop_talking", () => {
+        setAgentSpeaking(false);
+        if (params.mode !== "ai" || !callActiveRef.current || speakingRef.current) return;
+
+        const entries = transcriptRef.current;
+        const lastAgent = [...entries].reverse().find(e => e.role === "agent");
+        if (!lastAgent) return;
+
+        // Check if conversation is complete
+        if (DONE_KWS.some(kw => lastAgent.content.toLowerCase().includes(kw))) {
+          setTimeout(() => { if (callActiveRef.current) client.stopCall(); }, 1500);
+          return;
+        }
+
+        // Small buffer after agent stops, then speak
+        setTimeout(async () => {
+          if (!callActiveRef.current || speakingRef.current) return;
+          try {
+            const reply = await generateAiReply(lastAgent.content, entries);
+            if (callActiveRef.current) await speakAsPatient(reply);
+          } catch (e) {
+            console.warn("AI reply error:", e);
+          }
+        }, 400);
       });
 
       await client.startCall({ accessToken: access_token });
