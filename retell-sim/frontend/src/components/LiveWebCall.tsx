@@ -9,7 +9,7 @@
  * Backend: POST /api/retell/create-web-call → { access_token, call_id }
  * SDK:     retell-client-js-sdk  (RetellWebClient)
  */
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from "react";
 import { Phone, PhoneOff, Mic, MicOff, Volume2 } from "lucide-react";
 import clsx from "clsx";
 // @ts-expect-error — retell-client-js-sdk may not ship types bundle
@@ -24,6 +24,13 @@ export interface LiveWebCallParams {
   scenario_id?: string;         // used to pick the AI caller's opening line
   autoStart?: boolean;          // if true, call starts automatically on mount
   extra_context?: string;       // optional tester-provided context for AI patient behaviour
+  repro_opener?: string;        // repro mode: exact first line AI caller should say
+  repro_followups?: string[];   // repro mode: subsequent lines to guide AI
+}
+
+/** Imperative handle — lets parent components cut the call (e.g. Back button). */
+export interface LiveWebCallHandle {
+  endCall: () => void;
 }
 
 export interface LiveWebCallDoneResult {
@@ -76,7 +83,7 @@ function formatTime(s: number) {
   return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 }
 
-export function LiveWebCall({ params, onDone, onError }: Props) {
+export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWebCall({ params, onDone, onError }, ref) {
   const [status, setStatus]       = useState<"idle" | "connecting" | "active" | "done" | "error">("idle");
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
   const [apiEvents, setApiEvents] = useState<ApiEvent[]>([]);
@@ -147,12 +154,20 @@ export function LiveWebCall({ params, onDone, onError }: Props) {
 
   // ── AI caller: generate next patient response via backend ─────────────────
   const generateAiReply = useCallback(async (agentText: string, turnHistory: TranscriptEntry[]): Promise<string> => {
-    const opener = AI_OPENERS[params.scenario_id ?? "new-patient-cleaning"]
+    // repro_opener takes priority over scenario openers
+    const opener = params.repro_opener
+      ?? AI_OPENERS[params.scenario_id ?? "new-patient-cleaning"]
       ?? "Hi, I need to schedule an appointment.";
 
     const history = turnHistory.map(t =>
       `${t.role === "user" ? "Caller" : "Agent"}: ${t.content}`
     ).join("\n");
+
+    // Inject repro followup script into extra_context so GPT follows the prescribed path
+    const reproScript = params.repro_followups?.length
+      ? `\n\nREPRO SCRIPT — follow these lines in order after the opener:\n${params.repro_followups.map((f, i) => `${i + 1}. ${f}`).join("\n")}`
+      : "";
+    const combined_context = (params.extra_context ?? "") + reproScript;
 
     const resp = await fetch("/api/ai-caller-reply", {
       method: "POST",
@@ -163,7 +178,7 @@ export function LiveWebCall({ params, onDone, onError }: Props) {
         opener,
         openai_key: params.openai_key,
         scenario_id: params.scenario_id ?? "new-patient-cleaning",
-        extra_context: params.extra_context ?? "",
+        extra_context: combined_context,
       }),
     });
     if (!resp.ok) throw new Error(await resp.text());
@@ -253,7 +268,8 @@ export function LiveWebCall({ params, onDone, onError }: Props) {
         setStatus("active");
         // AI caller speaks first
         if (params.mode === "ai") {
-          const opener = AI_OPENERS[params.scenario_id ?? "new-patient-cleaning"]
+          const opener = params.repro_opener
+            ?? AI_OPENERS[params.scenario_id ?? "new-patient-cleaning"]
             ?? "Hi, I need to schedule an appointment.";
           // Small delay to let Retell's agent greeting finish first
           setTimeout(() => {
@@ -349,6 +365,9 @@ export function LiveWebCall({ params, onDone, onError }: Props) {
       audioCtxRef.current.close();
     }
   };
+
+  // Expose endCall imperatively so parent (e.g. Back button) can cut the call
+  useImperativeHandle(ref, () => ({ endCall }), [endCall]);
 
   const toggleMute = () => {
     if (!clientRef.current) return;
@@ -593,4 +612,4 @@ export function LiveWebCall({ params, onDone, onError }: Props) {
       </div>
     </div>
   );
-}
+});

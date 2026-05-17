@@ -11,7 +11,7 @@ import {
 import type { Config, DebugAnalysis, SimResult } from "../types";
 import { SimResultCard } from "../components/SimResultCard";
 import { LiveChat, type LiveChatDoneResult } from "../components/LiveChat";
-import { LiveWebCall } from "../components/LiveWebCall";
+import { LiveWebCall, type LiveWebCallHandle } from "../components/LiveWebCall";
 import { PromptConfigurator } from "../components/PromptConfigurator";
 
 interface Props {
@@ -94,6 +94,7 @@ export function DebugSuite({ config, onResults }: Props) {
   const [callReproRuns, setCallReproRuns] = useState<CallReproRun[]>([]);
   const [currentRunId, setCurrentRunId] = useState(0);
   const [streamKey, setStreamKey] = useState(0);
+  const callWebCallRef = useRef<LiveWebCallHandle>(null);
 
   /* ── Step 4 + 5 ── */
   const [originalPrompt, setOriginalPrompt] = useState("");
@@ -672,38 +673,31 @@ export function DebugSuite({ config, onResults }: Props) {
                 />
               ) : (
                 <div key={streamKey}>
-                  {/* Repro script — what to say */}
-                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-3">
-                    <div className="text-[10px] font-bold uppercase tracking-widest text-amber-600 mb-2">🎙 What to say on the call</div>
+                  {/* Repro script shown as info — AI caller will follow it automatically */}
+                  <div className="bg-[#F0F5FF] border border-[#C7D7FD] rounded-xl p-4 mb-3">
+                    <div className="text-[10px] font-bold uppercase tracking-widest text-blue-600 mb-2">🤖 AI Caller Repro Script</div>
                     <div className="text-[13px] text-[#222] mb-1">
-                      <strong>Start with:</strong> "{diagnosis.repro_opener}"
+                      <strong>Opener:</strong> "{diagnosis.repro_opener}"
                     </div>
                     {(diagnosis.repro_followups ?? []).map((f, i) => (
                       <div key={i} className="text-[12.5px] text-[#555] ml-3 mt-0.5">↳ {f}</div>
                     ))}
-                    <div className="text-[11px] text-amber-700 mt-2">After the call ends, use the buttons below to mark whether the bug was reproduced.</div>
+                    <div className="text-[11px] text-blue-700 mt-2">AI caller will say these lines automatically. Call auto-starts and records pass/fail.</div>
                   </div>
-                  {/* Real Retell web call — user plays the caller */}
+                  {/* AI caller — real Retell web call, auto-starts, uses repro script */}
                   <LiveWebCall
-                    params={{ mode: "manual", openai_key: config.openaiKey }}
-                    onDone={() => {/* user manually marks result below */}}
+                    ref={callWebCallRef}
+                    key={streamKey}
+                    params={{
+                      mode: "ai",
+                      openai_key: config.openaiKey,
+                      repro_opener: diagnosis.repro_opener,
+                      repro_followups: diagnosis.repro_followups ?? [],
+                      autoStart: true,
+                    }}
+                    onDone={result => handleCallRunDone(result.passed)}
                     onError={msg => { setError(msg); setCurrentRunId(0); }}
                   />
-                  {/* User confirms result after the call */}
-                  <div className="flex gap-2 mt-3">
-                    <button
-                      onClick={() => handleCallRunDone(false)}
-                      className="flex-1 py-2.5 text-[13px] font-semibold rounded-xl border-2 border-red-400 text-red-600 bg-red-50 hover:bg-red-100 transition-colors"
-                    >
-                      🐛 Bug confirmed — I saw the issue
-                    </button>
-                    <button
-                      onClick={() => handleCallRunDone(true)}
-                      className="flex-1 py-2.5 text-[13px] font-semibold rounded-xl border-2 border-green-400 text-green-700 bg-green-50 hover:bg-green-100 transition-colors"
-                    >
-                      ✓ Looks fine — not reproduced
-                    </button>
-                  </div>
                 </div>
               )}
             </div>
@@ -711,7 +705,11 @@ export function DebugSuite({ config, onResults }: Props) {
 
           {/* Action buttons */}
           <div className="flex items-center gap-3">
-            <button onClick={() => { setSmsReproRuns([]); setCallReproRuns([]); setStep("confirm_issue"); }}
+            <button onClick={() => {
+              // Cut any active call before navigating away
+              callWebCallRef.current?.endCall();
+              setSmsReproRuns([]); setCallReproRuns([]); setStep("confirm_issue");
+            }}
               className="flex items-center gap-1.5 px-4 py-3 text-[13px] font-semibold text-[#888] bg-white border border-[#E5E5E5] rounded-xl hover:border-[#ADADAD] transition-colors">
               <ArrowLeft className="w-3.5 h-3.5" /> Back
             </button>
