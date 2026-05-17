@@ -5,11 +5,13 @@ import {
 } from "lucide-react";
 import clsx from "clsx";
 import {
-  analyzeDebug, analyzeDebugText, applyFix, runRegression,
+  analyzeDebug, analyzeDebugText, analyzeCallDebug, applyFix,
+  runRegression, runCallRegression,
 } from "../api";
 import type { Config, DebugAnalysis, SimResult } from "../types";
 import { SimResultCard } from "../components/SimResultCard";
 import { LiveChat, type LiveChatDoneResult } from "../components/LiveChat";
+import { LiveCall, type LiveCallDoneResult } from "../components/LiveCall";
 import { PromptConfigurator } from "../components/PromptConfigurator";
 
 interface Props {
@@ -55,18 +57,20 @@ const SEV_BG: Record<string, string> = {
 const MAX_REPRO_RUNS = 15;
 
 /* ─── Repro run result ─── */
-interface ReproRun {
-  id: number;
-  result: LiveChatDoneResult;
-}
+interface SmsReproRun  { id: number; result: LiveChatDoneResult }
+interface CallReproRun { id: number; result: LiveCallDoneResult }
 
 /* ════════════════════════════════════════════════════════════════════════════ */
 export function DebugSuite({ config, onResults }: Props) {
+  /* ── Mode toggle ── */
+  const [mode, setMode] = useState<"sms" | "call">("sms");
+
   /* ── Step 1 inputs ── */
   const [inputMode, setInputMode] = useState<"screenshot" | "text">("screenshot");
   const [screenshot, setScreenshot] = useState<File | null>(null);
   const [screenshotUrl, setScreenshotUrl] = useState<string | null>(null);
   const [description, setDescription] = useState("");
+  const [callTranscript, setCallTranscript] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("");
   const [extraContext, setExtraContext] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
@@ -82,9 +86,10 @@ export function DebugSuite({ config, onResults }: Props) {
   const [editedApiContext, setEditedApiContext] = useState("");
 
   /* ── Step 3: repro runs ── */
-  const [reproRuns, setReproRuns] = useState<ReproRun[]>([]);
-  const [currentRunId, setCurrentRunId] = useState(0); // 0 = not running
-  const [streamKey, setStreamKey] = useState(0); // forces LiveChat remount
+  const [smsReproRuns, setSmsReproRuns]   = useState<SmsReproRun[]>([]);
+  const [callReproRuns, setCallReproRuns] = useState<CallReproRun[]>([]);
+  const [currentRunId, setCurrentRunId] = useState(0);
+  const [streamKey, setStreamKey] = useState(0);
 
   /* ── Step 4 + 5 ── */
   const [originalPrompt, setOriginalPrompt] = useState("");
@@ -109,19 +114,35 @@ export function DebugSuite({ config, onResults }: Props) {
     setTimeout(() => setCopied(null), 2000);
   };
 
+  /* ── Mode switch — reset wizard ── */
+  const switchMode = (m: "sms" | "call") => {
+    setMode(m);
+    handleReset();
+  };
+
   /* ─────────────────────── Step 1 → 2: analyze ─────────────────────── */
   const handleAnalyze = async () => {
-    const hasInput = inputMode === "screenshot" ? !!screenshot : description.trim().length > 0;
-    if (!hasInput) return;
     if (!config.openaiKey) { setError("OpenAI API key required in sidebar."); return; }
     setError("");
     setStep("diagnosing");
     try {
       let result: DebugAnalysis;
-      if (inputMode === "screenshot" && screenshot) {
+      if (mode === "call") {
+        if (!callTranscript.trim()) { setStep("input"); return; }
+        result = await analyzeCallDebug({
+          transcript: callTranscript,
+          system_prompt: systemPrompt,
+          extra_context: extraContext,
+          openai_key: config.openaiKey,
+        });
+      } else if (inputMode === "screenshot" && screenshot) {
         result = await analyzeDebug(screenshot, systemPrompt, extraContext, config.openaiKey);
       } else {
-        result = await analyzeDebugText({ description, system_prompt: systemPrompt, extra_context: extraContext, openai_key: config.openaiKey });
+        if (!description.trim()) { setStep("input"); return; }
+        result = await analyzeDebugText({
+          description, system_prompt: systemPrompt,
+          extra_context: extraContext, openai_key: config.openaiKey,
+        });
       }
       if (result.error) throw new Error(result.error);
       setDiagnosis(result);
@@ -137,29 +158,32 @@ export function DebugSuite({ config, onResults }: Props) {
 
   /* ─────────────────────── Step 2 → 3: start first repro run ─────────────────────── */
   const handleConfirmIssue = () => {
-    if (!config.bearerToken) { setError("Bearer token required in sidebar."); return; }
+    if (mode === "sms" && !config.bearerToken) { setError("Bearer token required in sidebar."); return; }
     if (!diagnosis) return;
-    // Apply edits back to diagnosis
     const updated: DebugAnalysis = { ...diagnosis, what_happened: editedWhatHappened, root_cause: editedRootCause };
     setDiagnosis(updated);
-    setReproRuns([]);
+    setSmsReproRuns([]);
+    setCallReproRuns([]);
     setCurrentRunId(1);
     setStreamKey(k => k + 1);
     setStep("reproducing");
   };
 
   /* ─────────────────────── Repro run done ─────────────────────── */
-  const handleRunDone = (result: LiveChatDoneResult) => {
-    setReproRuns(prev => {
-      const newRuns = [...prev, { id: currentRunId, result }];
-      return newRuns;
-    });
-    setCurrentRunId(0); // stop streaming
+  const handleSmsRunDone = (result: LiveChatDoneResult) => {
+    setSmsReproRuns(prev => [...prev, { id: currentRunId, result }]);
+    setCurrentRunId(0);
   };
 
-  /* ─────────────────────── Try another run (up to MAX) ─────────────────────── */
+  const handleCallRunDone = (result: LiveCallDoneResult) => {
+    setCallReproRuns(prev => [...prev, { id: currentRunId, result }]);
+    setCurrentRunId(0);
+  };
+
+  /* ─────────────────────── Try another run ─────────────────────── */
   const handleTryAnotherRun = () => {
-    const nextId = reproRuns.length + 1;
+    const totalRuns = mode === "sms" ? smsReproRuns.length : callReproRuns.length;
+    const nextId = totalRuns + 1;
     if (nextId > MAX_REPRO_RUNS) return;
     setCurrentRunId(nextId);
     setStreamKey(k => k + 1);
@@ -184,18 +208,36 @@ export function DebugSuite({ config, onResults }: Props) {
       });
       setModifiedPrompt(fixRes.modified_prompt);
       setAppliedInline(fixRes.applied_inline);
-
       setStep("regression");
-      const regRes = await runRegression({
-        api_base: config.apiBase,
-        bearer_token: config.bearerToken,
-        agent_phone: config.agentPhone,
-        openai_key: config.openaiKey,
-        use_judge: config.useLlmJudge,
-      });
-      setRegressionResults(regRes.results);
-      setRegressionSummary(regRes.summary);
-      onResults(regRes.results);
+
+      let results: SimResult[];
+      let summary: typeof regressionSummary;
+
+      if (mode === "call") {
+        const regRes = await runCallRegression({
+          call_agent_prompt: fixRes.modified_prompt,
+          openai_key: config.openaiKey,
+        });
+        results = regRes.results;
+        const passed  = results.filter(r => r.passed).length;
+        const total   = results.length;
+        const avgScore = total > 0 ? Math.round(results.reduce((s, r) => s + (r.score ?? 0), 0) / total) : 0;
+        summary = { total, passed, failed: total - passed, pass_rate: Math.round((passed / total) * 100), avg_score: avgScore };
+      } else {
+        const regRes = await runRegression({
+          api_base: config.apiBase,
+          bearer_token: config.bearerToken,
+          agent_phone: config.agentPhone,
+          openai_key: config.openaiKey,
+          use_judge: config.useLlmJudge,
+        });
+        results = regRes.results;
+        summary = regRes.summary;
+      }
+
+      setRegressionResults(results);
+      setRegressionSummary(summary);
+      onResults(results);
       setStep("done");
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Fix or regression failed");
@@ -206,16 +248,18 @@ export function DebugSuite({ config, onResults }: Props) {
   /* ─────────────────────── Reset ─────────────────────── */
   const handleReset = () => {
     setStep("input"); setScreenshot(null); setScreenshotUrl(null);
-    setDescription(""); setSystemPrompt(""); setExtraContext("");
-    setDiagnosis(null); setReproRuns([]); setCurrentRunId(0);
+    setDescription(""); setSystemPrompt(""); setExtraContext(""); setCallTranscript("");
+    setDiagnosis(null); setSmsReproRuns([]); setCallReproRuns([]); setCurrentRunId(0);
     setOriginalPrompt(""); setModifiedPrompt(""); setRegressionResults([]);
     setRegressionSummary(null); setError("");
   };
 
   /* ─────────────────────── Derived ─────────────────────── */
   const activeStep = STEP_NUMBERS[step];
-  const reproducedCount = reproRuns.filter(r => r.result.reproduced).length;
+  const reproRuns = mode === "sms" ? smsReproRuns : callReproRuns;
   const totalRuns = reproRuns.length;
+  const smsReproducedCount = smsReproRuns.filter(r => r.result.reproduced).length;
+  const callPassedCount    = callReproRuns.filter(r => r.result.passed).length;
   const isStreaming = currentRunId > 0;
   const canTryMore = !isStreaming && totalRuns < MAX_REPRO_RUNS && totalRuns > 0;
 
@@ -223,11 +267,43 @@ export function DebugSuite({ config, onResults }: Props) {
   return (
     <div>
       {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-[20px] font-extrabold text-[#111] tracking-tight mb-1">Debug Suite</h1>
-        <p className="text-[13.5px] text-[#888] leading-relaxed">
-          Upload a client escalation → AI diagnoses → confirm → live reproduce → confirm fix → apply → full regression.
-        </p>
+      <div className="mb-5">
+        <div className="flex items-start justify-between">
+          <div>
+            <h1 className="text-[20px] font-extrabold text-[#111] tracking-tight mb-1">Debug Suite</h1>
+            <p className="text-[13.5px] text-[#888] leading-relaxed">
+              {mode === "sms"
+                ? "Upload a client escalation → AI diagnoses → confirm → live reproduce → confirm fix → regression."
+                : "Paste a call transcript → AI diagnoses → confirm → live call reproduce → confirm fix → regression."}
+            </p>
+          </div>
+
+          {/* SMS / Call toggle — top right */}
+          <div className="flex gap-1 bg-[#F2F2F0] rounded-xl p-1 flex-shrink-0 ml-4">
+            <button
+              onClick={() => switchMode("sms")}
+              className={clsx(
+                "px-4 py-1.5 rounded-lg text-[13px] font-semibold transition-colors",
+                mode === "sms"
+                  ? "bg-white text-[#111] shadow-sm"
+                  : "text-[#888] hover:text-[#555]",
+              )}
+            >
+              💬 SMS
+            </button>
+            <button
+              onClick={() => switchMode("call")}
+              className={clsx(
+                "px-4 py-1.5 rounded-lg text-[13px] font-semibold transition-colors",
+                mode === "call"
+                  ? "bg-white text-[#111] shadow-sm"
+                  : "text-[#888] hover:text-[#555]",
+              )}
+            >
+              📞 Call
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* ── Stepper ── */}
@@ -271,112 +347,163 @@ export function DebugSuite({ config, onResults }: Props) {
       {/* ══════════════════ STEP 1: INPUT ══════════════════ */}
       {step === "input" && (
         <div>
-          {/* Toggle */}
-          <div className="flex gap-2 mb-5">
-            {(["screenshot", "text"] as const).map(mode => (
-              <button key={mode} onClick={() => setInputMode(mode)}
-                className={clsx("px-4 py-2 text-[13px] font-semibold rounded-lg border transition-colors",
-                  inputMode === mode ? "bg-brand-500 text-white border-brand-500" : "bg-white text-[#888] border-[#E5E5E5] hover:border-brand-500",
-                )}>
-                {mode === "screenshot" ? "📸 Screenshot" : "✏️ Text Description"}
-              </button>
-            ))}
-          </div>
-
-          <div className="grid grid-cols-2 gap-5 mb-4">
-            {/* Left */}
-            <div className="space-y-4">
-              <div>
-                <PromptConfigurator onLoad={setSystemPrompt} />
-                <textarea value={systemPrompt} onChange={e => setSystemPrompt(e.target.value)} rows={9}
-                  placeholder="Prompt loads automatically — or paste/edit manually"
-                  className="w-full border border-[#E5E5E5] rounded-xl px-4 py-3 text-[13px] text-[#111] resize-none focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10" />
+          {/* ── SMS mode ── */}
+          {mode === "sms" && (
+            <>
+              <div className="flex gap-2 mb-5">
+                {(["screenshot", "text"] as const).map(m => (
+                  <button key={m} onClick={() => setInputMode(m)}
+                    className={clsx("px-4 py-2 text-[13px] font-semibold rounded-lg border transition-colors",
+                      inputMode === m ? "bg-brand-500 text-white border-brand-500" : "bg-white text-[#888] border-[#E5E5E5] hover:border-brand-500",
+                    )}>
+                    {m === "screenshot" ? "📸 Screenshot" : "✏️ Text Description"}
+                  </button>
+                ))}
               </div>
-              <div>
-                <label className="text-[10px] font-bold uppercase tracking-widest text-[#ADADAD] block mb-1.5">
-                  Expected Behaviour <span className="text-[#DADAD8] normal-case font-normal">(optional)</span>
-                </label>
-                <textarea value={extraContext} onChange={e => setExtraContext(e.target.value)} rows={3}
-                  placeholder="e.g. 'Agent should have collected DOB before creating the task'"
-                  className="w-full border border-[#E5E5E5] rounded-xl px-4 py-3 text-[13px] text-[#111] resize-none focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10" />
-              </div>
-            </div>
 
-            {/* Right */}
-            <div className="flex flex-col">
-              <label className="text-[10px] font-bold uppercase tracking-widest text-[#ADADAD] block mb-1.5">
-                {inputMode === "screenshot" ? "Escalation Screenshot" : "Describe the Escalation"}
-              </label>
-              {inputMode === "screenshot" ? (
-                <>
-                  <div onDrop={handleDrop} onDragOver={e => e.preventDefault()} onClick={() => fileRef.current?.click()}
-                    className="flex-1 border-[1.5px] border-dashed border-[#DADAD8] rounded-xl cursor-pointer hover:border-brand-500 transition-colors flex items-center justify-center bg-[#FAFAF8] min-h-[200px]">
-                    {screenshotUrl
-                      ? <img src={screenshotUrl} alt="escalation" className="max-h-64 max-w-full rounded-lg object-contain p-2" />
-                      : <div className="text-center p-8">
-                          <Upload className="w-8 h-8 mx-auto mb-3 text-[#ADADAD]" />
-                          <div className="text-[13px] font-medium text-[#888]">Drop screenshot here or click</div>
-                          <div className="text-[12px] text-[#ADADAD] mt-1">PNG · JPG · WEBP</div>
-                        </div>}
+              <div className="grid grid-cols-2 gap-5 mb-4">
+                <div className="space-y-4">
+                  <div>
+                    <PromptConfigurator onLoad={setSystemPrompt} />
+                    <textarea value={systemPrompt} onChange={e => setSystemPrompt(e.target.value)} rows={9}
+                      placeholder="Prompt loads automatically — or paste/edit manually"
+                      className="w-full border border-[#E5E5E5] rounded-xl px-4 py-3 text-[13px] text-[#111] resize-none focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10" />
                   </div>
-                  <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden"
-                    onChange={e => handleFile(e.target.files?.[0] ?? null)} />
-                </>
-              ) : (
-                <textarea value={description} onChange={e => setDescription(e.target.value)}
-                  className="flex-1 border border-[#E5E5E5] rounded-xl px-4 py-3 text-[13px] text-[#111] resize-none focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10 min-h-[200px]"
-                  placeholder={"Describe the escalation. Include:\n• What the agent said\n• What the patient expected\n• Any specific context\n\ne.g. 'Patient texted asking to book for Tuesday. Agent said no availability but there was. Patient called in frustrated.'"} />
-              )}
-            </div>
-          </div>
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-widest text-[#ADADAD] block mb-1.5">
+                      Expected Behaviour <span className="text-[#DADAD8] normal-case font-normal">(optional)</span>
+                    </label>
+                    <textarea value={extraContext} onChange={e => setExtraContext(e.target.value)} rows={3}
+                      placeholder="e.g. 'Agent should have collected DOB before creating the task'"
+                      className="w-full border border-[#E5E5E5] rounded-xl px-4 py-3 text-[13px] text-[#111] resize-none focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10" />
+                  </div>
+                </div>
 
-          <button onClick={handleAnalyze}
-            disabled={inputMode === "screenshot" ? !screenshot : !description.trim()}
-            className="w-full flex items-center justify-center gap-2 bg-brand-500 hover:bg-brand-600 text-white font-semibold text-[14px] rounded-xl py-3 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm">
-            <ChevronRight className="w-4 h-4" />
-            Analyze Escalation
-          </button>
+                <div className="flex flex-col">
+                  <label className="text-[10px] font-bold uppercase tracking-widest text-[#ADADAD] block mb-1.5">
+                    {inputMode === "screenshot" ? "Escalation Screenshot" : "Describe the Escalation"}
+                  </label>
+                  {inputMode === "screenshot" ? (
+                    <>
+                      <div onDrop={handleDrop} onDragOver={e => e.preventDefault()} onClick={() => fileRef.current?.click()}
+                        className="flex-1 border-[1.5px] border-dashed border-[#DADAD8] rounded-xl cursor-pointer hover:border-brand-500 transition-colors flex items-center justify-center bg-[#FAFAF8] min-h-[200px]">
+                        {screenshotUrl
+                          ? <img src={screenshotUrl} alt="escalation" className="max-h-64 max-w-full rounded-lg object-contain p-2" />
+                          : <div className="text-center p-8">
+                              <Upload className="w-8 h-8 mx-auto mb-3 text-[#ADADAD]" />
+                              <div className="text-[13px] font-medium text-[#888]">Drop screenshot here or click</div>
+                              <div className="text-[12px] text-[#ADADAD] mt-1">PNG · JPG · WEBP</div>
+                            </div>}
+                      </div>
+                      <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden"
+                        onChange={e => handleFile(e.target.files?.[0] ?? null)} />
+                    </>
+                  ) : (
+                    <textarea value={description} onChange={e => setDescription(e.target.value)}
+                      className="flex-1 border border-[#E5E5E5] rounded-xl px-4 py-3 text-[13px] text-[#111] resize-none focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10 min-h-[200px]"
+                      placeholder={"Describe the escalation. Include:\n• What the agent said\n• What the patient expected\n• Any specific context"} />
+                  )}
+                </div>
+              </div>
+
+              <button onClick={handleAnalyze}
+                disabled={inputMode === "screenshot" ? !screenshot : !description.trim()}
+                className="w-full flex items-center justify-center gap-2 bg-brand-500 hover:bg-brand-600 text-white font-semibold text-[14px] rounded-xl py-3 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm">
+                <ChevronRight className="w-4 h-4" />
+                Analyze Escalation
+              </button>
+            </>
+          )}
+
+          {/* ── Call mode ── */}
+          {mode === "call" && (
+            <>
+              <div className="grid grid-cols-2 gap-5 mb-4">
+                {/* Left — prompt */}
+                <div className="space-y-4">
+                  <div>
+                    <PromptConfigurator onLoad={setSystemPrompt} agentType="call" />
+                    <textarea value={systemPrompt} onChange={e => setSystemPrompt(e.target.value)} rows={9}
+                      placeholder="Call agent prompt loads automatically — or paste/edit manually"
+                      className="w-full border border-[#E5E5E5] rounded-xl px-4 py-3 text-[13px] text-[#111] resize-none focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-widest text-[#ADADAD] block mb-1.5">
+                      Additional Context <span className="text-[#DADAD8] normal-case font-normal">(optional)</span>
+                    </label>
+                    <textarea value={extraContext} onChange={e => setExtraContext(e.target.value)} rows={3}
+                      placeholder="e.g. 'Agent should have booked the appointment but instead offered a callback'"
+                      className="w-full border border-[#E5E5E5] rounded-xl px-4 py-3 text-[13px] text-[#111] resize-none focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10" />
+                  </div>
+                </div>
+
+                {/* Right — call transcript */}
+                <div className="flex flex-col">
+                  <label className="text-[10px] font-bold uppercase tracking-widest text-[#ADADAD] block mb-1.5">
+                    Call Transcript
+                    <span className="normal-case font-normal text-[#DADAD8] ml-1.5">— paste the Retell transcript or type what happened</span>
+                  </label>
+                  <textarea
+                    value={callTranscript}
+                    onChange={e => setCallTranscript(e.target.value)}
+                    className="flex-1 border border-[#E5E5E5] rounded-xl px-4 py-3 text-[13px] text-[#111] resize-none focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10 min-h-[320px] font-mono"
+                    placeholder={"Paste the call transcript here:\n\nAgent: Thank you for calling, how can I help you today?\nCaller: Hi, I'd like to schedule a cleaning...\n\n— or describe what happened on the call."} />
+                </div>
+              </div>
+
+              <button onClick={handleAnalyze}
+                disabled={!callTranscript.trim()}
+                className="w-full flex items-center justify-center gap-2 bg-brand-500 hover:bg-brand-600 text-white font-semibold text-[14px] rounded-xl py-3 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm">
+                <ChevronRight className="w-4 h-4" />
+                Analyze Call Transcript
+              </button>
+            </>
+          )}
         </div>
       )}
 
       {/* ══════════════════ LOADING: diagnosing ══════════════════ */}
       {step === "diagnosing" && (
-        <LoadingCard title="Analyzing escalation…" subtitle="GPT-4o is examining the issue and identifying the root cause" />
+        <LoadingCard
+          title="Analyzing escalation…"
+          subtitle={mode === "call"
+            ? "GPT-4o is examining the call transcript and identifying the root cause"
+            : "GPT-4o is examining the issue and identifying the root cause"}
+        />
       )}
 
       {/* ══════════════════ STEP 2: CONFIRM ISSUE ══════════════════ */}
       {step === "confirm_issue" && diagnosis && (
         <div>
           <div className="bg-white border border-[#EAEAEA] rounded-2xl p-6 mb-5 shadow-sm">
-            {/* Header */}
             <div className="flex items-start gap-3 mb-5">
               <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5"
                 style={{ background: SEV_BG[diagnosis.severity] ?? "#F9F9F9", border: `1.5px solid ${SEV_COLOR[diagnosis.severity] ?? "#ADADAD"}44` }}>
                 <AlertTriangle className="w-4 h-4" style={{ color: SEV_COLOR[diagnosis.severity] }} />
               </div>
               <div>
-                <div className="text-[14px] font-bold text-[#111]">AI Diagnosis — review &amp; edit before confirming</div>
-                <div className="text-[12.5px] text-[#888] mt-0.5">Edit any field below if the AI missed context (e.g. whether a booking API was actually called)</div>
+                <div className="text-[14px] font-bold text-[#111]">
+                  AI Diagnosis — review &amp; edit before confirming
+                </div>
+                <div className="text-[12.5px] text-[#888] mt-0.5">
+                  Edit any field below if the AI missed context
+                </div>
               </div>
             </div>
 
-            {/* Editable cards */}
             <div className="grid grid-cols-3 gap-4 mb-5">
-              {/* What happened - editable */}
               <div className="bg-[#FAFAF8] border border-[#EAEAEA] rounded-xl p-4">
                 <div className="text-[10px] font-bold uppercase tracking-widest text-[#ADADAD] mb-2">What Happened</div>
                 <textarea value={editedWhatHappened} onChange={e => setEditedWhatHappened(e.target.value)} rows={4}
                   className="w-full bg-transparent text-[13px] text-[#222] leading-relaxed resize-none focus:outline-none border-b border-dashed border-[#DADAD8] focus:border-brand-500" />
               </div>
 
-              {/* Root cause - editable */}
               <div className="bg-[#FAFAF8] border border-[#EAEAEA] rounded-xl p-4">
                 <div className="text-[10px] font-bold uppercase tracking-widest text-[#ADADAD] mb-2">Root Cause</div>
                 <textarea value={editedRootCause} onChange={e => setEditedRootCause(e.target.value)} rows={4}
                   className="w-full bg-transparent text-[13px] text-[#222] leading-relaxed resize-none focus:outline-none border-b border-dashed border-[#DADAD8] focus:border-brand-500" />
               </div>
 
-              {/* Severity + extra API context */}
               <div>
                 <div className="rounded-xl p-4 mb-3" style={{ background: SEV_BG[diagnosis.severity] ?? "#FAFAF8", border: "1px solid #EAEAEA" }}>
                   <div className="text-[10px] font-bold uppercase tracking-widest text-[#ADADAD] mb-1">Severity · Confidence</div>
@@ -386,17 +513,17 @@ export function DebugSuite({ config, onResults }: Props) {
               </div>
             </div>
 
-            {/* Extra API context field */}
             <div className="mb-5">
               <label className="text-[10px] font-bold uppercase tracking-widest text-[#ADADAD] block mb-1.5">
-                Additional API / Backend Context <span className="normal-case font-normal text-[#DADAD8]">(optional — info screenshot can't show)</span>
+                Additional Context <span className="normal-case font-normal text-[#DADAD8]">(optional)</span>
               </label>
               <textarea value={editedApiContext} onChange={e => setEditedApiContext(e.target.value)} rows={2}
-                placeholder="e.g. 'The booking API was called and returned success (200)' or 'No API call was made — agent failed before calling forward-to-agent'"
+                placeholder={mode === "call"
+                  ? "e.g. 'The agent asked for name but never asked for DOB before creating the task'"
+                  : "e.g. 'The booking API was called and returned success (200)'"}
                 className="w-full border border-[#E5E5E5] rounded-xl px-4 py-3 text-[13px] text-[#111] resize-none focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10" />
             </div>
 
-            {/* Prompt section at fault */}
             {diagnosis.prompt_section_at_fault && (
               <div className="bg-red-50 border border-red-200 rounded-xl p-4">
                 <div className="text-[10px] font-bold uppercase tracking-widest text-red-400 mb-2">Prompt Section at Fault</div>
@@ -410,34 +537,44 @@ export function DebugSuite({ config, onResults }: Props) {
               className="flex items-center gap-1.5 px-4 py-3 text-[13px] font-semibold text-[#888] bg-white border border-[#E5E5E5] rounded-xl hover:border-[#ADADAD] transition-colors">
               <ArrowLeft className="w-3.5 h-3.5" /> Back
             </button>
-            <button onClick={handleConfirmIssue} disabled={!config.bearerToken}
+            <button
+              onClick={handleConfirmIssue}
+              disabled={mode === "sms" && !config.bearerToken}
               className="flex-1 flex items-center justify-center gap-2 bg-brand-500 hover:bg-brand-600 text-white font-semibold text-[14px] rounded-xl py-3 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm">
               <CheckCircle className="w-4 h-4" />
-              Confirmed — reproduce this issue
+              Confirmed — {mode === "call" ? "reproduce this call issue" : "reproduce this issue"}
             </button>
           </div>
-          {!config.bearerToken && <p className="text-[12px] text-red-500 mt-2">Bearer token required in sidebar.</p>}
+          {mode === "sms" && !config.bearerToken && (
+            <p className="text-[12px] text-red-500 mt-2">Bearer token required in sidebar.</p>
+          )}
         </div>
       )}
 
-      {/* ══════════════════ STEP 3: REPRODUCE (live stream) ══════════════════ */}
+      {/* ══════════════════ STEP 3: REPRODUCE ══════════════════ */}
       {step === "reproducing" && diagnosis && (
         <div>
           <div className="flex items-center justify-between mb-4">
             <div>
               <div className="text-[15px] font-bold text-[#111]">
-                Reproduction run {totalRuns + (isStreaming ? 1 : 0)}
+                {mode === "call" ? "📞" : "💬"} Reproduction run {totalRuns + (isStreaming ? 1 : 0)}
                 {totalRuns > 0 && <span className="text-[13px] font-normal text-[#888] ml-2">of {MAX_REPRO_RUNS} max</span>}
               </div>
-              <div className="text-[12.5px] text-[#888] mt-0.5">Following the same conversation pattern as the escalation</div>
+              <div className="text-[12.5px] text-[#888] mt-0.5">
+                Following the same {mode === "call" ? "call pattern" : "conversation pattern"} as the escalation
+              </div>
             </div>
-            {/* Reproduced / Not badge (shown once at least 1 run done) */}
+
             {totalRuns > 0 && (
               <div className={clsx(
                 "px-3 py-1.5 rounded-full text-[12px] font-bold",
-                reproducedCount > 0 ? "bg-red-50 text-red-600 border border-red-200" : "bg-green-50 text-green-600 border border-green-200",
+                mode === "sms"
+                  ? (smsReproducedCount > 0 ? "bg-red-50 text-red-600 border border-red-200" : "bg-green-50 text-green-600 border border-green-200")
+                  : (callPassedCount < totalRuns ? "bg-red-50 text-red-600 border border-red-200" : "bg-green-50 text-green-600 border border-green-200"),
               )}>
-                {reproducedCount > 0 ? `🐛 Reproduced ${reproducedCount}/${totalRuns}` : `✓ Not reproduced (${totalRuns} run${totalRuns > 1 ? "s" : ""})`}
+                {mode === "sms"
+                  ? (smsReproducedCount > 0 ? `🐛 Reproduced ${smsReproducedCount}/${totalRuns}` : `✓ Not reproduced (${totalRuns} run${totalRuns > 1 ? "s" : ""})`)
+                  : (`${callPassedCount}/${totalRuns} passed`)}
               </div>
             )}
           </div>
@@ -445,21 +582,31 @@ export function DebugSuite({ config, onResults }: Props) {
           {/* Repro scenario info */}
           <div className="bg-[#FAFAF8] border border-[#EAEAEA] rounded-xl p-4 mb-4">
             <div className="text-[10px] font-bold uppercase tracking-widest text-[#ADADAD] mb-2">Repro Scenario</div>
-            <div className="text-[13px] text-[#222] mb-1"><strong>Opener:</strong> {diagnosis.repro_opener}</div>
+            <div className="text-[13px] text-[#222] mb-1">
+              <strong>{mode === "call" ? "Caller says:" : "Opener:"}</strong> {diagnosis.repro_opener}
+            </div>
             {diagnosis.repro_followups?.map((f, i) => (
               <div key={i} className="text-[13px] text-[#555] ml-4">↳ {f}</div>
             ))}
           </div>
 
-          {/* Past runs summary */}
+          {/* Past runs badges */}
           {reproRuns.length > 0 && (
             <div className="flex flex-wrap gap-2 mb-4">
-              {reproRuns.map(r => (
+              {mode === "sms" && smsReproRuns.map(r => (
                 <div key={r.id} className={clsx(
                   "px-2.5 py-1 rounded-full text-[11px] font-semibold",
                   r.result.reproduced ? "bg-red-50 text-red-600 border border-red-200" : "bg-green-50 text-green-600 border border-green-200",
                 )}>
                   Run {r.id}: {r.result.reproduced ? "Bug seen" : "Passed"}
+                </div>
+              ))}
+              {mode === "call" && callReproRuns.map(r => (
+                <div key={r.id} className={clsx(
+                  "px-2.5 py-1 rounded-full text-[11px] font-semibold",
+                  !r.result.passed ? "bg-red-50 text-red-600 border border-red-200" : "bg-green-50 text-green-600 border border-green-200",
+                )}>
+                  Run {r.id}: {r.result.passed ? "Passed" : "Bug seen"}
                 </div>
               ))}
             </div>
@@ -468,26 +615,41 @@ export function DebugSuite({ config, onResults }: Props) {
           {/* Live stream */}
           {isStreaming && (
             <div className="mb-4">
-              <LiveChat
-                key={streamKey}
-                params={{
-                  repro_opener: diagnosis.repro_opener,
-                  root_cause: editedRootCause || diagnosis.root_cause,
-                  prescribed_followups: diagnosis.repro_followups ?? [],
-                  api_base: config.apiBase,
-                  bearer_token: config.bearerToken,
-                  agent_phone: config.agentPhone,
-                  openai_key: config.openaiKey,
-                }}
-                onDone={handleRunDone}
-                onError={msg => { setError(msg); setCurrentRunId(0); }}
-              />
+              {mode === "sms" ? (
+                <LiveChat
+                  key={streamKey}
+                  params={{
+                    repro_opener: diagnosis.repro_opener,
+                    root_cause: editedRootCause || diagnosis.root_cause,
+                    prescribed_followups: diagnosis.repro_followups ?? [],
+                    api_base: config.apiBase,
+                    bearer_token: config.bearerToken,
+                    agent_phone: config.agentPhone,
+                    openai_key: config.openaiKey,
+                  }}
+                  onDone={handleSmsRunDone}
+                  onError={msg => { setError(msg); setCurrentRunId(0); }}
+                />
+              ) : (
+                <LiveCall
+                  key={streamKey}
+                  params={{
+                    scenario_id: "new-patient-cleaning",
+                    call_agent_prompt: systemPrompt,
+                    openai_key: config.openaiKey,
+                    repro_opener: diagnosis.repro_opener,
+                    root_cause: editedRootCause || diagnosis.root_cause,
+                  }}
+                  onDone={handleCallRunDone}
+                  onError={msg => { setError(msg); setCurrentRunId(0); }}
+                />
+              )}
             </div>
           )}
 
           {/* Action buttons */}
           <div className="flex items-center gap-3">
-            <button onClick={() => { setReproRuns([]); setStep("confirm_issue"); }}
+            <button onClick={() => { setSmsReproRuns([]); setCallReproRuns([]); setStep("confirm_issue"); }}
               className="flex items-center gap-1.5 px-4 py-3 text-[13px] font-semibold text-[#888] bg-white border border-[#E5E5E5] rounded-xl hover:border-[#ADADAD] transition-colors">
               <ArrowLeft className="w-3.5 h-3.5" /> Back
             </button>
@@ -510,7 +672,9 @@ export function DebugSuite({ config, onResults }: Props) {
             )}
           </div>
           {!systemPrompt.trim() && totalRuns > 0 && !isStreaming && (
-            <p className="text-[12px] text-[#888] mt-2">Retell prompt not loaded — go back to Step 1 and refresh.</p>
+            <p className="text-[12px] text-[#888] mt-2">
+              {mode === "call" ? "Call agent" : "Retell"} prompt not loaded — go back to Step 1 and refresh.
+            </p>
           )}
         </div>
       )}
@@ -551,20 +715,26 @@ export function DebugSuite({ config, onResults }: Props) {
             <button onClick={handleApplyFix}
               className="flex-1 flex items-center justify-center gap-2 bg-brand-500 hover:bg-brand-600 text-white font-semibold text-[14px] rounded-xl py-3 transition-colors shadow-sm">
               <CheckCircle className="w-4 h-4" />
-              Apply fix &amp; run full regression
+              Apply fix &amp; run full {mode === "call" ? "call" : ""} regression
             </button>
           </div>
         </div>
       )}
 
-      {/* ══════════════════ LOADING: applying / regression ══════════════════ */}
-      {step === "applying_fix" && <LoadingCard title="Applying fix…" subtitle="Updating the prompt and preparing to run all 8 regression scenarios" />}
-      {step === "regression" && <LoadingCard title="Running full regression…" subtitle="Testing all 8 scenarios in parallel — this takes ~2 minutes" />}
+      {/* ══════════════════ LOADING ══════════════════ */}
+      {step === "applying_fix" && <LoadingCard title="Applying fix…" subtitle="Updating the prompt and preparing regression" />}
+      {step === "regression" && (
+        <LoadingCard
+          title="Running full regression…"
+          subtitle={mode === "call"
+            ? "Testing all 8 call scenarios in parallel — this takes ~3 minutes"
+            : "Testing all 8 SMS scenarios in parallel — this takes ~2 minutes"}
+        />
+      )}
 
       {/* ══════════════════ STEP 5 / DONE ══════════════════ */}
       {step === "done" && regressionSummary && (
         <div>
-          {/* Summary */}
           <div className="bg-white border border-[#EAEAEA] rounded-2xl p-6 mb-5 shadow-sm">
             <div className="flex items-center gap-4 mb-5">
               <div className={clsx(
@@ -586,7 +756,6 @@ export function DebugSuite({ config, onResults }: Props) {
               </div>
             </div>
 
-            {/* Modified prompt */}
             <details className="border-t border-[#EAEAEA] pt-4 mb-3">
               <summary className="cursor-pointer text-[13px] font-semibold text-brand-500 select-none">
                 Updated prompt ({appliedInline ? "applied inline" : "appended"})
@@ -601,7 +770,6 @@ export function DebugSuite({ config, onResults }: Props) {
               </button>
             </details>
 
-            {/* Revert to original */}
             {originalPrompt && (
               <details className="border border-[#F0F0EE] rounded-xl overflow-hidden">
                 <summary className="cursor-pointer px-4 py-3 text-[13px] font-semibold text-[#888] select-none hover:bg-[#FAFAF8]">
@@ -621,7 +789,6 @@ export function DebugSuite({ config, onResults }: Props) {
             )}
           </div>
 
-          {/* Individual results */}
           {regressionResults.length > 0 && (
             <div className="space-y-3 mb-5">
               {regressionResults.map((r, i) => <SimResultCard key={i} result={r} defaultExpanded={false} />)}

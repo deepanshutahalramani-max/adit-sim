@@ -199,6 +199,48 @@ export async function resolvePrompt(params: {
   return post("/retell/resolve-prompt", params);
 }
 
+export async function analyzeCallDebug(params: {
+  transcript: string;
+  system_prompt: string;
+  extra_context: string;
+  openai_key: string;
+}): Promise<import("./types").DebugAnalysis> {
+  return post("/debug/analyze-call", params);
+}
+
+export async function listRetellCalls(params?: {
+  agent_id?: string;
+  limit?: number;
+  sort_order?: string;
+}): Promise<{ calls: unknown[] }> {
+  return post("/retell/list-calls", params ?? {});
+}
+
+export async function runCallRegression(params: {
+  call_agent_prompt: string;
+  openai_key: string;
+  max_turns?: number;
+}): Promise<{ results: SimResult[] }> {
+  const ALL_CALL_SCENARIOS = [
+    "new-patient-cleaning",
+    "dental-emergency",
+    "existing-routine",
+    "reschedule",
+    "cancel",
+    "insurance-book",
+    "office-hours-book",
+    "post-treatment-followup",
+  ];
+  return post("/simulate/call/parallel", {
+    scenario_ids: ALL_CALL_SCENARIOS,
+    repeats: 1,
+    max_parallel: 5,
+    call_agent_prompt: params.call_agent_prompt,
+    openai_key: params.openai_key,
+    max_turns: params.max_turns ?? 12,
+  });
+}
+
 export async function runRegression(params: {
   api_base: string;
   bearer_token: string;

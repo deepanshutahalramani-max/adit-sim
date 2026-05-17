@@ -12,6 +12,10 @@ export interface LiveCallParams {
   call_agent_prompt: string;
   openai_key: string;
   max_turns?: number;
+  /** Debug repro: override the scenario opener with this exact spoken line */
+  repro_opener?: string;
+  /** Debug repro: override the simulation goal with "Reproduce: <root_cause>" */
+  root_cause?: string;
 }
 
 export interface LiveCallDoneResult {
@@ -80,6 +84,8 @@ export function LiveCall({ params, onDone, onError }: Props) {
             call_agent_prompt: params.call_agent_prompt,
             openai_key: params.openai_key,
             max_turns: params.max_turns ?? 12,
+            ...(params.repro_opener ? { repro_opener: params.repro_opener } : {}),
+            ...(params.root_cause   ? { root_cause: params.root_cause }     : {}),
           }),
           signal: ctrl.signal,
         });

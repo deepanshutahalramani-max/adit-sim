@@ -1079,9 +1079,12 @@ def simulate_call_parallel(req: CallParallelRequest):
 
 class StreamCallRequest(BaseModel):
     scenario_id: str = "new-patient-cleaning"
-    call_agent_prompt: str = ""   # resolved Retell prompt (behavioral placeholders already filled)
+    call_agent_prompt: str = ""
     openai_key: str
     max_turns: int = 12
+    # Optional repro fields — override scenario opener/goal for debug reproduction
+    repro_opener: str = ""
+    root_cause: str = ""
 
 
 @app.post("/api/simulate/call-stream")
@@ -1098,17 +1101,20 @@ async def stream_call(req: StreamCallRequest):
         config = SCENARIOS.get(req.scenario_id, SCENARIOS["new-patient-cleaning"])
         persona = PERSONAS[config["persona_idx"]]
         patient_phone = _phone()
-        goal = config["goal"]
+        # Repro mode overrides goal; otherwise use scenario goal
+        goal = f"Reproduce: {req.root_cause}" if req.root_cause else config["goal"]
 
-        # Resolve runtime variables so GPT-4o gets a clean system prompt
         system_prompt = _fill_runtime_placeholders(req.call_agent_prompt) if req.call_agent_prompt.strip() else (
             "You are Siriyaa, an AI voice receptionist for a dental office. "
             "Help callers book, reschedule, or cancel appointments warmly and efficiently."
         )
 
         turns: list[Turn] = []
-        # Use call-specific opener if available, else fall back to scenario default
-        current_caller_msg = CALL_OPENERS.get(req.scenario_id, config["opener"])
+        # Repro mode uses custom opener; otherwise use call-specific or scenario default
+        current_caller_msg = (
+            req.repro_opener if req.repro_opener
+            else CALL_OPENERS.get(req.scenario_id, config["opener"])
+        )
 
         for turn_num in range(req.max_turns):
             # Stream patient / caller turn
@@ -1163,41 +1169,134 @@ async def stream_call(req: StreamCallRequest):
 
 # ── Retell: fetch call agent prompt ──────────────────────────────────────────
 
+@app.post("/api/retell/list-calls")
+async def list_calls(body: dict = None):
+    """Proxy: list recent calls from Retell (for viewing real transcripts)."""
+    headers = {"Authorization": f"Bearer {RETELL_API_KEY}", "Content-Type": "application/json"}
+    payload = body or {}
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            r = await client.post("https://api.retell.ai/v2/list-calls", headers=headers, json=payload)
+            return r.json()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Retell list-calls failed: {exc}")
+
+
+@app.get("/api/retell/get-call/{call_id}")
+async def get_call(call_id: str):
+    """Proxy: get a single call's transcript + metadata from Retell."""
+    headers = {"Authorization": f"Bearer {RETELL_API_KEY}"}
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            r = await client.get(f"https://api.retell.ai/v2/get-call/{call_id}", headers=headers)
+            return r.json()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Retell get-call failed: {exc}")
+
+
+class AnalyzeCallRequest(BaseModel):
+    transcript: str
+    system_prompt: str = ""
+    extra_context: str = ""
+    openai_key: str
+
+
+@app.post("/api/debug/analyze-call")
+def debug_analyze_call(req: AnalyzeCallRequest):
+    """Analyze a voice call transcript for agent issues."""
+    if not req.openai_key:
+        raise HTTPException(status_code=400, detail="OpenAI API key required")
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=req.openai_key)
+        prompt_block = f"\n\nCALL AGENT SYSTEM PROMPT:\n```\n{req.system_prompt}\n```" if req.system_prompt.strip() else ""
+        context_block = f"\n\nADDITIONAL CONTEXT: {req.extra_context}" if req.extra_context.strip() else ""
+
+        analysis_prompt = f"""You are a senior QA engineer debugging Siriyaa, an AI dental front-desk VOICE CALL agent.
+
+Analyze this call transcript and identify exactly what the voice agent did wrong.{prompt_block}{context_block}
+
+CALL TRANSCRIPT:
+{req.transcript}
+
+Voice call issues to look for:
+- Agent interrupting or not waiting for caller to finish
+- Missing required information collection (name, DOB, insurance, reason)
+- Wrong information given (hours, availability, policies)
+- Failing to book when it should, or booking when it shouldn't
+- Not offering task creation when direct booking fails
+- Unnatural or confusing responses
+- Not following the system prompt instructions
+
+Return ONLY valid JSON (no markdown):
+{{
+    "what_happened": "1-2 sentences describing what the agent did wrong",
+    "severity": "low|medium|high|critical",
+    "scenario_type": "booking|reschedule|cancel|insurance|hours|emergency|other",
+    "root_cause": "Specific technical reason the call agent failed",
+    "prompt_section_at_fault": "The exact text from the system prompt that is wrong or missing — quote verbatim. If no prompt provided, describe the missing instruction.",
+    "suggested_fix": "The exact replacement text or addition to fix the system prompt",
+    "fix_explanation": "1-2 sentences explaining why this change fixes the issue",
+    "repro_opener": "The exact first spoken caller message that would reproduce this bug (phone call style)",
+    "repro_followups": ["what caller says next", "then this", "then this"],
+    "confidence": "high|medium|low"
+}}"""
+
+        resp = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": analysis_prompt}],
+            max_tokens=1400, temperature=0,
+        )
+        raw = resp.choices[0].message.content.strip()
+        if raw.startswith("```"):
+            raw = "\n".join(raw.split("\n")[1:]).rstrip("`").strip()
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=422, detail=f"Parse error: {exc}")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 @app.get("/api/retell/fetch-call-prompt")
 async def fetch_call_prompt():
     """Fetches the live system prompt for the voice call agent."""
     headers = {"Authorization": f"Bearer {RETELL_API_KEY}"}
-    async with httpx.AsyncClient(timeout=15) as client:
-        agent_resp = await client.get(
-            f"https://api.retell.ai/get-agent/{RETELL_CALL_AGENT_ID}",
-            headers=headers,
-        )
-        if agent_resp.status_code != 200:
-            raise HTTPException(status_code=502, detail=f"Retell call agent fetch failed: {agent_resp.text}")
-        agent_data = agent_resp.json()
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            agent_resp = await client.get(
+                f"https://api.retell.ai/get-agent/{RETELL_CALL_AGENT_ID}",
+                headers=headers,
+            )
+            if agent_resp.status_code != 200:
+                raise HTTPException(status_code=502, detail=f"Retell call agent fetch failed: {agent_resp.text}")
+            agent_data = agent_resp.json()
 
-        llm_id = (
-            agent_data.get("llm_id")
-            or (agent_data.get("response_engine") or {}).get("llm_id")
-        )
-        if not llm_id:
-            raise HTTPException(status_code=502, detail=f"No llm_id in call agent response: {agent_data}")
+            llm_id = (
+                agent_data.get("llm_id")
+                or (agent_data.get("response_engine") or {}).get("llm_id")
+            )
+            if not llm_id:
+                raise HTTPException(status_code=502, detail=f"No llm_id in call agent response: {agent_data}")
 
-        llm_resp = await client.get(
-            f"https://api.retell.ai/get-retell-llm/{llm_id}",
-            headers=headers,
-        )
-        if llm_resp.status_code != 200:
-            raise HTTPException(status_code=502, detail=f"Retell call LLM fetch failed: {llm_resp.text}")
-        llm_data = llm_resp.json()
+            llm_resp = await client.get(
+                f"https://api.retell.ai/get-retell-llm/{llm_id}",
+                headers=headers,
+            )
+            if llm_resp.status_code != 200:
+                raise HTTPException(status_code=502, detail=f"Retell call LLM fetch failed: {llm_resp.text}")
+            llm_data = llm_resp.json()
 
-        prompt = llm_data.get("general_prompt") or llm_data.get("system_prompt") or ""
-        return {
-            "prompt": prompt,
-            "llm_id": llm_id,
-            "agent_id": RETELL_CALL_AGENT_ID,
-            "model": llm_data.get("model", ""),
-        }
+            prompt = llm_data.get("general_prompt") or llm_data.get("system_prompt") or ""
+            return {
+                "prompt": prompt,
+                "llm_id": llm_id,
+                "agent_id": RETELL_CALL_AGENT_ID,
+                "model": llm_data.get("model", ""),
+            }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Retell call prompt fetch failed: {exc}")
 
 
 @app.get("/api/retell/fetch-prompt")
