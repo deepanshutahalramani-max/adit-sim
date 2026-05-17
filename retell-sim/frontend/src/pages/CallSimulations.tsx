@@ -53,14 +53,16 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
   const callPromptRef = useRef("");
   const handlePromptLoad = (p: string) => { setCallPrompt(p); callPromptRef.current = p; };
 
-  /* ── Manual / AI Caller state ── */
-  const [webCallScenario, setWebCallScenario] = useState("new-patient-cleaning");
-  const [webCallKey, setWebCallKey]           = useState(0);
-  const [webCallRunning, setWebCallRunning]   = useState(false);
-  const [webCallDone, setWebCallDone]         = useState<LiveWebCallDoneResult | null>(null);
-  const [webCallError, setWebCallError]       = useState("");
+  /* ── Manual / AI Caller state (separate keys so switching tabs resets the component) ── */
+  const [webCallScenario, setWebCallScenario]       = useState("new-patient-cleaning");
+  const [manualCallKey, setManualCallKey]            = useState(0);
+  const [aiCallerKey, setAiCallerKey]                = useState(0);
+  const [webCallRunning, setWebCallRunning]          = useState(false);
+  const [webCallDone, setWebCallDone]                = useState<LiveWebCallDoneResult | null>(null);
+  const [webCallError, setWebCallError]              = useState("");
 
   /* ── AI Sim (LLM-to-LLM) state ── */
+  const [simMode, setSimMode]           = useState<"live" | "batch">("live");
   const [liveScenario, setLiveScenario] = useState(scenarios[0]?.id ?? "new-patient-cleaning");
   const [liveKey, setLiveKey]           = useState(0);
   const [liveRunning, setLiveRunning]   = useState(false);
@@ -79,8 +81,9 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
     if (mode === "ai" && !config.openaiKey) {
       setWebCallError("OpenAI key required in sidebar for AI Caller mode."); return;
     }
-    setWebCallError(""); setWebCallDone(null);
-    setWebCallRunning(true); setWebCallKey(k => k + 1);
+    setWebCallError(""); setWebCallDone(null); setWebCallRunning(true);
+    if (mode === "manual") setManualCallKey(k => k + 1);
+    else                   setAiCallerKey(k => k + 1);
   };
 
   const handleLiveRun = () => {
@@ -194,7 +197,7 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
             <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-[13px] text-red-600 mb-4">{webCallError}</div>
           )}
 
-          {webCallKey === 0 ? (
+          {manualCallKey === 0 ? (
             <button onClick={() => startWebCall("manual")}
               className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white font-semibold text-[14px] rounded-xl px-8 py-3 transition-colors shadow-sm mb-5">
               <Phone className="w-4 h-4" />
@@ -203,7 +206,7 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
           ) : (
             <div className="mb-5">
               <LiveWebCall
-                key={webCallKey}
+                key={manualCallKey}
                 params={{ mode: "manual", openai_key: config.openaiKey, scenario_id: webCallScenario }}
                 onDone={result => { setWebCallRunning(false); setWebCallDone(result); }}
                 onError={msg => { setWebCallRunning(false); setWebCallError(msg); }}
@@ -274,7 +277,7 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
             <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-[13px] text-red-600 mb-4">{webCallError}</div>
           )}
 
-          {webCallKey === 0 ? (
+          {aiCallerKey === 0 ? (
             <button onClick={() => startWebCall("ai")} disabled={!config.openaiKey}
               className="flex items-center gap-2 bg-[#1A1A1A] hover:bg-[#333] text-white font-semibold text-[14px] rounded-xl px-8 py-3 transition-colors shadow-sm mb-5 disabled:opacity-50 disabled:cursor-not-allowed">
               <Phone className="w-4 h-4" />
@@ -283,7 +286,7 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
           ) : (
             <div className="mb-5">
               <LiveWebCall
-                key={webCallKey}
+                key={aiCallerKey}
                 params={{ mode: "ai", openai_key: config.openaiKey, scenario_id: webCallScenario }}
                 onDone={result => { setWebCallRunning(false); setWebCallDone(result); }}
                 onError={msg => { setWebCallRunning(false); setWebCallError(msg); }}
@@ -334,15 +337,19 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
               { id: "batch", label: "⚡  Batch Run" },
             ] as const).map(t => (
               <button key={t.id}
-                onClick={() => setSubTab(t.id === "live" ? "ai-sim" : "ai-sim")}
-                className="px-4 py-2 text-[13px] font-semibold rounded-lg border border-[#E5E5E5] bg-white text-[#555] hover:border-[#ADADAD] transition-colors">
+                onClick={() => setSimMode(t.id)}
+                className={`px-4 py-2 text-[13px] font-semibold rounded-lg border transition-colors ${
+                  simMode === t.id
+                    ? "border-[#1A1A1A] bg-[#1A1A1A] text-white"
+                    : "border-[#E5E5E5] bg-white text-[#555] hover:border-[#ADADAD]"
+                }`}>
                 {t.label}
               </button>
             ))}
           </div>
 
           {/* Live run */}
-          <div className="mb-6">
+          {simMode === "live" && <div className="mb-6">
             <div className="text-[13px] font-bold text-[#111] mb-3">▶ Live Run — single call</div>
             <div className="grid grid-cols-2 gap-2 mb-4">
               {scenarios.map(sc => (
@@ -396,10 +403,10 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
                 </button>
               </div>
             )}
-          </div>
+          </div>}
 
           {/* Batch run */}
-          <div className="border-t border-[#EAEAEA] pt-6">
+          {simMode === "batch" && <div className="border-t border-[#EAEAEA] pt-6">
             <div className="text-[13px] font-bold text-[#111] mb-3">⚡ Batch Run — multiple scenarios</div>
             <div className="grid grid-cols-2 gap-2 mb-4">
               {scenarios.map(sc => (
@@ -461,7 +468,7 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
                 ))}
               </>
             )}
-          </div>
+          </div>}
         </div>
       )}
     </div>

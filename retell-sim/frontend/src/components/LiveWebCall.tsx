@@ -89,6 +89,8 @@ export function LiveWebCall({ params, onDone, onError }: Props) {
   const startRef    = useRef(0);
   const callIdRef   = useRef("");
   const bottomRef   = useRef<HTMLDivElement>(null);
+  // Mirror of transcript state — used in event callbacks to avoid stale closures
+  const transcriptRef = useRef<TranscriptEntry[]>([]);
 
   // AI caller state
   const audioCtxRef      = useRef<AudioContext | null>(null);
@@ -213,7 +215,8 @@ export function LiveWebCall({ params, onDone, onError }: Props) {
 
       // 2. For AI caller mode — set up synthetic audio stream
       if (params.mode === "ai") {
-        const audioCtx = new AudioContext({ sampleRate: 16000 });
+        // Use browser default sample rate (typically 48000Hz) — avoids TTS audio distortion
+        const audioCtx = new AudioContext();
         const destNode = audioCtx.createMediaStreamDestination();
         audioCtxRef.current = audioCtx;
         destNodeRef.current = destNode;
@@ -225,6 +228,8 @@ export function LiveWebCall({ params, onDone, onError }: Props) {
           if (constraints?.audio) return fakeStream;
           return origGUM(constraints);
         };
+        // Store origGUM so we can restore it on cleanup
+        (window as unknown as Record<string, unknown>)["__origGUM"] = origGUM;
       }
 
       // 3. Create and start Retell SDK client
@@ -247,7 +252,8 @@ export function LiveWebCall({ params, onDone, onError }: Props) {
       });
 
       client.on("call_ended", () => {
-        const transcriptSnapshot = transcript;
+        // Use the ref — the state variable would be stale (captured at call-start)
+        const transcriptSnapshot = transcriptRef.current;
         const passed = transcriptSnapshot.some(t =>
           DONE_KWS.some(kw => t.content.toLowerCase().includes(kw))
         );
@@ -269,6 +275,7 @@ export function LiveWebCall({ params, onDone, onError }: Props) {
       client.on("update", (update: { transcript?: TranscriptEntry[] }) => {
         if (!update?.transcript) return;
         const entries = update.transcript;
+        transcriptRef.current = entries;  // keep ref in sync for call_ended handler
         setTranscript(entries);
 
         // Detect API events from latest agent message
@@ -312,16 +319,34 @@ export function LiveWebCall({ params, onDone, onError }: Props) {
       setStatus("error");
       onError?.(msg);
     }
-  }, [params, generateAiReply, speakAsPatient, onDone, onError, transcript]);
+  // transcript removed from deps — we use transcriptRef to avoid stale closures in event handlers
+  }, [params, generateAiReply, speakAsPatient, onDone, onError]);
 
   const endCall = () => {
     clientRef.current?.stopCall();
     callActiveRef.current = false;
+    // Restore getUserMedia if it was overridden for AI mode
+    if (params.mode === "ai") {
+      const origGUM = (window as unknown as Record<string, unknown>)["__origGUM"];
+      if (origGUM) {
+        navigator.mediaDevices.getUserMedia = origGUM as typeof navigator.mediaDevices.getUserMedia;
+        delete (window as unknown as Record<string, unknown>)["__origGUM"];
+      }
+    }
+    // Close AudioContext to release resources
+    if (audioCtxRef.current && audioCtxRef.current.state !== "closed") {
+      audioCtxRef.current.close();
+    }
   };
 
   const toggleMute = () => {
     if (!clientRef.current) return;
-    clientRef.current.mute(!isMuted);
+    // Retell SDK v2: separate mute() and unmute() methods
+    if (isMuted) {
+      clientRef.current.unmute();
+    } else {
+      clientRef.current.mute();
+    }
     setIsMuted(m => !m);
   };
 
