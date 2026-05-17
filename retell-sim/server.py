@@ -11,11 +11,8 @@ import base64
 import json
 import os
 import random
-import socket
-import ssl
 import string
 import time
-import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from functools import lru_cache
@@ -25,230 +22,28 @@ from typing import Any, Optional
 import httpx
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 
-
-# ── DNS resolution for Railway (api.retell.ai fails system DNS) ──────────────
-# Railway's DNS resolver does not resolve api.retell.ai and also blocks direct
-# HTTPS to 1.1.1.1 (so simple DoH-by-IP also fails).  We try five methods in
-# sequence; whichever succeeds first wins.
-
-_RETELL_HOSTS = ["api.retell.ai"]
+# ── Retell API base URL ───────────────────────────────────────────────────────
+_RETELL_BASE = "https://api.retellai.com"
 
 
-def _try_doh_by_ip(nameserver_ip: str, host_header: str, hostname: str) -> str | None:
-    """DoH via a nameserver specified by IP (no system DNS needed)."""
-    try:
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        req = urllib.request.Request(
-            f"https://{nameserver_ip}/dns-query?name={hostname}&type=A",
-            headers={"Accept": "application/dns-json", "Host": host_header},
-        )
-        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
-            data = json.loads(resp.read())
-            ips = [a["data"] for a in data.get("Answer", []) if a.get("type") == 1]
-            return ips[0] if ips else None
-    except Exception:
-        return None
-
-
-def _try_doh_by_hostname(doh_host: str, hostname: str) -> str | None:
-    """DoH via a well-known hostname Railway CAN resolve (dns.google / cloudflare-dns.com)."""
-    try:
-        ctx = ssl.create_default_context()
-        req = urllib.request.Request(
-            f"https://{doh_host}/resolve?name={hostname}&type=A",
-            headers={"Accept": "application/dns-json"},
-        )
-        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
-            data = json.loads(resp.read())
-            ips = [a["data"] for a in data.get("Answer", []) if a.get("type") == 1]
-            return ips[0] if ips else None
-    except Exception:
-        return None
-
-
-def _try_udp_dns(hostname: str, nameserver: str) -> str | None:
-    """Raw UDP DNS query to nameserver:53 (bypasses all HTTP/HTTPS issues)."""
-    try:
-        import struct, random as _rand
-        tid = _rand.randint(1, 65535)
-        header = struct.pack(">HHHHHH", tid, 0x0100, 1, 0, 0, 0)
-        question = b""
-        for label in hostname.rstrip(".").split("."):
-            question += bytes([len(label)]) + label.encode("ascii")
-        question += b"\x00" + struct.pack(">HH", 1, 1)   # A record, IN class
-        packet = header + question
-
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.settimeout(3)
-        try:
-            sock.sendto(packet, (nameserver, 53))
-            response, _ = sock.recvfrom(512)
-        finally:
-            sock.close()
-
-        # Skip header (12 bytes) then skip question section
-        offset = 12
-        while offset < len(response):
-            ln = response[offset]
-            if ln == 0:   offset += 1; break
-            if ln >= 0xC0: offset += 2; break
-            offset += ln + 1
-        offset += 4  # QTYPE + QCLASS
-
-        an_count = struct.unpack(">H", response[6:8])[0]
-        for _ in range(an_count):
-            if offset >= len(response): break
-            # skip name field
-            while offset < len(response):
-                ln = response[offset]
-                if ln == 0:    offset += 1; break
-                if ln >= 0xC0: offset += 2; break
-                offset += ln + 1
-            if offset + 10 > len(response): break
-            rtype, _, _, rdlen = struct.unpack(">HHIH", response[offset:offset + 10])
-            offset += 10
-            if rtype == 1 and rdlen == 4:  # A record
-                return ".".join(str(b) for b in response[offset:offset + 4])
-            offset += rdlen
-        return None
-    except Exception:
-        return None
-
-
-def _doh_resolve_ip(hostname: str) -> str | None:
-    """
-    Resolve hostname → IPv4, trying five methods in order:
-      1. Cloudflare DoH by IP  (1.1.1.1 — no DNS needed, but may be blocked)
-      2. Google DoH by IP      (8.8.8.8 — no DNS needed)
-      3. Google DoH by name    (dns.google — Railway can resolve this)
-      4. UDP DNS to 8.8.8.8:53 (bypasses HTTP entirely)
-      5. UDP DNS to 1.1.1.1:53
-    """
-    import logging
-    log = logging.getLogger(__name__)
-
-    methods = [
-        ("CF DoH/IP",    lambda: _try_doh_by_ip("1.1.1.1", "cloudflare-dns.com", hostname)),
-        ("Google DoH/IP",lambda: _try_doh_by_ip("8.8.8.8", "dns.google", hostname)),
-        ("Google DoH/HN",lambda: _try_doh_by_hostname("dns.google", hostname)),
-        ("UDP 8.8.8.8",  lambda: _try_udp_dns(hostname, "8.8.8.8")),
-        ("UDP 1.1.1.1",  lambda: _try_udp_dns(hostname, "1.1.1.1")),
-    ]
-    for name, method in methods:
-        try:
-            ip = method()
-            if ip:
-                log.info("DNS: resolved %s → %s via %s", hostname, ip, name)
-                return ip
-        except Exception:
-            pass
-        log.debug("DNS: %s failed for %s", name, hostname)
-    log.error("DNS: all methods failed for %s", hostname)
-    return None
-
-
-def _inject_hosts(hostname: str, ip: str) -> None:
-    """Append hostname→IP to /etc/hosts so C-level libc getaddrinfo resolves it."""
-    import logging
-    log = logging.getLogger(__name__)
-    try:
-        with open("/etc/hosts", "r") as f:
-            content = f.read()
-        if hostname not in content:
-            with open("/etc/hosts", "a") as f:
-                f.write(f"\n{ip} {hostname}  # Railway DoH fallback\n")
-            log.info("DNS: injected %s → %s into /etc/hosts", hostname, ip)
-        else:
-            log.info("DNS: %s already in /etc/hosts", hostname)
-    except Exception as e:
-        log.warning("DNS: could not write /etc/hosts (%s) — relying on socket patch", e)
-
-
-def _install_doh_fallback() -> None:
-    import logging
-    log = logging.getLogger(__name__)
-
-    # ── Layer 1: /etc/hosts injection (beats all DNS paths) ──────────────────
-    for host in _RETELL_HOSTS:
-        ip = _doh_resolve_ip(host)
-        if ip:
-            _inject_hosts(host, ip)
-            log.info("DNS: pre-resolved %s → %s", host, ip)
-        else:
-            log.warning("DNS: DoH resolution failed for %s — falling back to socket patch only", host)
-
-    # ── Layer 2: socket.getaddrinfo patch (runtime safety net) ───────────────
-    _orig_getaddrinfo = socket.getaddrinfo
-    _cache: dict[str, str] = {}
-
-    def _patched_getaddrinfo(host, port, *args, **kwargs):
-        try:
-            return _orig_getaddrinfo(host, port, *args, **kwargs)
-        except socket.gaierror:
-            if host and "retell.ai" in host:
-                ip = _cache.get(host) or _doh_resolve_ip(host)
-                if ip:
-                    _cache[host] = ip
-                    return _orig_getaddrinfo(ip, port, *args, **kwargs)
-            raise
-
-    socket.getaddrinfo = _patched_getaddrinfo
-
-_install_doh_fallback()
-
-# ── Retell API helpers: all calls go through here for DNS resilience ──────────
-# If normal httpx DNS fails, we resolve via DoH and retry using the IP address
-# directly.  check_hostname/verify are relaxed ONLY for the fallback path —
-# the primary path uses full TLS verification as normal.
-
-async def _retell_get(path: str, extra_headers: dict | None = None) -> dict:
-    """GET https://api.retell.ai{path} with transparent DoH retry on DNS failure."""
-    url = f"https://api.retell.ai{path}"
+async def _retell_get(path: str, extra_headers: dict | None = None):
+    """GET {_RETELL_BASE}{path} with Retell auth."""
+    url = f"{_RETELL_BASE}{path}"
     hdrs = {"Authorization": f"Bearer {RETELL_API_KEY}", **(extra_headers or {})}
     async with httpx.AsyncClient(timeout=15) as client:
-        try:
-            r = await client.get(url, headers=hdrs)
-            return r
-        except (httpx.ConnectError, httpx.RemoteProtocolError, httpx.ConnectTimeout):
-            pass
-    # Fallback: resolve via DoH and connect to IP directly
-    ip = _doh_resolve_ip("api.retell.ai")
-    if not ip:
-        raise HTTPException(status_code=502, detail="api.retell.ai DNS resolution failed")
-    ssl_ctx = ssl.create_default_context()
-    ssl_ctx.check_hostname = False
-    ssl_ctx.verify_mode    = ssl.CERT_NONE
-    hdrs["Host"] = "api.retell.ai"
-    async with httpx.AsyncClient(timeout=15, verify=ssl_ctx, base_url=f"https://{ip}") as client:
-        return await client.get(path, headers=hdrs)
+        return await client.get(url, headers=hdrs)
 
 
-async def _retell_post(path: str, body: dict, extra_headers: dict | None = None) -> dict:
-    """POST https://api.retell.ai{path} with transparent DoH retry on DNS failure."""
-    url = f"https://api.retell.ai{path}"
+async def _retell_post(path: str, body: dict, extra_headers: dict | None = None):
+    """POST {_RETELL_BASE}{path} with Retell auth."""
+    url = f"{_RETELL_BASE}{path}"
     hdrs = {
         "Authorization": f"Bearer {RETELL_API_KEY}",
         "Content-Type": "application/json",
         **(extra_headers or {}),
     }
     async with httpx.AsyncClient(timeout=15) as client:
-        try:
-            r = await client.post(url, headers=hdrs, json=body)
-            return r
-        except (httpx.ConnectError, httpx.RemoteProtocolError, httpx.ConnectTimeout):
-            pass
-    # Fallback: resolve via DoH and connect to IP directly
-    ip = _doh_resolve_ip("api.retell.ai")
-    if not ip:
-        raise HTTPException(status_code=502, detail="api.retell.ai DNS resolution failed")
-    ssl_ctx = ssl.create_default_context()
-    ssl_ctx.check_hostname = False
-    ssl_ctx.verify_mode    = ssl.CERT_NONE
-    hdrs["Host"] = "api.retell.ai"
-    async with httpx.AsyncClient(timeout=15, verify=ssl_ctx, base_url=f"https://{ip}") as client:
-        return await client.post(path, headers=hdrs, json=body)
+        return await client.post(url, headers=hdrs, json=body)
 
 # ─────────────────────────────────────────────────────────────────────────────
 from fastapi.middleware.cors import CORSMiddleware
@@ -1417,7 +1212,7 @@ async def get_call(call_id: str):
     headers = {"Authorization": f"Bearer {RETELL_API_KEY}"}
     try:
         async with httpx.AsyncClient(timeout=20) as client:
-            r = await client.get(f"https://api.retell.ai/v2/get-call/{call_id}", headers=headers)
+            r = await client.get(f"{_RETELL_BASE}/v2/get-call/{call_id}", headers=headers)
             return r.json()
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Retell get-call failed: {exc}")
