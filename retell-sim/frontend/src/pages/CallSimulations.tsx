@@ -76,6 +76,15 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
   const [batchRunning, setBatchRunning] = useState(false);
   const [batchError, setBatchError] = useState("");
 
+  /* ── Clear shared call state when switching between manual / ai-caller tabs ── */
+  const switchSubTab = (tab: SubTab) => {
+    setSubTab(tab);
+    // Reset done/error banners so manual call state doesn't bleed into AI Caller tab and vice versa
+    setWebCallDone(null);
+    setWebCallError("");
+    setWebCallRunning(false);
+  };
+
   /* ── Handlers ── */
   const startWebCall = (mode: "manual" | "ai") => {
     if (mode === "ai" && !config.openaiKey) {
@@ -128,7 +137,7 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
           { id: "ai-caller", label: "🤖  AI Caller",    badge: "Real agent" },
           { id: "ai-sim",    label: "⚡  AI Sim",       badge: "Fast batch" },
         ] as const).map(t => (
-          <button key={t.id} onClick={() => setSubTab(t.id)}
+          <button key={t.id} onClick={() => switchSubTab(t.id)}
             className={`group px-5 py-2.5 text-[13px] font-medium border-b-2 -mb-px transition-colors ${
               subTab === t.id
                 ? "border-[#1A1A1A] text-[#111] font-semibold"

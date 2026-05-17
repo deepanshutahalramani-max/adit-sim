@@ -372,8 +372,8 @@ export function LiveWebCall({ params, onDone, onError }: Props) {
                               "bg-[#333]",
         )}>
           {status === "done" || status === "error"
-            ? <PhoneOff className="w-4.5 h-4.5 text-white" />
-            : <Phone className={clsx("w-4.5 h-4.5 text-white", (isActive || isConnecting) && "animate-pulse")} />
+            ? <PhoneOff className="w-[18px] h-[18px] text-white" />
+            : <Phone className={clsx("w-[18px] h-[18px] text-white", (isActive || isConnecting) && "animate-pulse")} />
           }
         </div>
 
@@ -574,7 +574,7 @@ export function LiveWebCall({ params, onDone, onError }: Props) {
         )}
 
         {params.mode === "manual" && isActive && (
-          <div className="ml-auto flex items-center gap-2 text-[11.5px] text-[#888]">
+          <div className="flex items-center gap-2 text-[11.5px] text-[#888]">
             <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
             Real Retell agent — live call
           </div>

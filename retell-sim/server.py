@@ -1285,7 +1285,7 @@ Return ONLY valid JSON (no markdown):
 async def fetch_call_prompt():
     """Fetches the live system prompt for the voice call agent."""
     try:
-        agent_resp = await _retell_get(f"/get-agent/{RETELL_CALL_AGENT_ID}")
+        agent_resp = await _retell_get(f"/v2/get-agent/{RETELL_CALL_AGENT_ID}")
         if agent_resp.status_code != 200:
             raise HTTPException(status_code=502, detail=f"Retell call agent fetch failed: {agent_resp.text}")
         agent_data = agent_resp.json()
@@ -1297,7 +1297,7 @@ async def fetch_call_prompt():
         if not llm_id:
             raise HTTPException(status_code=502, detail=f"No llm_id in call agent response: {agent_data}")
 
-        llm_resp = await _retell_get(f"/get-retell-llm/{llm_id}")
+        llm_resp = await _retell_get(f"/v2/get-retell-llm/{llm_id}")
         if llm_resp.status_code != 200:
             raise HTTPException(status_code=502, detail=f"Retell call LLM fetch failed: {llm_resp.text}")
         llm_data = llm_resp.json()
@@ -1318,12 +1318,11 @@ async def fetch_call_prompt():
 @app.get("/api/retell/fetch-prompt")
 async def fetch_retell_prompt():
     """
-    Fetches the live system prompt from Retell for the configured agent.
+    Fetches the live system prompt from Retell for the SMS agent.
     Retell agent → response_engine.llm_id → Retell LLM → general_prompt.
-    Uses _retell_get which auto-retries via DoH if system DNS fails.
     """
     try:
-        agent_resp = await _retell_get(f"/get-agent/{RETELL_AGENT_ID}")
+        agent_resp = await _retell_get(f"/v2/get-agent/{RETELL_AGENT_ID}")
         if agent_resp.status_code != 200:
             raise HTTPException(status_code=502, detail=f"Retell agent fetch failed: {agent_resp.text}")
         agent_data = agent_resp.json()
@@ -1335,7 +1334,7 @@ async def fetch_retell_prompt():
         if not llm_id:
             raise HTTPException(status_code=502, detail=f"No llm_id found in agent response: {agent_data}")
 
-        llm_resp = await _retell_get(f"/get-retell-llm/{llm_id}")
+        llm_resp = await _retell_get(f"/v2/get-retell-llm/{llm_id}")
         if llm_resp.status_code != 200:
             raise HTTPException(status_code=502, detail=f"Retell LLM fetch failed: {llm_resp.text}")
         llm_data = llm_resp.json()
@@ -1727,7 +1726,6 @@ async def create_web_call(req: CreateWebCallRequest):
     """
     Creates a Retell web call session.
     Returns access_token for the Retell JS SDK and call_id for tracking.
-    Uses _retell_post which auto-retries via DoH if system DNS fails.
     """
     try:
         r = await _retell_post("/v2/create-web-call", {"agent_id": req.agent_id})

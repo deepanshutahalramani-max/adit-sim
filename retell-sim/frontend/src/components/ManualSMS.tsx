@@ -135,7 +135,7 @@ export function ManualSMS({ config }: Props) {
       {/* ── Header ── */}
       <div className="bg-[#075E54] px-5 py-3.5 flex items-center gap-3">
         <div className="w-9 h-9 rounded-full bg-[#25D366] flex items-center justify-center flex-shrink-0">
-          <MessageSquare className="w-4.5 h-4.5 text-white" />
+          <MessageSquare className="w-[18px] h-[18px] text-white" />
         </div>
         <div className="flex-1 min-w-0">
           <div className="text-[13px] font-bold text-white leading-tight">Siriyaa · Dental Office</div>
