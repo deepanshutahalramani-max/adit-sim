@@ -1449,44 +1449,130 @@ async def _fetch_agent_prompt_data(agent_id: str) -> dict:
         if result:
             return result
 
-    # ── Strategy 3: POST /v2/list-agents — covers messaging/SMS agents ────────
-    try:
-        list_resp = await _retell_post("/v2/list-agents", {})
-        if list_resp.status_code == 200:
-            agents_list = list_resp.json()
-            # Response may be a list directly or wrapped {"agents": [...]}
-            if isinstance(agents_list, dict):
-                agents_list = agents_list.get("agents", agents_list.get("data", []))
-            if isinstance(agents_list, list):
-                agent_data = next(
-                    (a for a in agents_list if a.get("agent_id") == agent_id),
-                    None,
-                )
-                if agent_data:
-                    llm_id = (
-                        agent_data.get("llm_id")
-                        or (agent_data.get("response_engine") or {}).get("llm_id")
-                    )
-                    if llm_id:
-                        result = await _fetch_llm_prompt(llm_id, agent_id, errors)
-                        if result:
-                            return result
-                        errors.append(f"list-agents: found agent but llm fetch failed")
-                    else:
-                        errors.append(f"list-agents: agent found but no llm_id")
-                else:
-                    errors.append(f"list-agents: agent {agent_id} not in list of {len(agents_list)} agents")
+    # ── Strategy 3: list-agents (POST then GET fallback) ─────────────────────
+    agent_data_from_list: dict | None = None
+    for list_method, list_fn in [
+        ("POST", lambda: _retell_post("/v2/list-agents", {"limit": 1000})),
+        ("GET",  lambda: _retell_get("/v2/list-agents")),
+    ]:
+        try:
+            list_resp = await list_fn()
+            if list_resp.status_code != 200:
+                errors.append(f"list-agents {list_method}: HTTP {list_resp.status_code} — {list_resp.text[:120]}")
+                continue
+            agents_raw = list_resp.json()
+            # Response may be a list directly or wrapped {"agents": [...]} or {"data": [...]}
+            if isinstance(agents_raw, dict):
+                agents_raw = agents_raw.get("agents", agents_raw.get("data", []))
+            if not isinstance(agents_raw, list):
+                errors.append(f"list-agents {list_method}: unexpected shape — {str(agents_raw)[:80]}")
+                continue
+            found = next((a for a in agents_raw if a.get("agent_id") == agent_id), None)
+            if found:
+                agent_data_from_list = found
+                errors.append(f"list-agents {list_method}: agent found ({len(agents_raw)} total)")
+                break
             else:
-                errors.append(f"list-agents: unexpected response shape")
-        else:
-            errors.append(f"list-agents: HTTP {list_resp.status_code}")
-    except Exception as exc:
-        errors.append(f"list-agents: {exc}")
+                errors.append(f"list-agents {list_method}: not found in {len(agents_raw)} agents")
+        except Exception as exc:
+            errors.append(f"list-agents {list_method}: {exc}")
+
+    if agent_data_from_list:
+        agent_data = agent_data_from_list
+        re = agent_data.get("response_engine") or {}
+
+        # Case A: agent has a retell-llm id → fetch the LLM
+        llm_id = agent_data.get("llm_id") or re.get("llm_id")
+        if llm_id:
+            result = await _fetch_llm_prompt(llm_id, agent_id, errors)
+            if result:
+                return result
+            errors.append(f"list-agents: found llm_id={llm_id} but LLM fetch failed")
+
+        # Case B: custom_llm — system_prompt may live directly on response_engine or agent
+        for prompt_source in [
+            agent_data.get("system_prompt"),
+            re.get("system_prompt"),
+            re.get("general_prompt"),
+        ]:
+            if prompt_source:
+                return {
+                    "prompt": prompt_source,
+                    "llm_id": re.get("llm_id", "custom_llm"),
+                    "agent_id": agent_id,
+                    "model": agent_data.get("voice_model", re.get("model", "")),
+                }
+
+        # Case C: try every plausible llm-id-like key in response_engine
+        for key in ["llm_id", "custom_llm_id", "llm_websocket_url", "id"]:
+            alt_id = re.get(key)
+            if alt_id and not alt_id.startswith("wss://") and not alt_id.startswith("http"):
+                result = await _fetch_llm_prompt(alt_id, agent_id, errors)
+                if result:
+                    return result
+
+        errors.append(f"list-agents: agent found but could not extract prompt — response_engine={re}")
 
     raise HTTPException(
         status_code=502,
         detail=f"Could not fetch agent prompt after trying multiple paths. Errors: {'; '.join(errors[-5:])}",
     )
+
+
+@app.get("/api/retell/debug-agent-raw")
+async def debug_agent_raw(agent_id: str | None = None):
+    """
+    Diagnostic: returns the raw Retell API responses for an agent ID.
+    Tries every known path and returns all raw response bodies so we can
+    see exactly what fields Retell is returning.
+    """
+    target_id = agent_id or RETELL_AGENT_ID
+    report: dict = {"agent_id": target_id, "strategies": {}}
+
+    for path in [f"/get-agent/{target_id}", f"/v2/get-agent/{target_id}"]:
+        try:
+            r = await _retell_get(path)
+            try:
+                body = r.json()
+            except Exception:
+                body = r.text[:500]
+            report["strategies"][f"GET {path}"] = {"status": r.status_code, "body": body}
+        except Exception as exc:
+            report["strategies"][f"GET {path}"] = {"error": str(exc)}
+
+    for method, fn in [
+        ("POST /v2/list-agents", lambda: _retell_post("/v2/list-agents", {"limit": 1000})),
+        ("GET /v2/list-agents",  lambda: _retell_get("/v2/list-agents")),
+    ]:
+        try:
+            r = await fn()
+            try:
+                body = r.json()
+            except Exception:
+                body = r.text[:500]
+            # Find the matching agent in the list response
+            if isinstance(body, list):
+                matched = next((a for a in body if a.get("agent_id") == target_id), None)
+                report["strategies"][method] = {
+                    "status": r.status_code,
+                    "total_agents": len(body),
+                    "matched_agent": matched,
+                }
+            elif isinstance(body, dict):
+                agents = body.get("agents", body.get("data", []))
+                matched = next((a for a in agents if a.get("agent_id") == target_id), None) if isinstance(agents, list) else None
+                report["strategies"][method] = {
+                    "status": r.status_code,
+                    "total_agents": len(agents) if isinstance(agents, list) else "?",
+                    "matched_agent": matched,
+                    "raw_keys": list(body.keys()),
+                }
+            else:
+                report["strategies"][method] = {"status": r.status_code, "body": str(body)[:500]}
+        except Exception as exc:
+            report["strategies"][method] = {"error": str(exc)}
+
+    return report
 
 
 @app.get("/api/retell/fetch-call-prompt")

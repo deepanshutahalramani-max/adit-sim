@@ -11,7 +11,7 @@ import {
 import type { Config, DebugAnalysis, SimResult } from "../types";
 import { SimResultCard } from "../components/SimResultCard";
 import { LiveChat, type LiveChatDoneResult } from "../components/LiveChat";
-import { LiveCall, type LiveCallDoneResult } from "../components/LiveCall";
+import { LiveWebCall } from "../components/LiveWebCall";
 import { PromptConfigurator } from "../components/PromptConfigurator";
 
 interface Props {
@@ -58,7 +58,7 @@ const MAX_REPRO_RUNS = 15;
 
 /* ─── Repro run result ─── */
 interface SmsReproRun  { id: number; result: LiveChatDoneResult }
-interface CallReproRun { id: number; result: LiveCallDoneResult }
+interface CallReproRun { id: number; result: { passed: boolean } }
 
 /* ════════════════════════════════════════════════════════════════════════════ */
 export function DebugSuite({ config, onResults }: Props) {
@@ -188,8 +188,9 @@ export function DebugSuite({ config, onResults }: Props) {
     setCurrentRunId(0);
   };
 
-  const handleCallRunDone = (result: LiveCallDoneResult) => {
-    setCallReproRuns(prev => [...prev, { id: currentRunId, result }]);
+  const handleCallRunDone = (passed: boolean) => {
+    if (currentRunId === 0) return; // prevent double-fire
+    setCallReproRuns(prev => [...prev, { id: currentRunId, result: { passed } }]);
     setCurrentRunId(0);
   };
 
@@ -670,18 +671,40 @@ export function DebugSuite({ config, onResults }: Props) {
                   onError={msg => { setError(msg); setCurrentRunId(0); }}
                 />
               ) : (
-                <LiveCall
-                  key={streamKey}
-                  params={{
-                    scenario_id: "new-patient-cleaning",
-                    call_agent_prompt: systemPrompt,
-                    openai_key: config.openaiKey,
-                    repro_opener: diagnosis.repro_opener,
-                    root_cause: editedRootCause || diagnosis.root_cause,
-                  }}
-                  onDone={handleCallRunDone}
-                  onError={msg => { setError(msg); setCurrentRunId(0); }}
-                />
+                <div key={streamKey}>
+                  {/* Repro script — what to say */}
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-3">
+                    <div className="text-[10px] font-bold uppercase tracking-widest text-amber-600 mb-2">🎙 What to say on the call</div>
+                    <div className="text-[13px] text-[#222] mb-1">
+                      <strong>Start with:</strong> "{diagnosis.repro_opener}"
+                    </div>
+                    {(diagnosis.repro_followups ?? []).map((f, i) => (
+                      <div key={i} className="text-[12.5px] text-[#555] ml-3 mt-0.5">↳ {f}</div>
+                    ))}
+                    <div className="text-[11px] text-amber-700 mt-2">After the call ends, use the buttons below to mark whether the bug was reproduced.</div>
+                  </div>
+                  {/* Real Retell web call — user plays the caller */}
+                  <LiveWebCall
+                    params={{ mode: "manual", openai_key: config.openaiKey }}
+                    onDone={() => {/* user manually marks result below */}}
+                    onError={msg => { setError(msg); setCurrentRunId(0); }}
+                  />
+                  {/* User confirms result after the call */}
+                  <div className="flex gap-2 mt-3">
+                    <button
+                      onClick={() => handleCallRunDone(false)}
+                      className="flex-1 py-2.5 text-[13px] font-semibold rounded-xl border-2 border-red-400 text-red-600 bg-red-50 hover:bg-red-100 transition-colors"
+                    >
+                      🐛 Bug confirmed — I saw the issue
+                    </button>
+                    <button
+                      onClick={() => handleCallRunDone(true)}
+                      className="flex-1 py-2.5 text-[13px] font-semibold rounded-xl border-2 border-green-400 text-green-700 bg-green-50 hover:bg-green-100 transition-colors"
+                    >
+                      ✓ Looks fine — not reproduced
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
           )}
