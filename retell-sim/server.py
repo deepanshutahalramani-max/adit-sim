@@ -1401,20 +1401,43 @@ async def _fetch_llm_prompt(llm_id: str, agent_id: str, errors: list[str]) -> di
 async def _fetch_agent_prompt_data(agent_id: str) -> dict:
     """
     Robustly fetch an agent's system prompt from Retell.
-    Tries multiple strategies to handle different agent channel types
-    (web_call, phone_call, messaging/SMS):
+    Tries multiple strategies to handle different agent channel types:
 
-    1. GET /get-agent/{id}              — v1 path, works for phone/web agents
-    2. GET /v2/get-agent/{id}           — v2 path
-    3. POST /v2/list-agents             — list all agents and find by id
-       (messaging/SMS agents may only appear here)
+    1. GET /get-chat-agent/{id}  — chat/SMS agents (Retell "chat" channel)
+    2. GET /get-agent/{id}       — voice agents v1
+    3. GET /v2/get-agent/{id}    — voice agents v2
+    4. GET /list-agents          — fallback: scan all voice agents by id
 
     For each successful agent fetch, tries both LLM path variants.
     Also detects Retell's pattern of HTTP 200 + JSON {"status":"error",...}.
     """
     errors: list[str] = []
 
-    # ── Strategy 1 & 2: direct GET paths ─────────────────────────────────────
+    # ── Strategy 1: chat agent path (SMS / chat channel) ─────────────────────
+    try:
+        chat_resp = await _retell_get(f"/get-chat-agent/{agent_id}")
+        if chat_resp.status_code == 200:
+            chat_data = chat_resp.json()
+            if isinstance(chat_data, dict) and chat_data.get("status") != "error":
+                llm_id = (
+                    chat_data.get("llm_id")
+                    or (chat_data.get("response_engine") or {}).get("llm_id")
+                )
+                if llm_id:
+                    result = await _fetch_llm_prompt(llm_id, agent_id, errors)
+                    if result:
+                        return result
+                    errors.append(f"/get-chat-agent: found llm_id={llm_id} but LLM fetch failed")
+                else:
+                    errors.append(f"/get-chat-agent: no llm_id in response")
+            else:
+                errors.append(f"/get-chat-agent: {chat_data.get('message', 'API error')}")
+        else:
+            errors.append(f"/get-chat-agent/{agent_id}: HTTP {chat_resp.status_code}")
+    except Exception as exc:
+        errors.append(f"/get-chat-agent: {exc}")
+
+    # ── Strategy 2 & 3: voice agent GET paths ────────────────────────────────
     for agent_path in [f"/get-agent/{agent_id}", f"/v2/get-agent/{agent_id}"]:
         try:
             agent_resp = await _retell_get(agent_path)
@@ -1513,7 +1536,7 @@ async def debug_agent_raw(agent_id: str | None = None):
     target_id = agent_id or RETELL_AGENT_ID
     report: dict = {"agent_id": target_id, "strategies": {}}
 
-    for path in [f"/get-agent/{target_id}", f"/v2/get-agent/{target_id}"]:
+    for path in [f"/get-chat-agent/{target_id}", f"/get-agent/{target_id}", f"/v2/get-agent/{target_id}"]:
         try:
             r = await _retell_get(path)
             try:
