@@ -1239,6 +1239,71 @@ class AnalyzeCallRequest(BaseModel):
     openai_key: str
 
 
+@app.post("/api/debug/analyze-call-screenshot")
+async def debug_analyze_call_screenshot(
+    screenshot: UploadFile = File(...),
+    system_prompt: str = Form(""),
+    extra_context: str = Form(""),
+    openai_key: str = Form(...),
+):
+    """Analyze a call-related screenshot using GPT-4o vision (call agent debug mode)."""
+    if not openai_key:
+        raise HTTPException(status_code=400, detail="OpenAI API key required")
+    image_bytes = await screenshot.read()
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=openai_key)
+        b64 = base64.b64encode(image_bytes).decode()
+        prompt_block = f"\n\nCALL AGENT SYSTEM PROMPT:\n```\n{system_prompt}\n```" if system_prompt.strip() else ""
+        context_block = f"\n\nADDITIONAL CONTEXT: {extra_context}" if extra_context.strip() else ""
+
+        analysis_prompt = f"""You are a senior QA engineer debugging Siriyaa, an AI dental front-desk VOICE CALL agent.
+
+Analyze the screenshot — it may show a call transcript, a call recording interface, a conversation log, or any call-related issue.{prompt_block}{context_block}
+
+Identify exactly what the voice agent did wrong.
+
+Voice call issues to look for:
+- Agent interrupting or not waiting for caller to finish
+- Missing required information collection (name, DOB, insurance, reason)
+- Wrong information given (hours, availability, policies)
+- Failing to book when it should, or booking when it shouldn't
+- Not offering task creation when direct booking fails
+- Unnatural or confusing responses
+- Not following the system prompt instructions
+
+Return ONLY valid JSON (no markdown):
+{{
+    "what_happened": "1-2 sentences describing what the agent did wrong",
+    "severity": "low|medium|high|critical",
+    "scenario_type": "booking|reschedule|cancel|insurance|hours|emergency|other",
+    "root_cause": "Specific technical reason the call agent failed",
+    "prompt_section_at_fault": "The exact text from the system prompt that is wrong or missing — quote verbatim. If no prompt provided, describe the missing instruction.",
+    "suggested_fix": "The exact replacement text or addition to fix the system prompt",
+    "fix_explanation": "1-2 sentences explaining why this change fixes the issue",
+    "repro_opener": "The exact first spoken caller message that would reproduce this bug (phone call style)",
+    "repro_followups": ["what caller says next", "then this", "then this"],
+    "confidence": "high|medium|low"
+}}"""
+
+        resp = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}", "detail": "high"}},
+                {"type": "text", "text": analysis_prompt},
+            ]}],
+            max_tokens=1400, temperature=0,
+        )
+        raw = resp.choices[0].message.content.strip()
+        if raw.startswith("```"):
+            raw = "\n".join(raw.split("\n")[1:]).rstrip("`").strip()
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=422, detail=f"Parse error: {exc}")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 @app.post("/api/debug/analyze-call")
 def debug_analyze_call(req: AnalyzeCallRequest):
     """Analyze a voice call transcript for agent issues."""
@@ -1295,16 +1360,61 @@ Return ONLY valid JSON (no markdown):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+def _extract_agent_prompt_from_data(agent_data: dict, agent_id: str) -> dict | None:
+    """Given a parsed Retell agent object, fetch the associated LLM prompt synchronously.
+    Returns the prompt dict on success, None if llm_id is missing."""
+    llm_id = (
+        agent_data.get("llm_id")
+        or (agent_data.get("response_engine") or {}).get("llm_id")
+    )
+    return llm_id  # just return the id; async fetching done by caller
+
+
+async def _fetch_llm_prompt(llm_id: str, agent_id: str, errors: list[str]) -> dict | None:
+    """Try fetching a Retell LLM by id; returns prompt dict or None."""
+    for llm_path in [f"/get-retell-llm/{llm_id}", f"/v2/get-retell-llm/{llm_id}"]:
+        try:
+            llm_resp = await _retell_get(llm_path)
+            if llm_resp.status_code != 200:
+                errors.append(f"{llm_path}: HTTP {llm_resp.status_code}")
+                continue
+            llm_data = llm_resp.json()
+            if isinstance(llm_data, dict) and llm_data.get("status") == "error":
+                errors.append(f"{llm_path}: {llm_data.get('message', 'API error')}")
+                continue
+            prompt = (
+                llm_data.get("general_prompt")
+                or llm_data.get("system_prompt")
+                or ""
+            )
+            return {
+                "prompt": prompt,
+                "llm_id": llm_id,
+                "agent_id": agent_id,
+                "model": llm_data.get("model", ""),
+            }
+        except Exception as exc:
+            errors.append(f"{llm_path}: {exc}")
+    return None
+
+
 async def _fetch_agent_prompt_data(agent_id: str) -> dict:
     """
     Robustly fetch an agent's system prompt from Retell.
-    Tries multiple API path variants to handle different agent channel types
-    (web_call, phone_call, messaging/SMS). Retell sometimes returns HTTP 200
-    with a JSON error body {"status":"error",...} for unsupported channel types,
-    so we check both HTTP status AND the response body.
+    Tries multiple strategies to handle different agent channel types
+    (web_call, phone_call, messaging/SMS):
+
+    1. GET /get-agent/{id}              — v1 path, works for phone/web agents
+    2. GET /v2/get-agent/{id}           — v2 path
+    3. POST /v2/list-agents             — list all agents and find by id
+       (messaging/SMS agents may only appear here)
+
+    For each successful agent fetch, tries both LLM path variants.
+    Also detects Retell's pattern of HTTP 200 + JSON {"status":"error",...}.
     """
     errors: list[str] = []
 
+    # ── Strategy 1 & 2: direct GET paths ─────────────────────────────────────
     for agent_path in [f"/get-agent/{agent_id}", f"/v2/get-agent/{agent_id}"]:
         try:
             agent_resp = await _retell_get(agent_path)
@@ -1335,35 +1445,47 @@ async def _fetch_agent_prompt_data(agent_id: str) -> dict:
             errors.append(f"{agent_path}: no llm_id in response")
             continue
 
-        # Try both LLM path variants too
-        for llm_path in [f"/get-retell-llm/{llm_id}", f"/v2/get-retell-llm/{llm_id}"]:
-            try:
-                llm_resp = await _retell_get(llm_path)
-                if llm_resp.status_code != 200:
-                    errors.append(f"{llm_path}: HTTP {llm_resp.status_code}")
-                    continue
-                llm_data = llm_resp.json()
-                if isinstance(llm_data, dict) and llm_data.get("status") == "error":
-                    errors.append(f"{llm_path}: {llm_data.get('message', 'API error')}")
-                    continue
-                prompt = (
-                    llm_data.get("general_prompt")
-                    or llm_data.get("system_prompt")
-                    or ""
+        result = await _fetch_llm_prompt(llm_id, agent_id, errors)
+        if result:
+            return result
+
+    # ── Strategy 3: POST /v2/list-agents — covers messaging/SMS agents ────────
+    try:
+        list_resp = await _retell_post("/v2/list-agents", {})
+        if list_resp.status_code == 200:
+            agents_list = list_resp.json()
+            # Response may be a list directly or wrapped {"agents": [...]}
+            if isinstance(agents_list, dict):
+                agents_list = agents_list.get("agents", agents_list.get("data", []))
+            if isinstance(agents_list, list):
+                agent_data = next(
+                    (a for a in agents_list if a.get("agent_id") == agent_id),
+                    None,
                 )
-                return {
-                    "prompt": prompt,
-                    "llm_id": llm_id,
-                    "agent_id": agent_id,
-                    "model": llm_data.get("model", ""),
-                }
-            except Exception as exc:
-                errors.append(f"{llm_path}: {exc}")
-                continue
+                if agent_data:
+                    llm_id = (
+                        agent_data.get("llm_id")
+                        or (agent_data.get("response_engine") or {}).get("llm_id")
+                    )
+                    if llm_id:
+                        result = await _fetch_llm_prompt(llm_id, agent_id, errors)
+                        if result:
+                            return result
+                        errors.append(f"list-agents: found agent but llm fetch failed")
+                    else:
+                        errors.append(f"list-agents: agent found but no llm_id")
+                else:
+                    errors.append(f"list-agents: agent {agent_id} not in list of {len(agents_list)} agents")
+            else:
+                errors.append(f"list-agents: unexpected response shape")
+        else:
+            errors.append(f"list-agents: HTTP {list_resp.status_code}")
+    except Exception as exc:
+        errors.append(f"list-agents: {exc}")
 
     raise HTTPException(
         status_code=502,
-        detail=f"Could not fetch agent prompt after trying multiple paths. Errors: {'; '.join(errors[-4:])}",
+        detail=f"Could not fetch agent prompt after trying multiple paths. Errors: {'; '.join(errors[-5:])}",
     )
 
 

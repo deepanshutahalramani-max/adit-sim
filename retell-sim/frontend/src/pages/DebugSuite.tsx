@@ -5,8 +5,8 @@ import {
 } from "lucide-react";
 import clsx from "clsx";
 import {
-  analyzeDebug, analyzeDebugText, analyzeCallDebug, applyFix,
-  runRegression, runCallRegression,
+  analyzeDebug, analyzeDebugText, analyzeCallDebug, analyzeCallDebugScreenshot,
+  applyFix, runRegression, runCallRegression,
 } from "../api";
 import type { Config, DebugAnalysis, SimResult } from "../types";
 import { SimResultCard } from "../components/SimResultCard";
@@ -66,14 +66,18 @@ export function DebugSuite({ config, onResults }: Props) {
   const [mode, setMode] = useState<"sms" | "call">("sms");
 
   /* ── Step 1 inputs ── */
-  const [inputMode, setInputMode] = useState<"screenshot" | "text">("screenshot");
-  const [screenshot, setScreenshot] = useState<File | null>(null);
+  const [inputMode, setInputMode]         = useState<"screenshot" | "text">("screenshot");
+  const [callInputMode, setCallInputMode] = useState<"screenshot" | "transcript">("transcript");
+  const [screenshot, setScreenshot]       = useState<File | null>(null);
   const [screenshotUrl, setScreenshotUrl] = useState<string | null>(null);
-  const [description, setDescription] = useState("");
+  const [callScreenshot, setCallScreenshot]     = useState<File | null>(null);
+  const [callScreenshotUrl, setCallScreenshotUrl] = useState<string | null>(null);
+  const [description, setDescription]     = useState("");
   const [callTranscript, setCallTranscript] = useState("");
-  const [systemPrompt, setSystemPrompt] = useState("");
-  const [extraContext, setExtraContext] = useState("");
-  const fileRef = useRef<HTMLInputElement>(null);
+  const [systemPrompt, setSystemPrompt]   = useState("");
+  const [extraContext, setExtraContext]   = useState("");
+  const fileRef     = useRef<HTMLInputElement>(null);
+  const callFileRef = useRef<HTMLInputElement>(null);
 
   /* ── Wizard state ── */
   const [step, setStep] = useState<WizardStep>("input");
@@ -106,7 +110,12 @@ export function DebugSuite({ config, onResults }: Props) {
     setScreenshot(f);
     setScreenshotUrl(f ? URL.createObjectURL(f) : null);
   };
+  const handleCallFile = (f: File | null) => {
+    setCallScreenshot(f);
+    setCallScreenshotUrl(f ? URL.createObjectURL(f) : null);
+  };
   const handleDrop = (e: React.DragEvent) => { e.preventDefault(); handleFile(e.dataTransfer.files[0] ?? null); };
+  const handleCallDrop = (e: React.DragEvent) => { e.preventDefault(); handleCallFile(e.dataTransfer.files[0] ?? null); };
 
   const copy = (text: string, which: "modified" | "original") => {
     navigator.clipboard.writeText(text);
@@ -128,13 +137,17 @@ export function DebugSuite({ config, onResults }: Props) {
     try {
       let result: DebugAnalysis;
       if (mode === "call") {
-        if (!callTranscript.trim()) { setStep("input"); return; }
-        result = await analyzeCallDebug({
-          transcript: callTranscript,
-          system_prompt: systemPrompt,
-          extra_context: extraContext,
-          openai_key: config.openaiKey,
-        });
+        if (callInputMode === "screenshot" && callScreenshot) {
+          result = await analyzeCallDebugScreenshot(callScreenshot, systemPrompt, extraContext, config.openaiKey);
+        } else {
+          if (!callTranscript.trim()) { setStep("input"); return; }
+          result = await analyzeCallDebug({
+            transcript: callTranscript,
+            system_prompt: systemPrompt,
+            extra_context: extraContext,
+            openai_key: config.openaiKey,
+          });
+        }
       } else if (inputMode === "screenshot" && screenshot) {
         result = await analyzeDebug(screenshot, systemPrompt, extraContext, config.openaiKey);
       } else {
@@ -248,6 +261,7 @@ export function DebugSuite({ config, onResults }: Props) {
   /* ─────────────────────── Reset ─────────────────────── */
   const handleReset = () => {
     setStep("input"); setScreenshot(null); setScreenshotUrl(null);
+    setCallScreenshot(null); setCallScreenshotUrl(null);
     setDescription(""); setSystemPrompt(""); setExtraContext(""); setCallTranscript("");
     setDiagnosis(null); setSmsReproRuns([]); setCallReproRuns([]); setCurrentRunId(0);
     setOriginalPrompt(""); setModifiedPrompt(""); setRegressionResults([]);
@@ -365,9 +379,6 @@ export function DebugSuite({ config, onResults }: Props) {
                 <div className="space-y-4">
                   <div>
                     <PromptConfigurator onLoad={setSystemPrompt} />
-                    <textarea value={systemPrompt} onChange={e => setSystemPrompt(e.target.value)} rows={9}
-                      placeholder="Prompt loads automatically — or paste/edit manually"
-                      className="w-full border border-[#E5E5E5] rounded-xl px-4 py-3 text-[13px] text-[#111] resize-none focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10" />
                   </div>
                   <div>
                     <label className="text-[10px] font-bold uppercase tracking-widest text-[#ADADAD] block mb-1.5">
@@ -418,14 +429,23 @@ export function DebugSuite({ config, onResults }: Props) {
           {/* ── Call mode ── */}
           {mode === "call" && (
             <>
+              {/* Input mode toggle */}
+              <div className="flex gap-2 mb-5">
+                {(["screenshot", "transcript"] as const).map(m => (
+                  <button key={m} onClick={() => setCallInputMode(m)}
+                    className={clsx("px-4 py-2 text-[13px] font-semibold rounded-lg border transition-colors",
+                      callInputMode === m ? "bg-brand-500 text-white border-brand-500" : "bg-white text-[#888] border-[#E5E5E5] hover:border-brand-500",
+                    )}>
+                    {m === "screenshot" ? "📸 Screenshot" : "📋 Transcript"}
+                  </button>
+                ))}
+              </div>
+
               <div className="grid grid-cols-2 gap-5 mb-4">
                 {/* Left — prompt */}
                 <div className="space-y-4">
                   <div>
                     <PromptConfigurator onLoad={setSystemPrompt} agentType="call" />
-                    <textarea value={systemPrompt} onChange={e => setSystemPrompt(e.target.value)} rows={9}
-                      placeholder="Call agent prompt loads automatically — or paste/edit manually"
-                      className="w-full border border-[#E5E5E5] rounded-xl px-4 py-3 text-[13px] text-[#111] resize-none focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10" />
                   </div>
                   <div>
                     <label className="text-[10px] font-bold uppercase tracking-widest text-[#ADADAD] block mb-1.5">
@@ -437,25 +457,44 @@ export function DebugSuite({ config, onResults }: Props) {
                   </div>
                 </div>
 
-                {/* Right — call transcript */}
+                {/* Right — screenshot OR transcript */}
                 <div className="flex flex-col">
                   <label className="text-[10px] font-bold uppercase tracking-widest text-[#ADADAD] block mb-1.5">
-                    Call Transcript
-                    <span className="normal-case font-normal text-[#DADAD8] ml-1.5">— paste the Retell transcript or type what happened</span>
+                    {callInputMode === "screenshot" ? "Call Screenshot" : "Call Transcript"}
+                    {callInputMode === "transcript" && (
+                      <span className="normal-case font-normal text-[#DADAD8] ml-1.5">— paste the Retell transcript or type what happened</span>
+                    )}
                   </label>
-                  <textarea
-                    value={callTranscript}
-                    onChange={e => setCallTranscript(e.target.value)}
-                    className="flex-1 border border-[#E5E5E5] rounded-xl px-4 py-3 text-[13px] text-[#111] resize-none focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10 min-h-[320px] font-mono"
-                    placeholder={"Paste the call transcript here:\n\nAgent: Thank you for calling, how can I help you today?\nCaller: Hi, I'd like to schedule a cleaning...\n\n— or describe what happened on the call."} />
+                  {callInputMode === "screenshot" ? (
+                    <>
+                      <div onDrop={handleCallDrop} onDragOver={e => e.preventDefault()} onClick={() => callFileRef.current?.click()}
+                        className="flex-1 border-[1.5px] border-dashed border-[#DADAD8] rounded-xl cursor-pointer hover:border-brand-500 transition-colors flex items-center justify-center bg-[#FAFAF8] min-h-[200px]">
+                        {callScreenshotUrl
+                          ? <img src={callScreenshotUrl} alt="call screenshot" className="max-h-64 max-w-full rounded-lg object-contain p-2" />
+                          : <div className="text-center p-8">
+                              <Upload className="w-8 h-8 mx-auto mb-3 text-[#ADADAD]" />
+                              <div className="text-[13px] font-medium text-[#888]">Drop screenshot here or click</div>
+                              <div className="text-[12px] text-[#ADADAD] mt-1">PNG · JPG · WEBP</div>
+                            </div>}
+                      </div>
+                      <input ref={callFileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden"
+                        onChange={e => handleCallFile(e.target.files?.[0] ?? null)} />
+                    </>
+                  ) : (
+                    <textarea
+                      value={callTranscript}
+                      onChange={e => setCallTranscript(e.target.value)}
+                      className="flex-1 border border-[#E5E5E5] rounded-xl px-4 py-3 text-[13px] text-[#111] resize-none focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10 min-h-[320px] font-mono"
+                      placeholder={"Paste the call transcript here:\n\nAgent: Thank you for calling, how can I help you today?\nCaller: Hi, I'd like to schedule a cleaning...\n\n— or describe what happened on the call."} />
+                  )}
                 </div>
               </div>
 
               <button onClick={handleAnalyze}
-                disabled={!callTranscript.trim()}
+                disabled={callInputMode === "screenshot" ? !callScreenshot : !callTranscript.trim()}
                 className="w-full flex items-center justify-center gap-2 bg-brand-500 hover:bg-brand-600 text-white font-semibold text-[14px] rounded-xl py-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed shadow-sm">
                 <ChevronRight className="w-4 h-4" />
-                Analyze Call Transcript
+                {callInputMode === "screenshot" ? "Analyze Call Screenshot" : "Analyze Call Transcript"}
               </button>
             </>
           )}

@@ -229,6 +229,25 @@ export async function createWebCall(params?: {
   return post("/retell/create-web-call", params ?? {});
 }
 
+export async function analyzeCallDebugScreenshot(
+  screenshot: File,
+  systemPrompt: string,
+  extraContext: string,
+  openaiKey: string,
+): Promise<import("./types").DebugAnalysis> {
+  const fd = new FormData();
+  fd.append("screenshot", screenshot);
+  fd.append("system_prompt", systemPrompt);
+  fd.append("extra_context", extraContext);
+  fd.append("openai_key", openaiKey);
+  const r = await fetch(`${BASE}/debug/analyze-call-screenshot`, { method: "POST", body: fd });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(err.detail ?? r.statusText);
+  }
+  return r.json();
+}
+
 export async function analyzeCallDebug(params: {
   transcript: string;
   system_prompt: string;
