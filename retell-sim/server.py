@@ -27,38 +27,75 @@ from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 
 
 # ── DNS-over-HTTPS fallback for Railway (api.retell.ai fails system DNS) ──────
-# Patches socket.getaddrinfo so that if system DNS can't resolve a *.retell.ai
-# host, we fall back to Cloudflare 1.1.1.1 via DoH (IP used directly, no DNS
-# needed for the fallback itself).  TLS still uses the original hostname as SNI
-# so certificate validation is unaffected.
+# Two-layer approach:
+#  1. Eagerly resolve *.retell.ai at startup via Cloudflare DoH and inject
+#     directly into /etc/hosts — this fixes ALL DNS paths (C-level libc,
+#     Python socket, httpx async transport, anyio).
+#  2. Patch socket.getaddrinfo as a runtime fallback for any subsequent
+#     resolution attempts that miss the hosts file.
+
+_RETELL_HOSTS = ["api.retell.ai"]
+
+def _doh_resolve_ip(hostname: str) -> str | None:
+    """Resolve hostname → IP via Cloudflare DoH (1.1.1.1 by IP — no DNS needed)."""
+    try:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode    = ssl.CERT_NONE
+        req = urllib.request.Request(
+            f"https://1.1.1.1/dns-query?name={hostname}&type=A",
+            headers={"Accept": "application/dns-json", "Host": "cloudflare-dns.com"},
+        )
+        with urllib.request.urlopen(req, context=ctx, timeout=8) as resp:
+            data = json.loads(resp.read())
+            ips = [a["data"] for a in data.get("Answer", []) if a.get("type") == 1]
+            return ips[0] if ips else None
+    except Exception:
+        return None
+
+
+def _inject_hosts(hostname: str, ip: str) -> None:
+    """Append hostname→IP to /etc/hosts so C-level libc getaddrinfo resolves it."""
+    import logging
+    log = logging.getLogger(__name__)
+    try:
+        with open("/etc/hosts", "r") as f:
+            content = f.read()
+        if hostname not in content:
+            with open("/etc/hosts", "a") as f:
+                f.write(f"\n{ip} {hostname}  # Railway DoH fallback\n")
+            log.info("DNS: injected %s → %s into /etc/hosts", hostname, ip)
+        else:
+            log.info("DNS: %s already in /etc/hosts", hostname)
+    except Exception as e:
+        log.warning("DNS: could not write /etc/hosts (%s) — relying on socket patch", e)
+
 
 def _install_doh_fallback() -> None:
-    _orig_getaddrinfo = socket.getaddrinfo
+    import logging
+    log = logging.getLogger(__name__)
 
-    @lru_cache(maxsize=32)
-    def _doh_resolve(hostname: str) -> str | None:
-        try:
-            ctx = ssl.create_default_context()
-            ctx.check_hostname = False       # cert is for cloudflare-dns.com, not 1.1.1.1
-            ctx.verify_mode = ssl.CERT_NONE
-            req = urllib.request.Request(
-                f"https://1.1.1.1/dns-query?name={hostname}&type=A",
-                headers={"Accept": "application/dns-json", "Host": "cloudflare-dns.com"},
-            )
-            with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
-                data = json.loads(resp.read())
-                ips = [a["data"] for a in data.get("Answer", []) if a.get("type") == 1]
-                return ips[0] if ips else None
-        except Exception:
-            return None
+    # ── Layer 1: /etc/hosts injection (beats all DNS paths) ──────────────────
+    for host in _RETELL_HOSTS:
+        ip = _doh_resolve_ip(host)
+        if ip:
+            _inject_hosts(host, ip)
+            log.info("DNS: pre-resolved %s → %s", host, ip)
+        else:
+            log.warning("DNS: DoH resolution failed for %s — falling back to socket patch only", host)
+
+    # ── Layer 2: socket.getaddrinfo patch (runtime safety net) ───────────────
+    _orig_getaddrinfo = socket.getaddrinfo
+    _cache: dict[str, str] = {}
 
     def _patched_getaddrinfo(host, port, *args, **kwargs):
         try:
             return _orig_getaddrinfo(host, port, *args, **kwargs)
         except socket.gaierror:
             if host and "retell.ai" in host:
-                ip = _doh_resolve(host)
+                ip = _cache.get(host) or _doh_resolve_ip(host)
                 if ip:
+                    _cache[host] = ip
                     return _orig_getaddrinfo(ip, port, *args, **kwargs)
             raise
 
