@@ -1675,6 +1675,206 @@ async def stream_repro(req: StreamReproRequest):
     return SR(gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+# ── Manual SMS: proxy individual messages to the real ADIT/Retell SMS agent ────
+
+class SmsStartRequest(BaseModel):
+    api_base: str = "https://frontdeskchatagent.adit.com"
+    bearer_token: str
+    agent_phone: str = DEFAULT_AGENT_PHONE
+    message: str          # first message from user
+
+class SmsSendRequest(BaseModel):
+    api_base: str = "https://frontdeskchatagent.adit.com"
+    bearer_token: str
+    agent_phone: str = DEFAULT_AGENT_PHONE
+    patient_phone: str    # phone from start response
+    chat_id: str          # chat_id from previous turn
+    message: str
+
+@app.post("/api/sms/start")
+def sms_start(req: SmsStartRequest):
+    """
+    Opens a new manual SMS conversation with the real ADIT/Retell SMS agent.
+    Generates a patient phone number, sends the first message, returns the
+    agent reply together with chat_id and patient_phone for subsequent turns.
+    """
+    patient_phone = _phone()
+    try:
+        resp = _call_agent(
+            req.api_base, req.bearer_token,
+            req.message, patient_phone, req.agent_phone,
+            chat_id=None,
+        )
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code,
+                            detail=f"ADIT API error: {e.response.text[:300]}")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"ADIT API unreachable: {e}")
+    data = resp.get("data", {})
+    agent_response = data.get("agent_response", "")
+    chat_id = data.get("chat_id", "")
+    api_events = _infer_api_events(agent_response, 0, 0)
+    return {
+        "patient_phone": patient_phone,
+        "chat_id": chat_id,
+        "agent_response": agent_response,
+        "api_events": api_events,
+    }
+
+@app.post("/api/sms/send")
+def sms_send(req: SmsSendRequest):
+    """
+    Sends a subsequent message in an existing manual SMS conversation.
+    Requires patient_phone and chat_id from a previous /api/sms/start call.
+    """
+    t0 = time.time()
+    try:
+        resp = _call_agent(
+            req.api_base, req.bearer_token,
+            req.message, req.patient_phone, req.agent_phone,
+            chat_id=req.chat_id,
+        )
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code,
+                            detail=f"ADIT API error: {e.response.text[:300]}")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"ADIT API unreachable: {e}")
+    latency_ms = int((time.time() - t0) * 1000)
+    data = resp.get("data", {})
+    agent_response = data.get("agent_response", "")
+    chat_id = data.get("chat_id", req.chat_id) or req.chat_id
+    api_events = _infer_api_events(agent_response, latency_ms, 1)
+    return {
+        "chat_id": chat_id,
+        "agent_response": agent_response,
+        "latency_ms": latency_ms,
+        "api_events": api_events,
+    }
+
+
+# ── Retell Web Call: create a browser-based WebRTC session ────────────────────
+
+class CreateWebCallRequest(BaseModel):
+    agent_id: str = RETELL_CALL_AGENT_ID
+
+@app.post("/api/retell/create-web-call")
+async def create_web_call(req: CreateWebCallRequest):
+    """
+    Creates a Retell web call session.
+    Returns access_token for the Retell JS SDK and call_id for tracking.
+    Used by both manual (user mic) and AI-caller (TTS injection) modes.
+    """
+    headers = {
+        "Authorization": f"Bearer {RETELL_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.post(
+                "https://api.retell.ai/v2/create-web-call",
+                headers=headers,
+                json={"agent_id": req.agent_id},
+            )
+            if r.status_code != 201 and r.status_code != 200:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Retell create-web-call failed ({r.status_code}): {r.text[:300]}",
+                )
+            data = r.json()
+            return {
+                "call_id":      data.get("call_id", ""),
+                "access_token": data.get("access_token", ""),
+                "agent_id":     req.agent_id,
+            }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Retell web call creation failed: {exc}")
+
+
+# ── AI Caller helper: generate patient reply + TTS for web call AI mode ──────
+
+class AiCallerReplyRequest(BaseModel):
+    agent_text: str
+    history: str = ""
+    opener: str = ""
+    openai_key: str
+    scenario_id: str = "new-patient-cleaning"
+
+CALL_SCENARIOS_GOALS: dict[str, str] = {
+    "new-patient-cleaning":    "Book a new patient dental cleaning appointment",
+    "dental-emergency":        "Get an urgent/emergency appointment today",
+    "existing-routine":        "Book a routine cleaning as an existing patient",
+    "reschedule":              "Reschedule an existing appointment",
+    "cancel":                  "Cancel an upcoming appointment",
+    "insurance-book":          "Confirm insurance is accepted then book",
+    "office-hours-book":       "Ask about hours then book if available",
+    "post-treatment-followup": "Report sensitivity and book a follow-up",
+}
+
+@app.post("/api/ai-caller-reply")
+def ai_caller_reply(req: AiCallerReplyRequest):
+    """
+    Generates the next spoken reply from the AI patient caller during a live
+    Retell web call. Used exclusively by LiveWebCall in 'ai' mode.
+    """
+    if not req.openai_key:
+        raise HTTPException(status_code=400, detail="OpenAI key required")
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=req.openai_key)
+        goal = CALL_SCENARIOS_GOALS.get(req.scenario_id, "Book a dental appointment")
+        system = f"""You are a patient calling a dental office on the phone.
+Your goal: {goal}
+The FIRST thing you said was: "{req.opener}"
+
+Respond naturally to what the agent just said. Keep it SHORT (1-2 spoken sentences).
+Sound like a real person — casual, natural phone register.
+Only answer the specific question asked. Do not volunteer extra info.
+Output ONLY your spoken reply — no labels, no quotes."""
+
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": f"Call history:\n{req.history}\n\nAgent just said:\n\"{req.agent_text}\"\n\nYour reply:"},
+            ],
+            max_tokens=80, temperature=0.2,
+        )
+        reply = resp.choices[0].message.content.strip().strip('"').strip("'")
+        return {"reply": reply}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+class TtsRequest(BaseModel):
+    text: str
+    openai_key: str
+    voice: str = "shimmer"   # shimmer = soft female, good for patient caller
+
+@app.post("/api/tts")
+async def text_to_speech(req: TtsRequest):
+    """
+    Convert text to MP3 audio via OpenAI TTS.
+    Used by LiveWebCall AI caller mode to inject voice into the Retell WebRTC session.
+    """
+    if not req.openai_key:
+        raise HTTPException(status_code=400, detail="OpenAI key required")
+    try:
+        from openai import OpenAI
+        from fastapi.responses import Response as FastResponse
+        client = OpenAI(api_key=req.openai_key)
+        resp = client.audio.speech.create(
+            model="tts-1",
+            voice=req.voice,
+            input=req.text[:500],  # cap to avoid huge audio
+        )
+        audio_bytes = resp.content
+        return FastResponse(content=audio_bytes, media_type="audio/mpeg")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 # ── Serve built React frontend ─────────────────────────────────────────────────
 _dist = Path(__file__).parent / "frontend" / "dist"
 _index = _dist / "index.html"

@@ -1,11 +1,9 @@
 /**
- * CallSimulations — dedicated call simulation hub.
- * Mirrors the SMS Simulations page but uses the voice call agent
- * and LLM-to-LLM simulation (no ADIT backend required).
+ * CallSimulations — three modes for testing the call agent:
  *
- * Sub-tabs:
- *   Live Run   — single call, real-time phone UI
- *   Batch Run  — multi-scenario parallel calls, aggregate stats
+ *   🎙️ Manual Call  — your mic + speaker connected to the REAL Retell call agent
+ *   🤖 AI Caller    — GPT-4o-mini + TTS talks to the REAL Retell call agent automatically
+ *   ⚡ AI Sim       — LLM-to-LLM simulation (fast batch, uses call agent prompt)
  */
 import { useState, useRef } from "react";
 import { Phone, Play, Trash2, RefreshCw } from "lucide-react";
@@ -14,6 +12,7 @@ import type { Config, AppConfig, SimResult } from "../types";
 import { SimResultCard } from "../components/SimResultCard";
 import { PromptConfigurator } from "../components/PromptConfigurator";
 import { LiveCall, type LiveCallDoneResult } from "../components/LiveCall";
+import { LiveWebCall, type LiveWebCallDoneResult } from "../components/LiveWebCall";
 
 interface Props {
   config: Config;
@@ -22,7 +21,7 @@ interface Props {
   results: SimResult[];
 }
 
-type SubTab = "live" | "batch";
+type SubTab = "manual" | "ai-caller" | "ai-sim";
 
 function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
@@ -34,36 +33,59 @@ function Stat({ label, value, sub }: { label: string; value: string; sub?: strin
   );
 }
 
+const CALL_SCENARIO_LABELS: Record<string, string> = {
+  "new-patient-cleaning":    "🆕 New Patient – Cleaning",
+  "dental-emergency":        "🚨 Dental Emergency",
+  "existing-routine":        "📅 Existing Patient – Routine",
+  "reschedule":              "🔄 Reschedule",
+  "cancel":                  "❌ Cancel",
+  "insurance-book":          "🏥 Insurance Check → Book",
+  "office-hours-book":       "🕐 Office Hours → Book",
+  "post-treatment-followup": "💊 Post-Treatment Follow-up",
+};
+
 export function CallSimulations({ config, appConfig, onResults, results }: Props) {
   const scenarios = appConfig?.scenarios ?? [];
-  const [subTab, setSubTab] = useState<SubTab>("live");
+  const [subTab, setSubTab] = useState<SubTab>("manual");
 
-  /* ── Prompt ── */
+  /* ── Shared prompt (used by AI Sim and AI Caller) ── */
   const [callPrompt, setCallPrompt] = useState("");
   const callPromptRef = useRef("");
   const handlePromptLoad = (p: string) => { setCallPrompt(p); callPromptRef.current = p; };
 
-  /* ── Live Run state ── */
-  const [liveScenario, setLiveScenario] = useState(scenarios[0]?.id ?? "new-patient-cleaning");
-  const [liveKey, setLiveKey] = useState(0);
-  const [liveRunning, setLiveRunning] = useState(false);
-  const [liveDone, setLiveDone] = useState<LiveCallDoneResult | null>(null);
-  const [liveError, setLiveError] = useState("");
+  /* ── Manual / AI Caller state ── */
+  const [webCallScenario, setWebCallScenario] = useState("new-patient-cleaning");
+  const [webCallKey, setWebCallKey]           = useState(0);
+  const [webCallRunning, setWebCallRunning]   = useState(false);
+  const [webCallDone, setWebCallDone]         = useState<LiveWebCallDoneResult | null>(null);
+  const [webCallError, setWebCallError]       = useState("");
 
-  /* ── Batch Run state ── */
-  const [selected, setSelected] = useState<string[]>([]);
-  const [repeats, setRepeats] = useState(1);
-  const [parallel, setParallel] = useState(3);
+  /* ── AI Sim (LLM-to-LLM) state ── */
+  const [liveScenario, setLiveScenario] = useState(scenarios[0]?.id ?? "new-patient-cleaning");
+  const [liveKey, setLiveKey]           = useState(0);
+  const [liveRunning, setLiveRunning]   = useState(false);
+  const [liveDone, setLiveDone]         = useState<LiveCallDoneResult | null>(null);
+  const [liveError, setLiveError]       = useState("");
+
+  /* ── Batch state ── */
+  const [selected, setSelected]     = useState<string[]>([]);
+  const [repeats, setRepeats]       = useState(1);
+  const [parallel, setParallel]     = useState(3);
   const [batchRunning, setBatchRunning] = useState(false);
   const [batchError, setBatchError] = useState("");
 
   /* ── Handlers ── */
+  const startWebCall = (mode: "manual" | "ai") => {
+    if (mode === "ai" && !config.openaiKey) {
+      setWebCallError("OpenAI key required in sidebar for AI Caller mode."); return;
+    }
+    setWebCallError(""); setWebCallDone(null);
+    setWebCallRunning(true); setWebCallKey(k => k + 1);
+  };
+
   const handleLiveRun = () => {
     if (!config.openaiKey) { setLiveError("OpenAI key required in sidebar."); return; }
-    setLiveError("");
-    setLiveDone(null);
-    setLiveRunning(true);
-    setLiveKey(k => k + 1);
+    setLiveError(""); setLiveDone(null); setLiveRunning(true); setLiveKey(k => k + 1);
   };
 
   const toggleScenario = (id: string) =>
@@ -72,17 +94,13 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
     setSelected(s => s.length === scenarios.length ? [] : scenarios.map(sc => sc.id));
 
   const handleBatchRun = async () => {
-    if (!config.openaiKey)    { setBatchError("OpenAI key required in sidebar."); return; }
+    if (!config.openaiKey)    { setBatchError("OpenAI key required."); return; }
     if (selected.length === 0) { setBatchError("Select at least one scenario."); return; }
-    setBatchError("");
-    setBatchRunning(true);
+    setBatchError(""); setBatchRunning(true);
     try {
       const res = await runCallParallel({
-        scenario_ids: selected,
-        repeats,
-        max_parallel: parallel,
-        call_agent_prompt: callPromptRef.current,
-        openai_key: config.openaiKey,
+        scenario_ids: selected, repeats, max_parallel: parallel,
+        call_agent_prompt: callPromptRef.current, openai_key: config.openaiKey,
       });
       onResults(res.results);
     } catch (e: unknown) {
@@ -92,168 +110,200 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
     }
   };
 
-  /* ── Stats ── */
-  const nPass = results.filter(r => r.passed).length;
+  const nPass    = results.filter(r => r.passed).length;
   const avgScore = results.length ? Math.round(results.reduce((a, b) => a + b.score, 0) / results.length) : 0;
-  const avgMs = results.length ? results.reduce((a, b) => a + b.total_ms, 0) / results.length : 0;
+  const avgMs    = results.length ? results.reduce((a, b) => a + b.total_ms, 0) / results.length : 0;
+
+  const callScenarioIds = Object.keys(CALL_SCENARIO_LABELS);
 
   return (
     <div>
       {/* ── Header ── */}
-      <div className="mb-6 flex items-start justify-between">
-        <div>
-          <div className="flex items-center gap-2.5 mb-1">
-            <div className="w-8 h-8 bg-[#1A1A1A] rounded-xl flex items-center justify-center flex-shrink-0">
-              <Phone className="w-4 h-4 text-white" />
-            </div>
-            <h1 className="text-[20px] font-extrabold text-[#111] tracking-tight">Call Simulations</h1>
+      <div className="mb-5">
+        <div className="flex items-center gap-2.5 mb-1">
+          <div className="w-8 h-8 bg-[#1A1A1A] rounded-xl flex items-center justify-center flex-shrink-0">
+            <Phone className="w-4 h-4 text-white" />
           </div>
-          <p className="text-[13.5px] text-[#888] leading-relaxed">
-            GPT-4o plays the voice call agent using its live Retell prompt.
-            GPT-4o-mini acts as a natural phone caller. No actual calls are made.
-          </p>
+          <h1 className="text-[20px] font-extrabold text-[#111] tracking-tight">Call Simulations</h1>
         </div>
-      </div>
-
-      {/* ── Prompt configurator (shared between tabs) ── */}
-      <div className="bg-white border border-[#EAEAEA] rounded-xl p-5 mb-5">
-        <PromptConfigurator agentType="call" onLoad={handlePromptLoad} />
-        <details className="mt-3">
-          <summary className="text-[11px] font-semibold text-[#ADADAD] cursor-pointer hover:text-[#888] select-none">
-            Preview resolved prompt
-          </summary>
-          <textarea
-            value={callPrompt}
-            onChange={e => { setCallPrompt(e.target.value); callPromptRef.current = e.target.value; }}
-            rows={5}
-            placeholder="Loading call agent prompt…"
-            className="mt-2 w-full border border-[#E5E5E5] rounded-xl px-4 py-3 text-[12px] text-[#555] resize-none focus:outline-none focus:border-[#333]"
-          />
-        </details>
+        <p className="text-[13.5px] text-[#888] leading-relaxed">
+          {subTab === "manual"    ? "Your mic and speaker — live call with the real Retell voice agent." :
+           subTab === "ai-caller" ? "AI patient caller (GPT-4o-mini + TTS) speaks to the real Retell voice agent." :
+                                   "LLM-to-LLM fast simulation — good for batch regression testing."}
+        </p>
       </div>
 
       {/* ── Sub-tab bar ── */}
       <div className="flex border-b border-[#EAEAEA] mb-6">
         {([
-          { id: "live",  label: "▶  Live Run",   desc: "Real-time phone call UI" },
-          { id: "batch", label: "⚡  Batch Run",  desc: "Multiple scenarios in parallel" },
+          { id: "manual",    label: "🎙️  Manual Call",  badge: "Real agent" },
+          { id: "ai-caller", label: "🤖  AI Caller",    badge: "Real agent" },
+          { id: "ai-sim",    label: "⚡  AI Sim",       badge: "Fast batch" },
         ] as const).map(t => (
-          <button
-            key={t.id}
-            onClick={() => setSubTab(t.id)}
-            className={`px-5 py-2.5 text-[13px] font-medium border-b-2 -mb-px transition-colors ${
+          <button key={t.id} onClick={() => setSubTab(t.id)}
+            className={`group px-5 py-2.5 text-[13px] font-medium border-b-2 -mb-px transition-colors ${
               subTab === t.id
                 ? "border-[#1A1A1A] text-[#111] font-semibold"
                 : "border-transparent text-[#888] hover:text-[#333]"
-            }`}
-          >
+            }`}>
             {t.label}
+            <span className={`ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+              t.badge === "Real agent"
+                ? "bg-green-100 text-green-700"
+                : "bg-[#F0F0EE] text-[#888]"
+            }`}>{t.badge}</span>
           </button>
         ))}
       </div>
 
-      {/* ══════════════ LIVE RUN ══════════════ */}
-      {subTab === "live" && (
+      {/* ══════════ MANUAL CALL TAB ══════════ */}
+      {subTab === "manual" && (
         <div>
-          <div className="mb-4">
-            <h2 className="text-[14px] font-bold text-[#111] mb-1">Live Call Simulation</h2>
-            <p className="text-[13px] text-[#888]">
-              Watch the conversation unfold in real-time — exactly how the call agent would handle the caller.
-            </p>
+          <div className="bg-[#F0FDF4] border border-[#BBF7D0] rounded-xl px-5 py-3.5 mb-5 flex items-start gap-3">
+            <div className="text-[20px] mt-0.5">🎙️</div>
+            <div>
+              <div className="text-[13px] font-bold text-green-800 mb-0.5">Connected to the real Retell call agent</div>
+              <div className="text-[12.5px] text-green-700 leading-relaxed">
+                Your microphone and speaker connect directly to Siriyaa via WebRTC.
+                Speak as a patient — hear the real agent voice, see the live transcript.
+                Use headphones to avoid echo.
+              </div>
+            </div>
           </div>
 
-          {/* Scenario picker */}
-          <div className="bg-white border border-[#EAEAEA] rounded-xl p-5 mb-4">
+          {/* Scenario intent picker */}
+          <div className="bg-white border border-[#EAEAEA] rounded-xl p-5 mb-5">
             <label className="text-[10.5px] font-bold uppercase tracking-widest text-[#ADADAD] block mb-2">
-              Caller Intent / Scenario
+              Your Caller Intent (for your reference)
             </label>
             <div className="grid grid-cols-2 gap-2">
-              {scenarios.map(sc => (
-                <label
-                  key={sc.id}
-                  className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
-                    liveScenario === sc.id
-                      ? "border-[#1A1A1A] bg-[#F5F5F5]"
-                      : "border-[#E5E5E5] hover:border-[#ADADAD]"
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="liveScenario"
-                    value={sc.id}
-                    checked={liveScenario === sc.id}
-                    onChange={() => setLiveScenario(sc.id)}
-                    className="mt-0.5 accent-[#1A1A1A]"
-                  />
-                  <div>
-                    <div className="text-[13px] font-semibold text-[#111]">{sc.label}</div>
-                    <div className="text-[11.5px] text-[#888] mt-0.5 leading-snug">{sc.goal}</div>
-                  </div>
+              {callScenarioIds.map(id => (
+                <label key={id} className={`flex items-center gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-all text-[12.5px] ${
+                  webCallScenario === id ? "border-green-500 bg-green-50" : "border-[#E5E5E5] hover:border-[#ADADAD]"
+                }`}>
+                  <input type="radio" name="webCallScenario" value={id}
+                    checked={webCallScenario === id} onChange={() => setWebCallScenario(id)}
+                    className="accent-green-600 flex-shrink-0" />
+                  <span className="font-medium text-[#111]">{CALL_SCENARIO_LABELS[id]}</span>
                 </label>
               ))}
             </div>
           </div>
 
-          {liveError && (
-            <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-[13px] text-red-600 mb-4">
-              {liveError}
-            </div>
+          {webCallError && (
+            <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-[13px] text-red-600 mb-4">{webCallError}</div>
           )}
 
-          <button
-            onClick={handleLiveRun}
-            disabled={liveRunning || !config.openaiKey}
-            className="flex items-center gap-2 bg-[#1A1A1A] hover:bg-[#333] text-white font-semibold text-[14px] rounded-xl px-8 py-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed mb-5 shadow-sm"
-          >
-            <Phone className="w-4 h-4" />
-            {liveRunning ? "Call in progress…" : "Start Call"}
-          </button>
-
-          {!config.openaiKey && (
-            <p className="text-[12px] text-red-500 mb-4">OpenAI key required in sidebar.</p>
-          )}
-
-          {/* Live call stream */}
-          {liveKey > 0 && (
+          {webCallKey === 0 ? (
+            <button onClick={() => startWebCall("manual")}
+              className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white font-semibold text-[14px] rounded-xl px-8 py-3 transition-colors shadow-sm mb-5">
+              <Phone className="w-4 h-4" />
+              Start Manual Call
+            </button>
+          ) : (
             <div className="mb-5">
-              <LiveCall
-                key={liveKey}
-                params={{
-                  scenario_id: liveScenario,
-                  call_agent_prompt: callPromptRef.current,
-                  openai_key: config.openaiKey,
-                  max_turns: 12,
-                }}
-                onDone={result => {
-                  setLiveRunning(false);
-                  setLiveDone(result);
-                }}
-                onError={msg => {
-                  setLiveRunning(false);
-                  setLiveError(msg);
-                }}
+              <LiveWebCall
+                key={webCallKey}
+                params={{ mode: "manual", openai_key: config.openaiKey, scenario_id: webCallScenario }}
+                onDone={result => { setWebCallRunning(false); setWebCallDone(result); }}
+                onError={msg => { setWebCallRunning(false); setWebCallError(msg); }}
               />
             </div>
           )}
 
-          {/* Post-call card */}
-          {liveDone && (
-            <div className={`flex items-center gap-4 px-5 py-4 rounded-xl border ${
-              liveDone.passed ? "bg-green-50 border-green-200" : "bg-red-50 border-red-200"
+          {webCallDone && (
+            <div className={`flex items-center gap-4 px-5 py-4 rounded-xl border mb-4 ${
+              webCallDone.passed ? "bg-green-50 border-green-200" : "bg-[#F9F9F7] border-[#EAEAEA]"
             }`}>
-              <div className="text-[26px]">{liveDone.passed ? "✅" : "❌"}</div>
+              <div className="text-[24px]">{webCallDone.passed ? "✅" : "📞"}</div>
               <div>
-                <div className={`text-[15px] font-bold ${liveDone.passed ? "text-green-700" : "text-red-600"}`}>
-                  {liveDone.passed ? "Call completed successfully" : "Call did not reach goal"}
+                <div className={`text-[14px] font-bold ${webCallDone.passed ? "text-green-700" : "text-[#333]"}`}>
+                  {webCallDone.passed ? "Goal reached" : "Call ended"}
                 </div>
-                <div className="text-[12.5px] text-[#888] mt-0.5">
-                  Outcome: {liveDone.outcome.replace(/_/g, " ")}
-                </div>
+                <div className="text-[12px] text-[#888] mt-0.5">{webCallDone.transcript.length} transcript turns</div>
               </div>
-              <button
-                onClick={handleLiveRun}
-                className="ml-auto flex items-center gap-1.5 text-[12px] font-semibold text-[#888] border border-[#E5E5E5] bg-white rounded-lg px-3 py-2 hover:border-[#ADADAD] transition-colors"
-              >
+              <button onClick={() => startWebCall("manual")}
+                className="ml-auto flex items-center gap-1.5 text-[12px] font-semibold text-[#888] border border-[#E5E5E5] bg-white rounded-lg px-3 py-2 hover:border-[#ADADAD]">
+                <RefreshCw className="w-3 h-3" /> Call again
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ══════════ AI CALLER TAB ══════════ */}
+      {subTab === "ai-caller" && (
+        <div>
+          <div className="bg-[#F0FDF4] border border-[#BBF7D0] rounded-xl px-5 py-3.5 mb-5 flex items-start gap-3">
+            <div className="text-[20px] mt-0.5">🤖</div>
+            <div>
+              <div className="text-[13px] font-bold text-green-800 mb-0.5">AI patient calls the real Retell agent</div>
+              <div className="text-[12.5px] text-green-700 leading-relaxed">
+                GPT-4o-mini generates the patient's spoken responses → OpenAI TTS converts to audio →
+                injected into the real Retell WebRTC call. Watch the live transcript as it unfolds.
+              </div>
+            </div>
+          </div>
+
+          {/* Scenario picker */}
+          <div className="bg-white border border-[#EAEAEA] rounded-xl p-5 mb-5">
+            <label className="text-[10.5px] font-bold uppercase tracking-widest text-[#ADADAD] block mb-2">
+              Patient Scenario
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              {callScenarioIds.map(id => (
+                <label key={id} className={`flex items-center gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-all text-[12.5px] ${
+                  webCallScenario === id ? "border-green-500 bg-green-50" : "border-[#E5E5E5] hover:border-[#ADADAD]"
+                }`}>
+                  <input type="radio" name="aiCallerScenario" value={id}
+                    checked={webCallScenario === id} onChange={() => setWebCallScenario(id)}
+                    className="accent-green-600 flex-shrink-0" />
+                  <span className="font-medium text-[#111]">{CALL_SCENARIO_LABELS[id]}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {!config.openaiKey && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-[12.5px] text-amber-700 mb-4">
+              ⚠ OpenAI key required in sidebar — used for AI patient responses and TTS.
+            </div>
+          )}
+
+          {webCallError && (
+            <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-[13px] text-red-600 mb-4">{webCallError}</div>
+          )}
+
+          {webCallKey === 0 ? (
+            <button onClick={() => startWebCall("ai")} disabled={!config.openaiKey}
+              className="flex items-center gap-2 bg-[#1A1A1A] hover:bg-[#333] text-white font-semibold text-[14px] rounded-xl px-8 py-3 transition-colors shadow-sm mb-5 disabled:opacity-50 disabled:cursor-not-allowed">
+              <Phone className="w-4 h-4" />
+              Start AI Caller
+            </button>
+          ) : (
+            <div className="mb-5">
+              <LiveWebCall
+                key={webCallKey}
+                params={{ mode: "ai", openai_key: config.openaiKey, scenario_id: webCallScenario }}
+                onDone={result => { setWebCallRunning(false); setWebCallDone(result); }}
+                onError={msg => { setWebCallRunning(false); setWebCallError(msg); }}
+              />
+            </div>
+          )}
+
+          {webCallDone && (
+            <div className={`flex items-center gap-4 px-5 py-4 rounded-xl border mb-4 ${
+              webCallDone.passed ? "bg-green-50 border-green-200" : "bg-red-50 border-red-200"
+            }`}>
+              <div className="text-[24px]">{webCallDone.passed ? "✅" : "❌"}</div>
+              <div>
+                <div className={`text-[14px] font-bold ${webCallDone.passed ? "text-green-700" : "text-red-600"}`}>
+                  {webCallDone.passed ? "AI caller reached the goal" : "AI caller did not reach goal"}
+                </div>
+                <div className="text-[12px] text-[#888] mt-0.5">{webCallDone.transcript.length} transcript turns · real Retell agent</div>
+              </div>
+              <button onClick={() => startWebCall("ai")}
+                className="ml-auto flex items-center gap-1.5 text-[12px] font-semibold text-[#888] border border-[#E5E5E5] bg-white rounded-lg px-3 py-2 hover:border-[#ADADAD]">
                 <RefreshCw className="w-3 h-3" /> Run again
               </button>
             </div>
@@ -261,43 +311,47 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
         </div>
       )}
 
-      {/* ══════════════ BATCH RUN ══════════════ */}
-      {subTab === "batch" && (
+      {/* ══════════ AI SIM TAB (existing LLM-to-LLM) ══════════ */}
+      {subTab === "ai-sim" && (
         <div>
-          <div className="mb-4">
-            <h2 className="text-[14px] font-bold text-[#111] mb-1">Batch Call Simulation</h2>
-            <p className="text-[13px] text-[#888]">
-              Run multiple scenarios in parallel. Great for regression testing after prompt changes.
-            </p>
+          <div className="bg-white border border-[#EAEAEA] rounded-xl p-5 mb-5">
+            <PromptConfigurator agentType="call" onLoad={handlePromptLoad} />
+            <details className="mt-3">
+              <summary className="text-[11px] font-semibold text-[#ADADAD] cursor-pointer hover:text-[#888] select-none">
+                Preview resolved prompt
+              </summary>
+              <textarea
+                value={callPrompt}
+                onChange={e => { setCallPrompt(e.target.value); callPromptRef.current = e.target.value; }}
+                rows={5} placeholder="Loading call agent prompt…"
+                className="mt-2 w-full border border-[#E5E5E5] rounded-xl px-4 py-3 text-[12px] text-[#555] resize-none focus:outline-none focus:border-[#333]" />
+            </details>
           </div>
 
-          {/* Scenario multi-picker */}
-          <div className="bg-white border border-[#EAEAEA] rounded-xl p-5 mb-4">
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-[13px] font-semibold text-[#333]">Scenarios</span>
-              <button
-                onClick={toggleAll}
-                className="text-[12px] text-[#555] font-medium hover:text-[#111]"
-              >
-                {selected.length === scenarios.length ? "Deselect all" : "Select all"}
+          <div className="flex gap-2 mb-6">
+            {([
+              { id: "live",  label: "▶  Live Run" },
+              { id: "batch", label: "⚡  Batch Run" },
+            ] as const).map(t => (
+              <button key={t.id}
+                onClick={() => setSubTab(t.id === "live" ? "ai-sim" : "ai-sim")}
+                className="px-4 py-2 text-[13px] font-semibold rounded-lg border border-[#E5E5E5] bg-white text-[#555] hover:border-[#ADADAD] transition-colors">
+                {t.label}
               </button>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
+            ))}
+          </div>
+
+          {/* Live run */}
+          <div className="mb-6">
+            <div className="text-[13px] font-bold text-[#111] mb-3">▶ Live Run — single call</div>
+            <div className="grid grid-cols-2 gap-2 mb-4">
               {scenarios.map(sc => (
-                <label
-                  key={sc.id}
-                  className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
-                    selected.includes(sc.id)
-                      ? "border-[#1A1A1A] bg-[#F5F5F5]"
-                      : "border-[#E5E5E5] hover:border-[#ADADAD]"
-                  }`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={selected.includes(sc.id)}
-                    onChange={() => toggleScenario(sc.id)}
-                    className="mt-0.5 accent-[#1A1A1A]"
-                  />
+                <label key={sc.id} className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
+                  liveScenario === sc.id ? "border-[#1A1A1A] bg-[#F5F5F5]" : "border-[#E5E5E5] hover:border-[#ADADAD]"
+                }`}>
+                  <input type="radio" name="liveScenario" value={sc.id}
+                    checked={liveScenario === sc.id} onChange={() => setLiveScenario(sc.id)}
+                    className="mt-0.5 accent-[#1A1A1A]" />
                   <div>
                     <div className="text-[13px] font-semibold text-[#111]">{sc.label}</div>
                     <div className="text-[11.5px] text-[#888] mt-0.5 leading-snug">{sc.goal}</div>
@@ -305,84 +359,109 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
                 </label>
               ))}
             </div>
-          </div>
 
-          {/* Options */}
-          <div className="flex gap-3 mb-4">
-            <div className="bg-white border border-[#EAEAEA] rounded-xl p-4 flex-1">
-              <label className="text-[10.5px] font-bold uppercase tracking-widest text-[#ADADAD] block mb-1.5">
-                Runs per scenario
-              </label>
-              <input
-                type="number" min={1} max={5} value={repeats}
-                onChange={e => setRepeats(+e.target.value)}
-                className="w-20 border border-[#E5E5E5] rounded-lg px-3 py-1.5 text-[13px] focus:outline-none focus:border-[#333]"
-              />
-            </div>
-            <div className="bg-white border border-[#EAEAEA] rounded-xl p-4 flex-1">
-              <label className="text-[10.5px] font-bold uppercase tracking-widest text-[#ADADAD] block mb-1.5">
-                Max parallel calls
-              </label>
-              <input
-                type="number" min={1} max={5} value={parallel}
-                onChange={e => setParallel(+e.target.value)}
-                className="w-20 border border-[#E5E5E5] rounded-lg px-3 py-1.5 text-[13px] focus:outline-none focus:border-[#333]"
-              />
-              <div className="text-[10px] text-[#ADADAD] mt-1">Max 5 — each call uses GPT-4o</div>
-            </div>
-          </div>
+            {liveError && (
+              <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-[13px] text-red-600 mb-4">{liveError}</div>
+            )}
 
-          {batchError && (
-            <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-[13px] text-red-600 mb-4">
-              {batchError}
-            </div>
-          )}
+            <button onClick={handleLiveRun} disabled={liveRunning || !config.openaiKey}
+              className="flex items-center gap-2 bg-[#1A1A1A] hover:bg-[#333] text-white font-semibold text-[14px] rounded-xl px-8 py-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed mb-4 shadow-sm">
+              <Phone className="w-4 h-4" />
+              {liveRunning ? "Simulating…" : "Start Sim Call"}
+            </button>
 
-          <button
-            onClick={handleBatchRun}
-            disabled={batchRunning || !config.openaiKey}
-            className="w-full flex items-center justify-center gap-2 bg-[#1A1A1A] hover:bg-[#333] text-white font-semibold text-[14px] rounded-xl py-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed mb-8 shadow-sm"
-          >
-            <Play className="w-4 h-4" />
-            {batchRunning
-              ? `Running ${selected.length * repeats} call${selected.length * repeats > 1 ? "s" : ""}…`
-              : `Run ${selected.length * repeats || 0} Call${selected.length * repeats > 1 ? "s" : ""}`}
-          </button>
-
-          {/* Stats */}
-          {results.length > 0 && (
-            <>
-              <div className="grid grid-cols-3 gap-3 mb-6">
-                <Stat
-                  label="Pass Rate"
-                  value={`${nPass}/${results.length}`}
-                  sub={`${Math.round(100 * nPass / results.length)}% success`}
-                />
-                <Stat label="Avg Score" value={`${avgScore}/100`} />
-                <Stat label="Avg Duration" value={`${(avgMs / 1000).toFixed(1)}s`} />
+            {liveKey > 0 && (
+              <div className="mb-4">
+                <LiveCall key={liveKey}
+                  params={{ scenario_id: liveScenario, call_agent_prompt: callPromptRef.current, openai_key: config.openaiKey, max_turns: 12 }}
+                  onDone={r => { setLiveRunning(false); setLiveDone(r); }}
+                  onError={msg => { setLiveRunning(false); setLiveError(msg); }} />
               </div>
+            )}
 
-              <div className="flex items-center justify-between mb-3">
-                <div className="text-[10.5px] font-bold uppercase tracking-widest text-[#ADADAD]">
-                  Call Results ({results.length})
+            {liveDone && (
+              <div className={`flex items-center gap-4 px-5 py-4 rounded-xl border mb-4 ${
+                liveDone.passed ? "bg-green-50 border-green-200" : "bg-red-50 border-red-200"
+              }`}>
+                <div className="text-[26px]">{liveDone.passed ? "✅" : "❌"}</div>
+                <div>
+                  <div className={`text-[14px] font-bold ${liveDone.passed ? "text-green-700" : "text-red-600"}`}>
+                    {liveDone.passed ? "Call completed" : "Call did not reach goal"}
+                  </div>
+                  <div className="text-[12px] text-[#888] mt-0.5">Outcome: {liveDone.outcome.replace(/_/g, " ")}</div>
                 </div>
-                <button
-                  onClick={() => onResults([])}
-                  className="flex items-center gap-1.5 text-[12px] text-[#888] hover:text-red-600 transition-colors"
-                >
-                  <Trash2 className="w-3.5 h-3.5" /> Clear
+                <button onClick={handleLiveRun}
+                  className="ml-auto flex items-center gap-1.5 text-[12px] font-semibold text-[#888] border border-[#E5E5E5] bg-white rounded-lg px-3 py-2 hover:border-[#ADADAD]">
+                  <RefreshCw className="w-3 h-3" /> Run again
                 </button>
               </div>
+            )}
+          </div>
 
-              {results.slice(0, 30).map((r, i) => (
-                <SimResultCard
-                  key={`${r.scenario}-${r.patient_phone}-${i}`}
-                  result={r}
-                  defaultExpanded={false}
-                />
+          {/* Batch run */}
+          <div className="border-t border-[#EAEAEA] pt-6">
+            <div className="text-[13px] font-bold text-[#111] mb-3">⚡ Batch Run — multiple scenarios</div>
+            <div className="grid grid-cols-2 gap-2 mb-4">
+              {scenarios.map(sc => (
+                <label key={sc.id} className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
+                  selected.includes(sc.id) ? "border-[#1A1A1A] bg-[#F5F5F5]" : "border-[#E5E5E5] hover:border-[#ADADAD]"
+                }`}>
+                  <input type="checkbox" checked={selected.includes(sc.id)}
+                    onChange={() => toggleScenario(sc.id)} className="mt-0.5 accent-[#1A1A1A]" />
+                  <div className="text-[12.5px] font-medium text-[#111]">{sc.label}</div>
+                </label>
               ))}
-            </>
-          )}
+            </div>
+
+            <div className="flex gap-3 mb-4">
+              <div className="bg-white border border-[#EAEAEA] rounded-xl p-4">
+                <label className="text-[10.5px] font-bold uppercase tracking-widest text-[#ADADAD] block mb-1.5">Runs / scenario</label>
+                <input type="number" min={1} max={3} value={repeats} onChange={e => setRepeats(+e.target.value)}
+                  className="w-16 border border-[#E5E5E5] rounded-lg px-3 py-1.5 text-[13px] focus:outline-none focus:border-[#333]" />
+              </div>
+              <div className="bg-white border border-[#EAEAEA] rounded-xl p-4">
+                <label className="text-[10.5px] font-bold uppercase tracking-widest text-[#ADADAD] block mb-1.5">Max parallel</label>
+                <input type="number" min={1} max={5} value={parallel} onChange={e => setParallel(+e.target.value)}
+                  className="w-16 border border-[#E5E5E5] rounded-lg px-3 py-1.5 text-[13px] focus:outline-none focus:border-[#333]" />
+              </div>
+            </div>
+
+            {batchError && (
+              <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-[13px] text-red-600 mb-4">{batchError}</div>
+            )}
+
+            <div className="flex items-center gap-3 mb-2">
+              <button onClick={toggleAll} className="text-[12px] text-[#888] hover:text-[#333] transition-colors">
+                {selected.length === scenarios.length ? "Deselect all" : "Select all"}
+              </button>
+            </div>
+
+            <button onClick={handleBatchRun} disabled={batchRunning || selected.length === 0 || !config.openaiKey}
+              className="w-full flex items-center justify-center gap-2 bg-[#1A1A1A] hover:bg-[#333] text-white font-semibold text-[14px] rounded-xl py-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed mb-6 shadow-sm">
+              <Play className="w-4 h-4" />
+              {batchRunning ? "Running call simulations…" : "Run Batch"}
+            </button>
+
+            {results.length > 0 && (
+              <>
+                <div className="grid grid-cols-3 gap-3 mb-5">
+                  <Stat label="Pass Rate" value={`${nPass}/${results.length}`} sub={`${Math.round(100 * nPass / results.length)}%`} />
+                  <Stat label="Avg Score" value={`${avgScore}`} sub="out of 100" />
+                  <Stat label="Avg Time"  value={`${(avgMs / 1000).toFixed(1)}s`} />
+                </div>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="text-[10.5px] font-bold uppercase tracking-widest text-[#ADADAD]">Results ({results.length})</div>
+                  <button onClick={() => onResults([])}
+                    className="flex items-center gap-1.5 text-[12px] text-[#888] hover:text-red-600 transition-colors">
+                    <Trash2 className="w-3.5 h-3.5" /> Clear
+                  </button>
+                </div>
+                {results.slice(0, 30).map((r, i) => (
+                  <SimResultCard key={`${r.scenario}-${r.patient_phone}-${i}`} result={r} defaultExpanded={false} />
+                ))}
+              </>
+            )}
+          </div>
         </div>
       )}
     </div>

@@ -199,6 +199,34 @@ export async function resolvePrompt(params: {
   return post("/retell/resolve-prompt", params);
 }
 
+/* ── Manual SMS ── */
+export async function smsStart(params: {
+  api_base: string;
+  bearer_token: string;
+  agent_phone: string;
+  message: string;
+}): Promise<{ patient_phone: string; chat_id: string; agent_response: string; api_events: string[] }> {
+  return post("/sms/start", params);
+}
+
+export async function smsSend(params: {
+  api_base: string;
+  bearer_token: string;
+  agent_phone: string;
+  patient_phone: string;
+  chat_id: string;
+  message: string;
+}): Promise<{ chat_id: string; agent_response: string; latency_ms: number; api_events: string[] }> {
+  return post("/sms/send", params);
+}
+
+/* ── Real Retell Web Call ── */
+export async function createWebCall(params?: {
+  agent_id?: string;
+}): Promise<{ call_id: string; access_token: string; agent_id: string }> {
+  return post("/retell/create-web-call", params ?? {});
+}
+
 export async function analyzeCallDebug(params: {
   transcript: string;
   system_prompt: string;
