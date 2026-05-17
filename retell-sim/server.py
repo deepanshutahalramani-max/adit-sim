@@ -11,15 +11,61 @@ import base64
 import json
 import os
 import random
+import socket
+import ssl
 import string
 import time
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Optional
 
 import httpx
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+
+
+# ── DNS-over-HTTPS fallback for Railway (api.retell.ai fails system DNS) ──────
+# Patches socket.getaddrinfo so that if system DNS can't resolve a *.retell.ai
+# host, we fall back to Cloudflare 1.1.1.1 via DoH (IP used directly, no DNS
+# needed for the fallback itself).  TLS still uses the original hostname as SNI
+# so certificate validation is unaffected.
+
+def _install_doh_fallback() -> None:
+    _orig_getaddrinfo = socket.getaddrinfo
+
+    @lru_cache(maxsize=32)
+    def _doh_resolve(hostname: str) -> str | None:
+        try:
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False       # cert is for cloudflare-dns.com, not 1.1.1.1
+            ctx.verify_mode = ssl.CERT_NONE
+            req = urllib.request.Request(
+                f"https://1.1.1.1/dns-query?name={hostname}&type=A",
+                headers={"Accept": "application/dns-json", "Host": "cloudflare-dns.com"},
+            )
+            with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
+                data = json.loads(resp.read())
+                ips = [a["data"] for a in data.get("Answer", []) if a.get("type") == 1]
+                return ips[0] if ips else None
+        except Exception:
+            return None
+
+    def _patched_getaddrinfo(host, port, *args, **kwargs):
+        try:
+            return _orig_getaddrinfo(host, port, *args, **kwargs)
+        except socket.gaierror:
+            if host and "retell.ai" in host:
+                ip = _doh_resolve(host)
+                if ip:
+                    return _orig_getaddrinfo(ip, port, *args, **kwargs)
+            raise
+
+    socket.getaddrinfo = _patched_getaddrinfo
+
+_install_doh_fallback()
+# ─────────────────────────────────────────────────────────────────────────────
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
