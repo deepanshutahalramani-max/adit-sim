@@ -168,6 +168,7 @@ export async function runCallParallel(params: {
   call_agent_prompt: string;
   openai_key: string;
   max_turns?: number;
+  extra_context?: string;
 }): Promise<{ results: SimResult[] }> {
   return post("/simulate/call/parallel", params);
 }
@@ -242,6 +243,21 @@ export async function listRetellCalls(params?: {
   sort_order?: string;
 }): Promise<{ calls: unknown[] }> {
   return post("/retell/list-calls", params ?? {});
+}
+
+export async function extractContextFromImage(
+  screenshot: File,
+  openaiKey: string,
+): Promise<{ context: string }> {
+  const fd = new FormData();
+  fd.append("screenshot", screenshot);
+  fd.append("openai_key", openaiKey);
+  const r = await fetch(`${BASE}/extract-context`, { method: "POST", body: fd });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(err.detail ?? r.statusText);
+  }
+  return r.json();
 }
 
 export async function runCallRegression(params: {

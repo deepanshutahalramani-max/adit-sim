@@ -6,8 +6,8 @@
  *   ⚡ AI Sim       — LLM-to-LLM simulation (fast batch, uses call agent prompt)
  */
 import { useState, useRef } from "react";
-import { Phone, Play, Trash2, RefreshCw } from "lucide-react";
-import { runCallParallel } from "../api";
+import { Phone, Play, Trash2, RefreshCw, Paperclip, X } from "lucide-react";
+import { runCallParallel, extractContextFromImage } from "../api";
 import type { Config, AppConfig, SimResult } from "../types";
 import { SimResultCard } from "../components/SimResultCard";
 import { PromptConfigurator } from "../components/PromptConfigurator";
@@ -76,6 +76,28 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
   const [batchRunning, setBatchRunning] = useState(false);
   const [batchError, setBatchError] = useState("");
 
+  /* ── Scenario context (AI Caller + AI Sim) ── */
+  const [simContext, setSimContext]           = useState("");
+  const [contextFile, setContextFile]        = useState<File | null>(null);
+  const [extracting, setExtracting]          = useState(false);
+  const [extractError, setExtractError]      = useState("");
+  const contextFileRef                        = useRef<HTMLInputElement>(null);
+
+  const handleContextFile = async (file: File) => {
+    setContextFile(file);
+    setExtractError("");
+    if (!config.openaiKey) { setExtractError("OpenAI key required to extract context from image."); return; }
+    setExtracting(true);
+    try {
+      const { context } = await extractContextFromImage(file, config.openaiKey);
+      setSimContext(prev => prev ? `${prev}\n\n[From screenshot]: ${context}` : context);
+    } catch (e) {
+      setExtractError(e instanceof Error ? e.message : "Failed to extract context");
+    } finally {
+      setExtracting(false);
+    }
+  };
+
   /* ── Clear shared call state when switching between manual / ai-caller tabs ── */
   const switchSubTab = (tab: SubTab) => {
     setSubTab(tab);
@@ -113,6 +135,7 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
       const res = await runCallParallel({
         scenario_ids: selected, repeats, max_parallel: parallel,
         call_agent_prompt: callPromptRef.current, openai_key: config.openaiKey,
+        extra_context: simContext,
       });
       onResults(res.results);
     } catch (e: unknown) {
@@ -127,6 +150,54 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
   const avgMs    = results.length ? results.reduce((a, b) => a + b.total_ms, 0) / results.length : 0;
 
   const callScenarioIds = Object.keys(CALL_SCENARIO_LABELS);
+
+  /* ── Shared context box rendered in AI Caller + AI Sim tabs ── */
+  const ContextBox = (
+    <div className="bg-white border border-[#EAEAEA] rounded-xl p-4 mb-5">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[10.5px] font-bold uppercase tracking-widest text-[#ADADAD]">
+          Scenario Context <span className="normal-case font-normal text-[#ADADAD]">(optional)</span>
+        </span>
+        {simContext && (
+          <button onClick={() => { setSimContext(""); setContextFile(null); setExtractError(""); }}
+            className="flex items-center gap-1 text-[11px] text-[#ADADAD] hover:text-red-500 transition-colors">
+            <X className="w-3 h-3" /> Clear
+          </button>
+        )}
+      </div>
+      <div className="text-[11px] text-[#ADADAD] mb-2">
+        Describe the patient, scenario details, or specific edge cases — the AI patient will use this context during the call.
+      </div>
+      <textarea
+        value={simContext}
+        onChange={e => setSimContext(e.target.value)}
+        placeholder="e.g. Patient is calling about a broken crown, is anxious about cost, and has United Concordia insurance. They want to be seen today if possible."
+        rows={3}
+        className="w-full text-[12px] border border-[#E5E5E5] rounded-lg px-3 py-2 resize-none focus:outline-none focus:border-[#ADADAD] mb-2"
+      />
+      {/* Screenshot upload */}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => contextFileRef.current?.click()}
+          disabled={extracting}
+          className="flex items-center gap-1.5 text-[11.5px] font-medium text-[#555] border border-[#E5E5E5] rounded-lg px-3 py-1.5 hover:border-[#ADADAD] disabled:opacity-50 transition-colors bg-white"
+        >
+          <Paperclip className="w-3.5 h-3.5" />
+          {extracting ? "Extracting…" : contextFile ? contextFile.name : "Upload screenshot"}
+        </button>
+        {contextFile && !extracting && (
+          <button onClick={() => { setContextFile(null); if (contextFileRef.current) contextFileRef.current.value = ""; }}
+            className="text-[11px] text-[#ADADAD] hover:text-red-500 transition-colors">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        )}
+        <span className="text-[10.5px] text-[#ADADAD]">GPT-4o will extract scenario details from the image</span>
+        <input ref={contextFileRef} type="file" accept="image/*" className="hidden"
+          onChange={e => { const f = e.target.files?.[0]; if (f) handleContextFile(f); }} />
+      </div>
+      {extractError && <div className="text-[11px] text-red-500 mt-1">{extractError}</div>}
+    </div>
+  );
 
   return (
     <div>
@@ -261,6 +332,8 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
             </div>
           </div>
 
+          {ContextBox}
+
           {!config.openaiKey && (
             <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-[12.5px] text-amber-700 mb-4">
               ⚠ OpenAI key required in sidebar — used for AI patient responses and TTS.
@@ -281,7 +354,7 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
             <div className="mb-5">
               <LiveWebCall
                 key={aiCallerKey}
-                params={{ mode: "ai", openai_key: config.openaiKey, scenario_id: webCallScenario }}
+                params={{ mode: "ai", openai_key: config.openaiKey, scenario_id: webCallScenario, extra_context: simContext }}
                 onDone={result => { setWebCallRunning(false); setWebCallDone(result); }}
                 onError={msg => { setWebCallRunning(false); setWebCallError(msg); }}
               />
@@ -313,17 +386,9 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
         <div>
           <div className="bg-white border border-[#EAEAEA] rounded-xl p-5 mb-5">
             <PromptConfigurator agentType="call" onLoad={handlePromptLoad} />
-            <details className="mt-3">
-              <summary className="text-[11px] font-semibold text-[#ADADAD] cursor-pointer hover:text-[#888] select-none">
-                Preview resolved prompt
-              </summary>
-              <textarea
-                value={callPrompt}
-                onChange={e => { setCallPrompt(e.target.value); callPromptRef.current = e.target.value; }}
-                rows={5} placeholder="Loading call agent prompt…"
-                className="mt-2 w-full border border-[#E5E5E5] rounded-xl px-4 py-3 text-[12px] text-[#555] resize-none focus:outline-none focus:border-[#333]" />
-            </details>
           </div>
+
+          {ContextBox}
 
           <div className="flex gap-2 mb-6">
             {([
@@ -374,7 +439,7 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
             {liveKey > 0 && (
               <div className="mb-4">
                 <LiveCall key={liveKey}
-                  params={{ scenario_id: liveScenario, call_agent_prompt: callPromptRef.current, openai_key: config.openaiKey, max_turns: 12 }}
+                  params={{ scenario_id: liveScenario, call_agent_prompt: callPromptRef.current, openai_key: config.openaiKey, max_turns: 12, extra_context: simContext }}
                   onDone={r => { setLiveRunning(false); setLiveDone(r); }}
                   onError={msg => { setLiveRunning(false); setLiveError(msg); }} />
               </div>

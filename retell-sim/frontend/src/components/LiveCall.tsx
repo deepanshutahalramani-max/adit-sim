@@ -16,6 +16,8 @@ export interface LiveCallParams {
   repro_opener?: string;
   /** Debug repro: override the simulation goal with "Reproduce: <root_cause>" */
   root_cause?: string;
+  /** Optional tester-provided scenario context for the AI patient caller */
+  extra_context?: string;
 }
 
 export interface LiveCallDoneResult {
@@ -84,8 +86,9 @@ export function LiveCall({ params, onDone, onError }: Props) {
             call_agent_prompt: params.call_agent_prompt,
             openai_key: params.openai_key,
             max_turns: params.max_turns ?? 12,
-            ...(params.repro_opener ? { repro_opener: params.repro_opener } : {}),
-            ...(params.root_cause   ? { root_cause: params.root_cause }     : {}),
+            ...(params.repro_opener  ? { repro_opener: params.repro_opener }   : {}),
+            ...(params.root_cause    ? { root_cause: params.root_cause }       : {}),
+            ...(params.extra_context ? { extra_context: params.extra_context } : {}),
           }),
           signal: ctrl.signal,
         });

@@ -23,6 +23,7 @@ export interface LiveWebCallParams {
   agent_id?: string;            // defaults to the call agent on the backend
   scenario_id?: string;         // used to pick the AI caller's opening line
   autoStart?: boolean;          // if true, call starts automatically on mount
+  extra_context?: string;       // optional tester-provided context for AI patient behaviour
 }
 
 export interface LiveWebCallDoneResult {
@@ -162,6 +163,7 @@ export function LiveWebCall({ params, onDone, onError }: Props) {
         opener,
         openai_key: params.openai_key,
         scenario_id: params.scenario_id ?? "new-patient-cleaning",
+        extra_context: params.extra_context ?? "",
       }),
     });
     if (!resp.ok) throw new Error(await resp.text());

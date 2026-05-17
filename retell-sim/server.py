@@ -879,6 +879,7 @@ CALL_OPENERS: dict[str, str] = {
 def smart_caller_reply(
     agent_msg: str, persona: PatientPersona, history: list,
     goal: str, oai_key: str, patient_phone: str = "",
+    extra_context: str = "",
 ) -> tuple[str, bool]:
     """Phone-caller AI — natural spoken replies, voice-call register."""
     if not oai_key:
@@ -897,7 +898,8 @@ def smart_caller_reply(
         transcript = "\n".join(
             f"{'You' if t.role == 'patient' else 'Agent'}: {t.message}" for t in recent
         )
-        system_prompt = f"""You are a real person calling a dental office on the phone.
+        extra_ctx_block = f"\n\nADDITIONAL SCENARIO CONTEXT (use to make your replies more realistic):\n{extra_context.strip()}" if extra_context.strip() else ""
+        system_prompt = f"""You are a real person calling a dental office on the phone.{extra_ctx_block}
 
 YOUR DETAILS — reveal ONLY when the agent specifically asks for that piece:
 - First name: {persona.first_name}
@@ -978,6 +980,7 @@ def _run_call_simulation_sync(
     call_agent_prompt: str,
     oai_key: str,
     max_turns: int = 12,
+    extra_context: str = "",
 ) -> SimResult:
     """LLM-to-LLM call simulation — returns a SimResult (no streaming)."""
     config = SCENARIOS.get(scenario_id, SCENARIOS["new-patient-cleaning"])
@@ -1023,7 +1026,7 @@ def _run_call_simulation_sync(
 
         try:
             current_caller_msg, should_end = smart_caller_reply(
-                agent_msg, persona, turns, goal, oai_key, patient_phone
+                agent_msg, persona, turns, goal, oai_key, patient_phone, extra_context
             )
             if should_end:
                 passed = True; outcome_type = "booking_confirmed"; break
@@ -1055,6 +1058,7 @@ class CallSimRequest(BaseModel):
     call_agent_prompt: str = ""
     openai_key: str
     max_turns: int = 12
+    extra_context: str = ""
 
 
 class CallParallelRequest(BaseModel):
@@ -1064,6 +1068,7 @@ class CallParallelRequest(BaseModel):
     call_agent_prompt: str = ""
     openai_key: str
     max_turns: int = 12
+    extra_context: str = ""
 
 
 @app.post("/api/simulate/call")
@@ -1072,7 +1077,8 @@ def simulate_call(req: CallSimRequest):
     if not req.openai_key:
         raise HTTPException(status_code=400, detail="OpenAI key required")
     result = _run_call_simulation_sync(
-        req.scenario_id, req.call_agent_prompt, req.openai_key, req.max_turns
+        req.scenario_id, req.call_agent_prompt, req.openai_key, req.max_turns,
+        req.extra_context,
     )
     return _result_to_dict(result)
 
@@ -1089,6 +1095,7 @@ def simulate_call_parallel(req: CallParallelRequest):
             ex.submit(
                 _run_call_simulation_sync,
                 sid, req.call_agent_prompt, req.openai_key, req.max_turns,
+                req.extra_context,
             )
             for sid, _ in tasks
         ]
@@ -1111,6 +1118,7 @@ class StreamCallRequest(BaseModel):
     # Optional repro fields — override scenario opener/goal for debug reproduction
     repro_opener: str = ""
     root_cause: str = ""
+    extra_context: str = ""
 
 
 @app.post("/api/simulate/call-stream")
@@ -1179,7 +1187,7 @@ async def stream_call(req: StreamCallRequest):
             try:
                 current_caller_msg, should_end = await loop.run_in_executor(
                     None,
-                    lambda m=agent_msg: smart_caller_reply(m, persona, turns, goal, req.openai_key, patient_phone),
+                    lambda m=agent_msg: smart_caller_reply(m, persona, turns, goal, req.openai_key, patient_phone, req.extra_context),
                 )
                 if should_end:
                     yield f"data: {json.dumps({'type': 'done', 'outcome': 'booking_confirmed', 'passed': True})}\n\n"
@@ -1777,6 +1785,7 @@ class AiCallerReplyRequest(BaseModel):
     opener: str = ""
     openai_key: str
     scenario_id: str = "new-patient-cleaning"
+    extra_context: str = ""
 
 CALL_SCENARIOS_GOALS: dict[str, str] = {
     "new-patient-cleaning":    "Book a new patient dental cleaning appointment",
@@ -1801,9 +1810,10 @@ def ai_caller_reply(req: AiCallerReplyRequest):
         from openai import OpenAI
         client = OpenAI(api_key=req.openai_key)
         goal = CALL_SCENARIOS_GOALS.get(req.scenario_id, "Book a dental appointment")
+        extra_ctx_block = f"\n\nADDITIONAL SCENARIO CONTEXT (use this to make your replies more realistic and specific):\n{req.extra_context.strip()}" if req.extra_context.strip() else ""
         system = f"""You are a patient calling a dental office on the phone.
 Your goal: {goal}
-The FIRST thing you said was: "{req.opener}"
+The FIRST thing you said was: "{req.opener}"{extra_ctx_block}
 
 Respond naturally to what the agent just said. Keep it SHORT (1-2 spoken sentences).
 Sound like a real person — casual, natural phone register.
@@ -1820,6 +1830,43 @@ Output ONLY your spoken reply — no labels, no quotes."""
         )
         reply = resp.choices[0].message.content.strip().strip('"').strip("'")
         return {"reply": reply}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/api/extract-context")
+async def extract_context(
+    screenshot: UploadFile = File(...),
+    openai_key: str = Form(...),
+):
+    """
+    Upload a screenshot (or any image) and extract scenario context from it
+    using GPT-4o vision. The returned text is used to guide AI patient
+    behaviour during simulations.
+    """
+    if not openai_key:
+        raise HTTPException(status_code=400, detail="OpenAI key required")
+    image_bytes = await screenshot.read()
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=openai_key)
+        b64 = base64.b64encode(image_bytes).decode()
+        resp = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}", "detail": "high"}},
+                {"type": "text", "text": (
+                    "This is a screenshot related to a dental office simulation test scenario. "
+                    "Extract and summarise the key scenario details visible: patient name, reason for visit, "
+                    "appointment type, any specific instructions or context the AI patient should know. "
+                    "Return only a concise plain-text summary (3-6 sentences) that an AI patient caller "
+                    "can use to simulate the scenario realistically. No headers, no bullet points."
+                )},
+            ]}],
+            max_tokens=300, temperature=0,
+        )
+        context = resp.choices[0].message.content.strip()
+        return {"context": context}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 

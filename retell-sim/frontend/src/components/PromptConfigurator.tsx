@@ -30,18 +30,20 @@ const TOGGLE_ROWS: { key: keyof PromptToggles; label: string; emoji: string }[] 
 ];
 
 export function PromptConfigurator({ onLoad, agentType = "chat", className = "" }: Props) {
-  const [template, setTemplate]       = useState("");
-  const [toggles, setToggles]         = useState<PromptToggles>(DEFAULT_TOGGLES);
-  const [loading, setLoading]         = useState(true);
-  const [resolving, setResolving]     = useState(false);
-  const [error, setError]             = useState("");
+  const [template, setTemplate]           = useState("");   // raw Retell template ({{placeholders}})
+  const [resolvedPrompt, setResolvedPrompt] = useState(""); // substituted output — shown in textarea
+  const [toggles, setToggles]             = useState<PromptToggles>(DEFAULT_TOGGLES);
+  const [loading, setLoading]             = useState(true);
+  const [resolving, setResolving]         = useState(false);
+  const [error, setError]                 = useState("");
 
-  /* ─── Resolve template → call onLoad ─── */
+  /* ─── Resolve template → update textarea + call onLoad ─── */
   const resolve = useCallback(async (tmpl: string, flags: PromptToggles) => {
     if (!tmpl.trim()) return;
     setResolving(true);
     try {
       const { prompt } = await resolvePrompt({ template: tmpl, ...flags });
+      setResolvedPrompt(prompt);  // ← update the visible textarea
       onLoad(prompt);
     } catch (e: unknown) {
       setError((e instanceof Error ? e.message : "Failed to resolve prompt"));
@@ -70,17 +72,17 @@ export function PromptConfigurator({ onLoad, agentType = "chat", className = "" 
 
   useEffect(() => { fetchTemplate(); }, [fetchTemplate]);
 
-  /* ─── Toggle handler ─── */
+  /* ─── Toggle handler — re-resolves from raw template so substitution reflects new flag ─── */
   const handleToggle = (key: keyof PromptToggles) => {
     const next = { ...toggles, [key]: !toggles[key] };
     setToggles(next);
-    resolve(template, next);
+    resolve(template, next);  // always re-resolve from the raw template
   };
 
-  /* ─── Manual textarea edit ─── */
-  const handleTemplateChange = (val: string) => {
-    setTemplate(val);
-    resolve(val, toggles);
+  /* ─── Manual textarea edit — user is editing the resolved output directly ─── */
+  const handleResolvedEdit = (val: string) => {
+    setResolvedPrompt(val);
+    onLoad(val);  // bypass resolve — pass edit straight through
   };
 
   return (
@@ -116,7 +118,7 @@ export function PromptConfigurator({ onLoad, agentType = "chat", className = "" 
             <button
               key={key}
               onClick={() => handleToggle(key)}
-              disabled={loading}
+              disabled={loading || resolving}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold border transition-colors disabled:opacity-40 ${
                 isOn
                   ? "bg-brand-500 text-white border-brand-500"
@@ -137,13 +139,14 @@ export function PromptConfigurator({ onLoad, agentType = "chat", className = "" 
       <div className="text-[10.5px] text-[#ADADAD] mb-1">
         {loading
           ? "Loading live Retell template…"
-          : "Toggle capabilities above — prompt updates automatically. Edit manually if needed."}
+          : "Resolved prompt — toggling capabilities updates it live. Edit manually if needed."}
       </div>
 
-      {/* Always-visible editable textarea — populated on fetch, or paste manually */}
+      {/* Textarea shows the RESOLVED prompt (placeholders substituted).
+          Toggling a flag re-resolves and updates this. Manual edits bypass resolve. */}
       <textarea
-        value={template}
-        onChange={e => handleTemplateChange(e.target.value)}
+        value={resolvedPrompt}
+        onChange={e => handleResolvedEdit(e.target.value)}
         placeholder={loading ? "Loading…" : "Paste the Retell system prompt here…"}
         rows={8}
         className="w-full text-[11px] font-mono border border-[#E5E5E5] rounded-lg px-3 py-2 resize-y bg-white text-[#333] focus:outline-none focus:ring-1 focus:ring-brand-400 disabled:opacity-50"
