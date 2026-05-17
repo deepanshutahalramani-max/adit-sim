@@ -7,7 +7,6 @@ import { SimulationsHub } from "./pages/SimulationsHub";
 import { E2EChain } from "./pages/E2EChain";
 import { DebugSuite } from "./pages/DebugSuite";
 import { CallEvaluator } from "./pages/CallEvaluator";
-import { TestGenerator } from "./pages/TestGenerator";
 import { Dashboard } from "./pages/Dashboard";
 import type { SimResult } from "./types";
 
@@ -16,7 +15,6 @@ const TABS = [
   { id: "simulations", label: "💬 Simulations" },
   { id: "chain",       label: "E2E Chain" },
   { id: "evaluator",   label: "Evaluator" },
-  { id: "generator",   label: "Test Generator" },
   { id: "dashboard",   label: "Dashboard" },
 ] as const;
 
@@ -137,9 +135,6 @@ export default function App() {
             )}
             {activeTab === "evaluator" && (
               <CallEvaluator config={config} appConfig={appConfig} onResults={handleCallResults} />
-            )}
-            {activeTab === "generator" && (
-              <TestGenerator config={config} onResults={handleSmsResults} />
             )}
             {activeTab === "dashboard" && (
               <Dashboard results={allResults} chainResults={chainResults} />

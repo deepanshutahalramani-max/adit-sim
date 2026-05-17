@@ -22,6 +22,7 @@ export interface LiveWebCallParams {
   openai_key: string;           // needed for AI caller TTS + GPT responses
   agent_id?: string;            // defaults to the call agent on the backend
   scenario_id?: string;         // used to pick the AI caller's opening line
+  autoStart?: boolean;          // if true, call starts automatically on mount
 }
 
 export interface LiveWebCallDoneResult {
@@ -102,6 +103,14 @@ export function LiveWebCall({ params, onDone, onError }: Props) {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [transcript, apiEvents]);
+
+  // Auto-start the call if requested (used by E2E chain)
+  useEffect(() => {
+    if (params.autoStart) {
+      startCall();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // intentionally empty — only fires on mount
 
   useEffect(() => {
     if (status === "active") {

@@ -1,10 +1,10 @@
-import { useState, useRef } from "react";
+import { useState } from "react";
 import { BarChart2, Play, Phone, MessageSquare, RefreshCw } from "lucide-react";
 import { evaluateTranscript, runParallel } from "../api";
 import type { Config, AppConfig, TranscriptEval, SimResult } from "../types";
 import { SimResultCard } from "../components/SimResultCard";
 import { PromptConfigurator } from "../components/PromptConfigurator";
-import { LiveCall, type LiveCallDoneResult } from "../components/LiveCall";
+import { LiveWebCall, type LiveWebCallDoneResult } from "../components/LiveWebCall";
 
 interface Props {
   config: Config;
@@ -43,16 +43,9 @@ export function CallEvaluator({ config, appConfig, onResults }: Props) {
   const [simResults, setSimResults] = useState<SimResult[]>([]);
 
   /* ── Call simulation state ── */
-  const [callPrompt, setCallPrompt] = useState("");
-  const [callStreamKey, setCallStreamKey] = useState(0);
+  const [callKey, setCallKey]   = useState(0);
   const [callRunning, setCallRunning] = useState(false);
-  const [callDone, setCallDone] = useState<LiveCallDoneResult | null>(null);
-  const callPromptRef = useRef("");          // keep latest prompt for run handler
-
-  const handleCallPromptLoad = (p: string) => {
-    setCallPrompt(p);
-    callPromptRef.current = p;
-  };
+  const [callDone, setCallDone] = useState<LiveWebCallDoneResult | null>(null);
 
   /* ── Handlers ── */
   const handleAnalyze = async () => {
@@ -103,7 +96,7 @@ export function CallEvaluator({ config, appConfig, onResults }: Props) {
     setSimError("");
     setCallDone(null);
     setCallRunning(true);
-    setCallStreamKey(k => k + 1);
+    setCallKey(k => k + 1);
   };
 
   return (
@@ -327,27 +320,19 @@ export function CallEvaluator({ config, appConfig, onResults }: Props) {
           {/* ════ CALL MODE ════ */}
           {simMode === "call" && (
             <div>
-              <div className="bg-[#F0F9F1] border border-[#BBE0C0] rounded-xl px-4 py-3 mb-5 text-[13px] text-[#1A4D24]">
-                <strong>Call simulation</strong> — LLM-to-LLM: GPT-4o plays the voice call agent using its
-                live Retell prompt; GPT-4o-mini plays a natural phone caller. No real booking calls are made.
+              <div className="bg-[#F0FDF4] border border-[#BBF7D0] rounded-xl px-4 py-3 mb-5 text-[13px] text-[#1A4D24] flex items-start gap-2">
+                <span className="text-[18px] mt-0.5">📞</span>
+                <div>
+                  <strong>Real Retell call agent</strong> — AI Caller (GPT-4o-mini + OpenAI TTS) calls the
+                  real Retell voice agent via WebRTC. Watch the live transcript as it unfolds.
+                </div>
               </div>
 
-              {/* Call agent prompt configurator */}
-              <div className="bg-white border border-[#EAEAEA] rounded-xl p-4 mb-4">
-                <PromptConfigurator agentType="call" onLoad={handleCallPromptLoad} />
-                <details className="mt-3">
-                  <summary className="text-[11px] font-semibold text-[#ADADAD] cursor-pointer hover:text-[#888] select-none">
-                    Preview resolved prompt
-                  </summary>
-                  <textarea
-                    value={callPrompt}
-                    onChange={e => { setCallPrompt(e.target.value); callPromptRef.current = e.target.value; }}
-                    rows={6}
-                    placeholder="Loading call agent prompt…"
-                    className="mt-2 w-full border border-[#E5E5E5] rounded-xl px-4 py-3 text-[12px] text-[#555] resize-none focus:outline-none focus:border-brand-500"
-                  />
-                </details>
-              </div>
+              {!config.openaiKey && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-2.5 text-[12.5px] text-amber-700 mb-4">
+                  ⚠ OpenAI key required in sidebar — used for AI patient responses and TTS.
+                </div>
+              )}
 
               <button
                 onClick={handleCallRun}
@@ -355,23 +340,19 @@ export function CallEvaluator({ config, appConfig, onResults }: Props) {
                 className="flex items-center gap-2 bg-[#1A1A1A] hover:bg-[#333] text-white font-semibold text-[14px] rounded-xl px-8 py-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed mb-5 shadow-sm"
               >
                 <Phone className="w-4 h-4" />
-                {callRunning ? "Call in progress…" : "Start Call Simulation"}
+                {callRunning ? "Call in progress…" : "Start Call"}
               </button>
 
-              {!config.openaiKey && (
-                <p className="text-[12px] text-red-500 mb-4">OpenAI key required in sidebar to run call simulation.</p>
-              )}
-
-              {/* Live call stream */}
-              {callStreamKey > 0 && (
+              {/* Real Retell call via LiveWebCall */}
+              {callKey > 0 && (
                 <div className="mb-5">
-                  <LiveCall
-                    key={callStreamKey}
+                  <LiveWebCall
+                    key={callKey}
                     params={{
-                      scenario_id: simScenario,
-                      call_agent_prompt: callPromptRef.current,
+                      mode: "ai",
                       openai_key: config.openaiKey,
-                      max_turns: 12,
+                      scenario_id: simScenario,
+                      autoStart: true,
                     }}
                     onDone={result => {
                       setCallRunning(false);
@@ -385,12 +366,10 @@ export function CallEvaluator({ config, appConfig, onResults }: Props) {
                 </div>
               )}
 
-              {/* Post-call quick score */}
+              {/* Post-call result */}
               {callDone && (
                 <div className={`flex items-center gap-4 px-5 py-4 rounded-xl border mb-5 ${
-                  callDone.passed
-                    ? "bg-green-50 border-green-200"
-                    : "bg-red-50 border-red-200"
+                  callDone.passed ? "bg-green-50 border-green-200" : "bg-red-50 border-red-200"
                 }`}>
                   <div className="text-[26px]">{callDone.passed ? "✅" : "❌"}</div>
                   <div>
@@ -398,7 +377,7 @@ export function CallEvaluator({ config, appConfig, onResults }: Props) {
                       {callDone.passed ? "Call completed successfully" : "Call did not complete goal"}
                     </div>
                     <div className="text-[12.5px] text-[#888] mt-0.5">
-                      Outcome: {callDone.outcome.replace(/_/g, " ")}
+                      Real Retell agent · {callDone.transcript.length} transcript turns
                     </div>
                   </div>
                   <button

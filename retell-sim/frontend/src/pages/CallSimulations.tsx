@@ -273,7 +273,7 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
 
           {aiCallerKey === 0 ? (
             <button onClick={() => startWebCall("ai")} disabled={!config.openaiKey}
-              className="flex items-center gap-2 bg-[#1A1A1A] hover:bg-[#333] text-white font-semibold text-[14px] rounded-xl px-8 py-3 transition-colors shadow-sm mb-5 disabled:opacity-50 disabled:cursor-not-allowed">
+              className="flex items-center gap-2 bg-[#1A1A1A] hover:bg-[#333] text-white font-semibold text-[14px] rounded-xl px-8 py-3 transition-colors shadow-sm mb-5 disabled:opacity-60 disabled:cursor-not-allowed">
               <Phone className="w-4 h-4" />
               Start AI Caller
             </button>

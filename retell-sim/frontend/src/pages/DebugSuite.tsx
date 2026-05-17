@@ -408,7 +408,7 @@ export function DebugSuite({ config, onResults }: Props) {
 
               <button onClick={handleAnalyze}
                 disabled={inputMode === "screenshot" ? !screenshot : !description.trim()}
-                className="w-full flex items-center justify-center gap-2 bg-brand-500 hover:bg-brand-600 text-white font-semibold text-[14px] rounded-xl py-3 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm">
+                className="w-full flex items-center justify-center gap-2 bg-brand-500 hover:bg-brand-600 text-white font-semibold text-[14px] rounded-xl py-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed shadow-sm">
                 <ChevronRight className="w-4 h-4" />
                 Analyze Escalation
               </button>
@@ -453,7 +453,7 @@ export function DebugSuite({ config, onResults }: Props) {
 
               <button onClick={handleAnalyze}
                 disabled={!callTranscript.trim()}
-                className="w-full flex items-center justify-center gap-2 bg-brand-500 hover:bg-brand-600 text-white font-semibold text-[14px] rounded-xl py-3 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm">
+                className="w-full flex items-center justify-center gap-2 bg-brand-500 hover:bg-brand-600 text-white font-semibold text-[14px] rounded-xl py-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed shadow-sm">
                 <ChevronRight className="w-4 h-4" />
                 Analyze Call Transcript
               </button>
@@ -540,7 +540,7 @@ export function DebugSuite({ config, onResults }: Props) {
             <button
               onClick={handleConfirmIssue}
               disabled={mode === "sms" && !config.bearerToken}
-              className="flex-1 flex items-center justify-center gap-2 bg-brand-500 hover:bg-brand-600 text-white font-semibold text-[14px] rounded-xl py-3 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm">
+              className="flex-1 flex items-center justify-center gap-2 bg-brand-500 hover:bg-brand-600 text-white font-semibold text-[14px] rounded-xl py-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed shadow-sm">
               <CheckCircle className="w-4 h-4" />
               Confirmed — {mode === "call" ? "reproduce this call issue" : "reproduce this issue"}
             </button>
@@ -665,7 +665,7 @@ export function DebugSuite({ config, onResults }: Props) {
             {!isStreaming && totalRuns > 0 && (
               <button onClick={handleProceedToFix}
                 disabled={!systemPrompt.trim() || !diagnosis.suggested_fix}
-                className="flex-1 flex items-center justify-center gap-2 bg-brand-500 hover:bg-brand-600 text-white font-semibold text-[14px] rounded-xl py-3 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm">
+                className="flex-1 flex items-center justify-center gap-2 bg-brand-500 hover:bg-brand-600 text-white font-semibold text-[14px] rounded-xl py-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed shadow-sm">
                 <ChevronRight className="w-4 h-4" />
                 Review proposed fix
               </button>
