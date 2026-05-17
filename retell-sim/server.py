@@ -811,8 +811,264 @@ class ApplyFixRequest(BaseModel):
     suggested_fix: str
 
 # ── Retell: fetch live agent prompt ──────────────────────────────────────────
-RETELL_API_KEY  = "key_fb275adbb9a079ffa32be77492db"
-RETELL_AGENT_ID = "agent_ee5d7e7f782caa9f1789765182"
+RETELL_API_KEY       = "key_fb275adbb9a079ffa32be77492db"
+RETELL_AGENT_ID      = "agent_ee5d7e7f782caa9f1789765182"   # chat / SMS agent
+RETELL_CALL_AGENT_ID = "agent_8c769ad3395e9b058984c07628"   # voice call agent
+
+# Runtime placeholder defaults injected before LLM simulation (Retell fills
+# these at call-time normally; for simulation we use plausible values).
+import datetime as _dt
+_now = _dt.datetime.now()
+RUNTIME_DEFAULTS: dict[str, str] = {
+    "{{office_status}}":       "open",
+    "{{business_hours}}":      "Monday through Friday 8 AM to 5 PM, Saturday 9 AM to 2 PM",
+    "{{agent_phone_number}}":  DEFAULT_AGENT_PHONE,
+    "{{patient_phone_number}}":"the number you're calling from",
+    "{{current_day}}":         _now.strftime("%A"),
+    "{{current_date}}":        _now.strftime("%B %d, %Y"),
+    "{{current_year}}":        str(_now.year),
+    "{{current_time}}":        _now.strftime("%-I:%M %p"),
+}
+
+def _fill_runtime_placeholders(prompt: str) -> str:
+    """Replace Retell runtime variables with simulation-safe defaults."""
+    for k, v in RUNTIME_DEFAULTS.items():
+        prompt = prompt.replace(k, v)
+    return prompt
+
+# ── Call agent helpers ────────────────────────────────────────────────────────
+
+# Phone-call-style caller openers (same intents as SCENARIOS but spoken)
+CALL_OPENERS: dict[str, str] = {
+    "new-patient-cleaning":    "Hi, I'd like to schedule an appointment. I'm a new patient.",
+    "dental-emergency":        "Hi, I have a really bad toothache and I need to see someone today if at all possible.",
+    "existing-routine":        "Hi, I'm an existing patient and I'd like to schedule a routine cleaning.",
+    "reschedule":              "Hi, I need to reschedule my upcoming appointment.",
+    "cancel":                  "Hi, I need to cancel my appointment please.",
+    "insurance-book":          "Hi, I was wondering if you accept Delta Dental insurance before I go ahead and book.",
+    "office-hours-book":       "Hi, what are your office hours? And if you're open, I'd love to make an appointment.",
+    "post-treatment-followup": "Hi, I had a filling done last week and my tooth is still really sensitive to cold. I think I need to come back in.",
+}
+
+def smart_caller_reply(
+    agent_msg: str, persona: PatientPersona, history: list,
+    goal: str, oai_key: str, patient_phone: str = "",
+) -> tuple[str, bool]:
+    """Phone-caller AI — natural spoken replies, voice-call register."""
+    if not oai_key:
+        return "Yeah, okay.", False
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=oai_key)
+
+        agent_lower = agent_msg.lower()
+        if any(ph in agent_lower for ph in TASK_TRIGGER_PHRASES):
+            return "Yeah, that would be great, thank you.", False
+        if any(kw in agent_lower for kw in ALL_SUCCESS_KWS):
+            return "Great, thanks so much. Have a good day!", True
+
+        recent = history[-8:]
+        transcript = "\n".join(
+            f"{'You' if t.role == 'patient' else 'Agent'}: {t.message}" for t in recent
+        )
+        system_prompt = f"""You are a real person calling a dental office on the phone.
+
+YOUR DETAILS — reveal ONLY when the agent specifically asks for that piece:
+- First name: {persona.first_name}
+- Last name: {persona.last_name}
+- Date of birth: {persona.dob}
+- Insurance: {persona.insurance}
+- Reason for calling: {persona.reason}
+- Preferred day: {persona.preferred_day}
+- Preferred time: {persona.preferred_time}
+- Patient type: {"New patient" if persona.is_new else "Existing patient, I've been here before"}
+- My phone: {patient_phone if patient_phone else "the number I'm calling from"}
+
+YOUR GOAL: {goal}
+
+You are on a PHONE CALL — sound natural and human:
+1. Reply in 1-2 short spoken sentences (voice register, not SMS)
+2. ONLY respond to what the agent just asked. Nothing else.
+3. You may use casual spoken language: "yeah", "sure", "uh", "right", "okay"
+4. If asked new or existing → {"New" if persona.is_new else "Existing — I've been there before"}
+5. If asked first name → {persona.first_name}
+6. If asked last name → {persona.last_name}
+7. If asked to spell name → spell it: {' '.join(list(persona.first_name.upper()))} for first name
+8. If asked date of birth → {persona.dob}
+9. If asked insurance → {persona.insurance}
+10. If asked reason for visit → {persona.reason}
+11. If asked preferred day → {persona.preferred_day}
+12. If asked morning or afternoon → {persona.preferred_time}
+13. If given two appointment slot choices → pick the first one
+14. If asked if this is your number → "Yes, that's my cell."
+15. Output ONLY your spoken reply — no labels, no quotes."""
+
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": (
+                    f"Call so far:\n{transcript}\n\n"
+                    f"Agent just said:\n\"{agent_msg}\"\n\nYour spoken reply:"
+                )},
+            ],
+            max_tokens=60, temperature=0.2,
+        )
+        reply = resp.choices[0].message.content.strip().strip('"').strip("'")
+        should_end = any(kw in agent_lower for kw in ALL_SUCCESS_KWS)
+        return reply, should_end
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("smart_caller_reply error: %s", exc)
+        return "Yeah, that sounds good.", False
+
+
+def call_agent_llm_reply(
+    caller_msg: str, system_prompt: str, history: list, oai_key: str,
+) -> str:
+    """Simulates the voice call agent using its Retell system prompt via GPT-4o."""
+    from openai import OpenAI
+    client = OpenAI(api_key=oai_key)
+
+    messages: list[dict] = [{"role": "system", "content": system_prompt}]
+    for turn in history:
+        role = "user" if turn.role == "patient" else "assistant"
+        messages.append({"role": role, "content": turn.message})
+    messages.append({"role": "user", "content": caller_msg})
+
+    resp = client.chat.completions.create(
+        model="gpt-4o",
+        messages=messages,
+        max_tokens=300,
+        temperature=0.1,
+    )
+    return resp.choices[0].message.content.strip()
+
+
+# ── Call simulation SSE stream ────────────────────────────────────────────────
+
+class StreamCallRequest(BaseModel):
+    scenario_id: str = "new-patient-cleaning"
+    call_agent_prompt: str = ""   # resolved Retell prompt (behavioral placeholders already filled)
+    openai_key: str
+    max_turns: int = 12
+
+
+@app.post("/api/simulate/call-stream")
+async def stream_call(req: StreamCallRequest):
+    """
+    LLM-to-LLM voice call simulation streamed as Server-Sent Events.
+    One GPT-4o instance plays the call agent (using its live Retell prompt).
+    One GPT-4o-mini instance plays the patient caller.
+    """
+    from fastapi.responses import StreamingResponse as SR
+
+    async def gen():
+        loop = asyncio.get_event_loop()
+        config = SCENARIOS.get(req.scenario_id, SCENARIOS["new-patient-cleaning"])
+        persona = PERSONAS[config["persona_idx"]]
+        patient_phone = _phone()
+        goal = config["goal"]
+
+        # Resolve runtime variables so GPT-4o gets a clean system prompt
+        system_prompt = _fill_runtime_placeholders(req.call_agent_prompt) if req.call_agent_prompt.strip() else (
+            "You are Siriyaa, an AI voice receptionist for a dental office. "
+            "Help callers book, reschedule, or cancel appointments warmly and efficiently."
+        )
+
+        turns: list[Turn] = []
+        # Use call-specific opener if available, else fall back to scenario default
+        current_caller_msg = CALL_OPENERS.get(req.scenario_id, config["opener"])
+
+        for turn_num in range(req.max_turns):
+            # Stream patient / caller turn
+            yield f"data: {json.dumps({'type': 'patient', 'message': current_caller_msg})}\n\n"
+            await asyncio.sleep(0.02)
+
+            # Call agent LLM reply
+            t0 = time.time()
+            try:
+                agent_msg = await loop.run_in_executor(
+                    None,
+                    lambda m=current_caller_msg: call_agent_llm_reply(m, system_prompt, turns, req.openai_key),
+                )
+            except Exception as exc:
+                yield f"data: {json.dumps({'type': 'error', 'message': f'Agent LLM error: {str(exc)[:120]}'})}\n\n"
+                return
+
+            latency_ms = int((time.time() - t0) * 1000)
+            api_events = _infer_api_events(agent_msg, latency_ms, turn_num)
+
+            turns.append(Turn("patient", current_caller_msg))
+            turns.append(Turn("agent", agent_msg, latency_ms, api_events))
+
+            yield f"data: {json.dumps({'type': 'agent', 'message': agent_msg, 'latency_ms': latency_ms, 'api_events': api_events})}\n\n"
+            await asyncio.sleep(0.02)
+
+            agent_lower = agent_msg.lower()
+            if any(kw in agent_lower for kw in BOOKING_CONFIRMED_KWS):
+                yield f"data: {json.dumps({'type': 'done', 'outcome': 'booking_confirmed', 'passed': True})}\n\n"
+                return
+            if any(kw in agent_lower for kw in TASK_CREATED_KWS):
+                yield f"data: {json.dumps({'type': 'done', 'outcome': 'task_created', 'passed': True})}\n\n"
+                return
+
+            # Patient caller reply
+            try:
+                current_caller_msg, should_end = await loop.run_in_executor(
+                    None,
+                    lambda m=agent_msg: smart_caller_reply(m, persona, turns, goal, req.openai_key, patient_phone),
+                )
+                if should_end:
+                    yield f"data: {json.dumps({'type': 'done', 'outcome': 'booking_confirmed', 'passed': True})}\n\n"
+                    return
+            except Exception as exc:
+                yield f"data: {json.dumps({'type': 'error', 'message': f'Caller LLM error: {str(exc)[:80]}'})}\n\n"
+                return
+
+        yield f"data: {json.dumps({'type': 'done', 'outcome': 'incomplete', 'passed': False})}\n\n"
+
+    return SR(gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+# ── Retell: fetch call agent prompt ──────────────────────────────────────────
+
+@app.get("/api/retell/fetch-call-prompt")
+async def fetch_call_prompt():
+    """Fetches the live system prompt for the voice call agent."""
+    headers = {"Authorization": f"Bearer {RETELL_API_KEY}"}
+    async with httpx.AsyncClient(timeout=15) as client:
+        agent_resp = await client.get(
+            f"https://api.retell.ai/get-agent/{RETELL_CALL_AGENT_ID}",
+            headers=headers,
+        )
+        if agent_resp.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"Retell call agent fetch failed: {agent_resp.text}")
+        agent_data = agent_resp.json()
+
+        llm_id = (
+            agent_data.get("llm_id")
+            or (agent_data.get("response_engine") or {}).get("llm_id")
+        )
+        if not llm_id:
+            raise HTTPException(status_code=502, detail=f"No llm_id in call agent response: {agent_data}")
+
+        llm_resp = await client.get(
+            f"https://api.retell.ai/get-retell-llm/{llm_id}",
+            headers=headers,
+        )
+        if llm_resp.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"Retell call LLM fetch failed: {llm_resp.text}")
+        llm_data = llm_resp.json()
+
+        prompt = llm_data.get("general_prompt") or llm_data.get("system_prompt") or ""
+        return {
+            "prompt": prompt,
+            "llm_id": llm_id,
+            "agent_id": RETELL_CALL_AGENT_ID,
+            "model": llm_data.get("model", ""),
+        }
+
 
 @app.get("/api/retell/fetch-prompt")
 async def fetch_retell_prompt():

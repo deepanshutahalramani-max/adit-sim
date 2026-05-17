@@ -4,11 +4,13 @@
  */
 import { useEffect, useState, useCallback } from "react";
 import { RefreshCw } from "lucide-react";
-import { fetchRetellPrompt, resolvePrompt, type PromptToggles } from "../api";
+import { fetchRetellPrompt, fetchRetellCallPrompt, resolvePrompt, type PromptToggles } from "../api";
 
 interface Props {
   /** Called whenever the resolved prompt changes (initial load + every toggle). */
   onLoad: (prompt: string) => void;
+  /** "chat" fetches the SMS/chat agent prompt; "call" fetches the voice call agent prompt. */
+  agentType?: "chat" | "call";
   /** Extra class names for the outer wrapper. */
   className?: string;
 }
@@ -27,7 +29,7 @@ const TOGGLE_ROWS: { key: keyof PromptToggles; label: string; emoji: string }[] 
   { key: "cancellation",      label: "Cancellation",                emoji: "❌" },
 ];
 
-export function PromptConfigurator({ onLoad, className = "" }: Props) {
+export function PromptConfigurator({ onLoad, agentType = "chat", className = "" }: Props) {
   const [template, setTemplate]       = useState("");
   const [toggles, setToggles]         = useState<PromptToggles>(DEFAULT_TOGGLES);
   const [loading, setLoading]         = useState(true);
@@ -53,7 +55,8 @@ export function PromptConfigurator({ onLoad, className = "" }: Props) {
     setLoading(true);
     setError("");
     try {
-      const { prompt } = await fetchRetellPrompt();
+      const fetcher = agentType === "call" ? fetchRetellCallPrompt : fetchRetellPrompt;
+      const { prompt } = await fetcher();
       setTemplate(prompt);
       await resolve(prompt, toggles);
     } catch (e: unknown) {

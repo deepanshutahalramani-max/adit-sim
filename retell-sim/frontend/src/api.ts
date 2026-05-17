@@ -152,6 +152,20 @@ export async function fetchRetellPrompt(): Promise<{
   return r.json();
 }
 
+export async function fetchRetellCallPrompt(): Promise<{
+  prompt: string;
+  llm_id: string;
+  agent_id: string;
+  model: string;
+}> {
+  const r = await fetch(`${BASE}/retell/fetch-call-prompt`);
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(err.detail ?? r.statusText);
+  }
+  return r.json();
+}
+
 export interface PromptToggles {
   schedule_new: boolean;
   schedule_existing: boolean;

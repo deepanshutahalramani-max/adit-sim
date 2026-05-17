@@ -1,9 +1,10 @@
-import { useState } from "react";
-import { BarChart2, Play } from "lucide-react";
+import { useState, useRef } from "react";
+import { BarChart2, Play, Phone, MessageSquare, RefreshCw } from "lucide-react";
 import { evaluateTranscript, runParallel } from "../api";
 import type { Config, AppConfig, TranscriptEval, SimResult } from "../types";
 import { SimResultCard } from "../components/SimResultCard";
 import { PromptConfigurator } from "../components/PromptConfigurator";
+import { LiveCall, type LiveCallDoneResult } from "../components/LiveCall";
 
 interface Props {
   config: Config;
@@ -12,6 +13,7 @@ interface Props {
 }
 
 type SubTab = "transcript" | "simulation";
+type SimMode = "chat" | "call";
 
 function scoreColor(s: number) {
   if (s >= 80) return "#F5820D";
@@ -22,21 +24,37 @@ function scoreColor(s: number) {
 export function CallEvaluator({ config, appConfig, onResults }: Props) {
   const [subTab, setSubTab] = useState<SubTab>("transcript");
 
-  // Transcript Analyzer state
+  /* ── Transcript Analyzer ── */
   const [transcript, setTranscript] = useState("");
   const [sysPrompt, setSysPrompt] = useState("");
   const [analyzing, setAnalyzing] = useState(false);
   const [evalResult, setEvalResult] = useState<TranscriptEval | null>(null);
   const [evalError, setEvalError] = useState("");
 
-  // Call Simulation state
+  /* ── Simulation shared ── */
   const scenarios = appConfig?.scenarios ?? [];
+  const [simMode, setSimMode] = useState<SimMode>("chat");
   const [simScenario, setSimScenario] = useState(scenarios[0]?.id ?? "");
+  const [simError, setSimError] = useState("");
+
+  /* ── Chat simulation state ── */
   const [simRuns, setSimRuns] = useState(1);
   const [simRunning, setSimRunning] = useState(false);
   const [simResults, setSimResults] = useState<SimResult[]>([]);
-  const [simError, setSimError] = useState("");
 
+  /* ── Call simulation state ── */
+  const [callPrompt, setCallPrompt] = useState("");
+  const [callStreamKey, setCallStreamKey] = useState(0);
+  const [callRunning, setCallRunning] = useState(false);
+  const [callDone, setCallDone] = useState<LiveCallDoneResult | null>(null);
+  const callPromptRef = useRef("");          // keep latest prompt for run handler
+
+  const handleCallPromptLoad = (p: string) => {
+    setCallPrompt(p);
+    callPromptRef.current = p;
+  };
+
+  /* ── Handlers ── */
   const handleAnalyze = async () => {
     if (!transcript.trim()) return;
     if (!config.openaiKey) { setEvalError("OpenAI API key required in sidebar."); return; }
@@ -52,12 +70,13 @@ export function CallEvaluator({ config, appConfig, onResults }: Props) {
     }
   };
 
-  const handleSimRun = async () => {
+  const handleChatRun = async () => {
     if (!config.bearerToken) { setSimError("Bearer token required in sidebar."); return; }
     if (!config.openaiKey)   { setSimError("OpenAI key required."); return; }
     if (!simScenario)         { setSimError("Select a scenario."); return; }
     setSimError("");
     setSimRunning(true);
+    setSimResults([]);
     try {
       const res = await runParallel({
         scenario_ids: [simScenario],
@@ -78,17 +97,27 @@ export function CallEvaluator({ config, appConfig, onResults }: Props) {
     }
   };
 
+  const handleCallRun = () => {
+    if (!config.openaiKey) { setSimError("OpenAI key required."); return; }
+    if (!simScenario)       { setSimError("Select a scenario."); return; }
+    setSimError("");
+    setCallDone(null);
+    setCallRunning(true);
+    setCallStreamKey(k => k + 1);
+  };
+
   return (
     <div>
+      {/* ── Header ── */}
       <div className="mb-6">
         <h1 className="text-[20px] font-extrabold text-[#111] tracking-tight mb-1">Call Evaluator</h1>
         <p className="text-[13.5px] text-[#888] leading-relaxed">
           Evaluate Retell voice call quality — paste a call transcript for scoring,
-          or run a voice call simulation using the same AI engine.
+          or run a live call or chat simulation.
         </p>
       </div>
 
-      {/* Sub-tab bar */}
+      {/* ── Sub-tab bar ── */}
       <div className="flex border-b border-[#EAEAEA] mb-6">
         {(["transcript", "simulation"] as const).map(t => (
           <button
@@ -100,12 +129,12 @@ export function CallEvaluator({ config, appConfig, onResults }: Props) {
                 : "border-transparent text-[#888] hover:text-[#333]"
             }`}
           >
-            {t === "transcript" ? "Transcript Analyzer" : "Call Simulation"}
+            {t === "transcript" ? "Transcript Analyzer" : "Simulation"}
           </button>
         ))}
       </div>
 
-      {/* Transcript Analyzer */}
+      {/* ══════════════════ TRANSCRIPT ANALYZER ══════════════════ */}
       {subTab === "transcript" && (
         <div>
           <div className="mb-3">
@@ -152,7 +181,6 @@ export function CallEvaluator({ config, appConfig, onResults }: Props) {
 
           {evalResult && !evalResult.error && (
             <div>
-              {/* Score row */}
               <div className="grid grid-cols-4 gap-3 mb-5">
                 {[
                   { label: "Score", value: `${evalResult.score}/100`, style: { color: scoreColor(evalResult.score) } },
@@ -171,20 +199,17 @@ export function CallEvaluator({ config, appConfig, onResults }: Props) {
                 <div>
                   <div className="text-[10px] font-bold uppercase tracking-widest text-[#ADADAD] mb-2">What Went Well</div>
                   {evalResult.what_went_well.map((item, i) => (
-                    <div key={i} className="text-[13px] text-[#333] py-1.5 border-b border-[#F0F0EE]">
-                      ✓ &nbsp;{item}
-                    </div>
+                    <div key={i} className="text-[13px] text-[#333] py-1.5 border-b border-[#F0F0EE]">✓ &nbsp;{item}</div>
                   ))}
                 </div>
                 <div>
                   <div className="text-[10px] font-bold uppercase tracking-widest text-[#ADADAD] mb-2">Issues Found</div>
-                  {evalResult.issues.length === 0 ? (
-                    <p className="text-[13px] text-[#888]">No issues found</p>
-                  ) : evalResult.issues.map((item, i) => (
-                    <div key={i} className="text-[13px] text-red-600 py-1.5 border-b border-[#FEE2E2]">
-                      ✗ &nbsp;{item}
-                    </div>
-                  ))}
+                  {evalResult.issues.length === 0
+                    ? <p className="text-[13px] text-[#888]">No issues found</p>
+                    : evalResult.issues.map((item, i) => (
+                      <div key={i} className="text-[13px] text-red-600 py-1.5 border-b border-[#FEE2E2]">✗ &nbsp;{item}</div>
+                    ))
+                  }
                 </div>
               </div>
 
@@ -213,49 +238,52 @@ export function CallEvaluator({ config, appConfig, onResults }: Props) {
         </div>
       )}
 
-      {/* Call Simulation */}
+      {/* ══════════════════ SIMULATION TAB ══════════════════ */}
       {subTab === "simulation" && (
         <div>
-          <div className="mb-4">
-            <h2 className="text-[15px] font-bold text-[#111] mb-1">Call Simulation</h2>
-            <p className="text-[13px] text-[#888] leading-relaxed">
-              Runs the same smart patient simulation engine as the SMS tab — the agent logic is identical
-              for voice and SMS. Displays results in call transcript format.
-            </p>
-          </div>
-
-          <div className="bg-[#FFF7ED] border border-[#FED7AA] rounded-xl px-4 py-3 mb-5 text-[13px] text-[#92400E]">
-            <strong>Note:</strong> Call simulation uses the same SMS conversation engine (identical booking logic).
-            The simulation is free and functionally equivalent to a live call.
-          </div>
-
-          <div className="bg-white border border-[#EAEAEA] rounded-xl p-5 mb-4">
-            <div className="flex gap-5 items-end">
-              <div className="flex-1">
-                <label className="text-[10.5px] font-bold uppercase tracking-widest text-[#ADADAD] block mb-1.5">
-                  Scenario
-                </label>
-                <select
-                  value={simScenario}
-                  onChange={e => setSimScenario(e.target.value)}
-                  className="w-full border border-[#E5E5E5] rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:border-brand-500"
-                >
-                  {scenarios.map(s => (
-                    <option key={s.id} value={s.id}>{s.label}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="text-[10.5px] font-bold uppercase tracking-widest text-[#ADADAD] block mb-1.5">
-                  Runs
-                </label>
-                <input
-                  type="number" min={1} max={5} value={simRuns}
-                  onChange={e => setSimRuns(+e.target.value)}
-                  className="w-20 border border-[#E5E5E5] rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:border-brand-500"
-                />
-              </div>
+          {/* ── Mode toggle ── */}
+          <div className="flex items-center gap-3 mb-6">
+            <span className="text-[11px] font-bold uppercase tracking-widest text-[#ADADAD]">Mode</span>
+            <div className="flex rounded-xl overflow-hidden border border-[#E5E5E5] bg-[#FAFAF8]">
+              <button
+                onClick={() => { setSimMode("chat"); setSimError(""); setSimResults([]); }}
+                className={`flex items-center gap-2 px-5 py-2.5 text-[13px] font-semibold transition-colors ${
+                  simMode === "chat"
+                    ? "bg-brand-500 text-white"
+                    : "text-[#888] hover:text-[#333]"
+                }`}
+              >
+                <MessageSquare className="w-3.5 h-3.5" />
+                💬 Chat (SMS)
+              </button>
+              <button
+                onClick={() => { setSimMode("call"); setSimError(""); setCallDone(null); }}
+                className={`flex items-center gap-2 px-5 py-2.5 text-[13px] font-semibold transition-colors border-l border-[#E5E5E5] ${
+                  simMode === "call"
+                    ? "bg-[#1A1A1A] text-white"
+                    : "text-[#888] hover:text-[#333]"
+                }`}
+              >
+                <Phone className="w-3.5 h-3.5" />
+                📞 Call (Voice)
+              </button>
             </div>
+          </div>
+
+          {/* ── Scenario selector (shared) ── */}
+          <div className="bg-white border border-[#EAEAEA] rounded-xl p-5 mb-4">
+            <label className="text-[10.5px] font-bold uppercase tracking-widest text-[#ADADAD] block mb-1.5">
+              Scenario
+            </label>
+            <select
+              value={simScenario}
+              onChange={e => setSimScenario(e.target.value)}
+              className="w-full border border-[#E5E5E5] rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:border-brand-500"
+            >
+              {scenarios.map(s => (
+                <option key={s.id} value={s.id}>{s.label}</option>
+              ))}
+            </select>
           </div>
 
           {simError && (
@@ -264,18 +292,125 @@ export function CallEvaluator({ config, appConfig, onResults }: Props) {
             </div>
           )}
 
-          <button
-            onClick={handleSimRun}
-            disabled={simRunning}
-            className="flex items-center gap-2 bg-brand-500 hover:bg-brand-600 text-white font-semibold text-[14px] rounded-xl px-8 py-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed mb-6 shadow-sm"
-          >
-            <Play className="w-4 h-4" />
-            {simRunning ? "Running…" : "Run Call Simulation"}
-          </button>
+          {/* ════ CHAT MODE ════ */}
+          {simMode === "chat" && (
+            <div>
+              <div className="bg-[#FFF7ED] border border-[#FED7AA] rounded-xl px-4 py-3 mb-5 text-[13px] text-[#92400E]">
+                <strong>Chat simulation</strong> — AI patient texts the SMS agent via the live ADIT backend.
+                Includes real API calls (booking, rescheduling, cancellation).
+              </div>
 
-          {simResults.map((r, i) => (
-            <SimResultCard key={i} result={r} defaultExpanded />
-          ))}
+              <div className="flex items-center gap-3 mb-4">
+                <label className="text-[10.5px] font-bold uppercase tracking-widest text-[#ADADAD]">Runs</label>
+                <input
+                  type="number" min={1} max={5} value={simRuns}
+                  onChange={e => setSimRuns(+e.target.value)}
+                  className="w-20 border border-[#E5E5E5] rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:border-brand-500"
+                />
+              </div>
+
+              <button
+                onClick={handleChatRun}
+                disabled={simRunning}
+                className="flex items-center gap-2 bg-brand-500 hover:bg-brand-600 text-white font-semibold text-[14px] rounded-xl px-8 py-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed mb-6 shadow-sm"
+              >
+                <Play className="w-4 h-4" />
+                {simRunning ? "Running…" : "Run Chat Simulation"}
+              </button>
+
+              {simResults.map((r, i) => (
+                <SimResultCard key={i} result={r} defaultExpanded />
+              ))}
+            </div>
+          )}
+
+          {/* ════ CALL MODE ════ */}
+          {simMode === "call" && (
+            <div>
+              <div className="bg-[#F0F9F1] border border-[#BBE0C0] rounded-xl px-4 py-3 mb-5 text-[13px] text-[#1A4D24]">
+                <strong>Call simulation</strong> — LLM-to-LLM: GPT-4o plays the voice call agent using its
+                live Retell prompt; GPT-4o-mini plays a natural phone caller. No real booking calls are made.
+              </div>
+
+              {/* Call agent prompt configurator */}
+              <div className="bg-white border border-[#EAEAEA] rounded-xl p-4 mb-4">
+                <PromptConfigurator agentType="call" onLoad={handleCallPromptLoad} />
+                <details className="mt-3">
+                  <summary className="text-[11px] font-semibold text-[#ADADAD] cursor-pointer hover:text-[#888] select-none">
+                    Preview resolved prompt
+                  </summary>
+                  <textarea
+                    value={callPrompt}
+                    onChange={e => { setCallPrompt(e.target.value); callPromptRef.current = e.target.value; }}
+                    rows={6}
+                    placeholder="Loading call agent prompt…"
+                    className="mt-2 w-full border border-[#E5E5E5] rounded-xl px-4 py-3 text-[12px] text-[#555] resize-none focus:outline-none focus:border-brand-500"
+                  />
+                </details>
+              </div>
+
+              <button
+                onClick={handleCallRun}
+                disabled={callRunning || !config.openaiKey}
+                className="flex items-center gap-2 bg-[#1A1A1A] hover:bg-[#333] text-white font-semibold text-[14px] rounded-xl px-8 py-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed mb-5 shadow-sm"
+              >
+                <Phone className="w-4 h-4" />
+                {callRunning ? "Call in progress…" : "Start Call Simulation"}
+              </button>
+
+              {!config.openaiKey && (
+                <p className="text-[12px] text-red-500 mb-4">OpenAI key required in sidebar to run call simulation.</p>
+              )}
+
+              {/* Live call stream */}
+              {callStreamKey > 0 && (
+                <div className="mb-5">
+                  <LiveCall
+                    key={callStreamKey}
+                    params={{
+                      scenario_id: simScenario,
+                      call_agent_prompt: callPromptRef.current,
+                      openai_key: config.openaiKey,
+                      max_turns: 12,
+                    }}
+                    onDone={result => {
+                      setCallRunning(false);
+                      setCallDone(result);
+                    }}
+                    onError={msg => {
+                      setCallRunning(false);
+                      setSimError(msg);
+                    }}
+                  />
+                </div>
+              )}
+
+              {/* Post-call quick score */}
+              {callDone && (
+                <div className={`flex items-center gap-4 px-5 py-4 rounded-xl border mb-5 ${
+                  callDone.passed
+                    ? "bg-green-50 border-green-200"
+                    : "bg-red-50 border-red-200"
+                }`}>
+                  <div className="text-[26px]">{callDone.passed ? "✅" : "❌"}</div>
+                  <div>
+                    <div className={`text-[15px] font-bold ${callDone.passed ? "text-green-700" : "text-red-600"}`}>
+                      {callDone.passed ? "Call completed successfully" : "Call did not complete goal"}
+                    </div>
+                    <div className="text-[12.5px] text-[#888] mt-0.5">
+                      Outcome: {callDone.outcome.replace(/_/g, " ")}
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleCallRun}
+                    className="ml-auto flex items-center gap-1.5 text-[12px] font-semibold text-[#888] border border-[#E5E5E5] bg-white rounded-lg px-3 py-2 hover:border-[#ADADAD] transition-colors"
+                  >
+                    <RefreshCw className="w-3 h-3" /> Run again
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
