@@ -4,6 +4,7 @@ import { runParallel, extractContextFromImage } from "../api";
 import type { Config, AppConfig, SimResult } from "../types";
 import { SimResultCard } from "../components/SimResultCard";
 import { ManualSMS } from "../components/ManualSMS";
+import { PromptConfigurator } from "../components/PromptConfigurator";
 
 interface Props {
   config: Config;
@@ -108,6 +109,11 @@ export function Simulations({ config, appConfig, onResults, results }: Props) {
       {/* ══════════ AI SIMULATION TAB ══════════ */}
       {subTab === "ai" && (
         <>
+          {/* Prompt configurator — toggles update resolved prompt live */}
+          <div className="mb-4">
+            <PromptConfigurator />
+          </div>
+
           {/* Scenario picker */}
           <div className="bg-white border border-[#EAEAEA] rounded-xl p-5 mb-4">
             <div className="flex items-center justify-between mb-3">

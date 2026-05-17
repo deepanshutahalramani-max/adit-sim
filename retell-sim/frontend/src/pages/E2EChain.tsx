@@ -11,6 +11,7 @@ import { runChain } from "../api";
 import type { Config, SimResult } from "../types";
 import { SimResultCard } from "../components/SimResultCard";
 import { LiveWebCall, type LiveWebCallDoneResult } from "../components/LiveWebCall";
+import { PromptConfigurator } from "../components/PromptConfigurator";
 
 interface Props {
   config: Config;
@@ -181,6 +182,11 @@ export function E2EChain({ config, onResults, chainResults }: Props) {
             }
           </div>
         </div>
+      </div>
+
+      {/* Prompt configurator — reflects active channel, toggles update live */}
+      <div className="mb-6">
+        <PromptConfigurator agentType={channel === "call" ? "call" : undefined} />
       </div>
 
       {/* ══════════ SMS CHAIN ══════════ */}

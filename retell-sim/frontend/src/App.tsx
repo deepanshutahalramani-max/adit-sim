@@ -6,7 +6,6 @@ import { Sidebar } from "./components/Sidebar";
 import { SimulationsHub } from "./pages/SimulationsHub";
 import { E2EChain } from "./pages/E2EChain";
 import { DebugSuite } from "./pages/DebugSuite";
-import { CallEvaluator } from "./pages/CallEvaluator";
 import { Dashboard } from "./pages/Dashboard";
 import type { SimResult } from "./types";
 
@@ -14,7 +13,6 @@ const TABS = [
   { id: "debug",       label: "🔍 Debug Suite" },
   { id: "simulations", label: "💬 Simulations" },
   { id: "chain",       label: "E2E Chain" },
-  { id: "evaluator",   label: "Evaluator" },
   { id: "dashboard",   label: "Dashboard" },
 ] as const;
 
@@ -132,9 +130,6 @@ export default function App() {
                 onResults={(rs) => { setChainResults(rs); handleSmsResults(Object.values(rs)); }}
                 chainResults={chainResults}
               />
-            )}
-            {activeTab === "evaluator" && (
-              <CallEvaluator config={config} appConfig={appConfig} onResults={handleCallResults} />
             )}
             {activeTab === "dashboard" && (
               <Dashboard results={allResults} chainResults={chainResults} />
