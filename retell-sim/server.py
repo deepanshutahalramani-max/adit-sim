@@ -1281,34 +1281,83 @@ Return ONLY valid JSON (no markdown):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-@app.get("/api/retell/fetch-call-prompt")
-async def fetch_call_prompt():
-    """Fetches the live system prompt for the voice call agent."""
-    try:
-        agent_resp = await _retell_get(f"/get-agent/{RETELL_CALL_AGENT_ID}")
+async def _fetch_agent_prompt_data(agent_id: str) -> dict:
+    """
+    Robustly fetch an agent's system prompt from Retell.
+    Tries multiple API path variants to handle different agent channel types
+    (web_call, phone_call, messaging/SMS). Retell sometimes returns HTTP 200
+    with a JSON error body {"status":"error",...} for unsupported channel types,
+    so we check both HTTP status AND the response body.
+    """
+    errors: list[str] = []
+
+    for agent_path in [f"/get-agent/{agent_id}", f"/v2/get-agent/{agent_id}"]:
+        try:
+            agent_resp = await _retell_get(agent_path)
+        except Exception as exc:
+            errors.append(f"{agent_path}: request error — {exc}")
+            continue
+
         if agent_resp.status_code != 200:
-            raise HTTPException(status_code=502, detail=f"Retell call agent fetch failed: {agent_resp.text}")
-        agent_data = agent_resp.json()
+            errors.append(f"{agent_path}: HTTP {agent_resp.status_code}")
+            continue
+
+        try:
+            agent_data = agent_resp.json()
+        except Exception:
+            errors.append(f"{agent_path}: non-JSON response")
+            continue
+
+        # Retell returns 200 + JSON error body for wrong channel types
+        if isinstance(agent_data, dict) and agent_data.get("status") == "error":
+            errors.append(f"{agent_path}: {agent_data.get('message', 'API error')}")
+            continue
 
         llm_id = (
             agent_data.get("llm_id")
             or (agent_data.get("response_engine") or {}).get("llm_id")
         )
         if not llm_id:
-            raise HTTPException(status_code=502, detail=f"No llm_id in call agent response: {agent_data}")
+            errors.append(f"{agent_path}: no llm_id in response")
+            continue
 
-        llm_resp = await _retell_get(f"/get-retell-llm/{llm_id}")
-        if llm_resp.status_code != 200:
-            raise HTTPException(status_code=502, detail=f"Retell call LLM fetch failed: {llm_resp.text}")
-        llm_data = llm_resp.json()
+        # Try both LLM path variants too
+        for llm_path in [f"/get-retell-llm/{llm_id}", f"/v2/get-retell-llm/{llm_id}"]:
+            try:
+                llm_resp = await _retell_get(llm_path)
+                if llm_resp.status_code != 200:
+                    errors.append(f"{llm_path}: HTTP {llm_resp.status_code}")
+                    continue
+                llm_data = llm_resp.json()
+                if isinstance(llm_data, dict) and llm_data.get("status") == "error":
+                    errors.append(f"{llm_path}: {llm_data.get('message', 'API error')}")
+                    continue
+                prompt = (
+                    llm_data.get("general_prompt")
+                    or llm_data.get("system_prompt")
+                    or ""
+                )
+                return {
+                    "prompt": prompt,
+                    "llm_id": llm_id,
+                    "agent_id": agent_id,
+                    "model": llm_data.get("model", ""),
+                }
+            except Exception as exc:
+                errors.append(f"{llm_path}: {exc}")
+                continue
 
-        prompt = llm_data.get("general_prompt") or llm_data.get("system_prompt") or ""
-        return {
-            "prompt": prompt,
-            "llm_id": llm_id,
-            "agent_id": RETELL_CALL_AGENT_ID,
-            "model": llm_data.get("model", ""),
-        }
+    raise HTTPException(
+        status_code=502,
+        detail=f"Could not fetch agent prompt after trying multiple paths. Errors: {'; '.join(errors[-4:])}",
+    )
+
+
+@app.get("/api/retell/fetch-call-prompt")
+async def fetch_call_prompt():
+    """Fetches the live system prompt for the voice call agent."""
+    try:
+        return await _fetch_agent_prompt_data(RETELL_CALL_AGENT_ID)
     except HTTPException:
         raise
     except Exception as exc:
@@ -1317,35 +1366,9 @@ async def fetch_call_prompt():
 
 @app.get("/api/retell/fetch-prompt")
 async def fetch_retell_prompt():
-    """
-    Fetches the live system prompt from Retell for the SMS agent.
-    Retell agent → response_engine.llm_id → Retell LLM → general_prompt.
-    """
+    """Fetches the live system prompt from Retell for the SMS/chat agent."""
     try:
-        agent_resp = await _retell_get(f"/get-agent/{RETELL_AGENT_ID}")
-        if agent_resp.status_code != 200:
-            raise HTTPException(status_code=502, detail=f"Retell agent fetch failed: {agent_resp.text}")
-        agent_data = agent_resp.json()
-
-        llm_id = (
-            agent_data.get("llm_id")
-            or (agent_data.get("response_engine") or {}).get("llm_id")
-        )
-        if not llm_id:
-            raise HTTPException(status_code=502, detail=f"No llm_id found in agent response: {agent_data}")
-
-        llm_resp = await _retell_get(f"/get-retell-llm/{llm_id}")
-        if llm_resp.status_code != 200:
-            raise HTTPException(status_code=502, detail=f"Retell LLM fetch failed: {llm_resp.text}")
-        llm_data = llm_resp.json()
-
-        prompt = llm_data.get("general_prompt") or llm_data.get("system_prompt") or ""
-        return {
-            "prompt": prompt,
-            "llm_id": llm_id,
-            "agent_id": RETELL_AGENT_ID,
-            "model": llm_data.get("model", ""),
-        }
+        return await _fetch_agent_prompt_data(RETELL_AGENT_ID)
     except HTTPException:
         raise
     except Exception as exc:

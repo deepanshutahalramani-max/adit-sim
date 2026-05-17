@@ -38,7 +38,7 @@ export function PromptConfigurator({ onLoad, agentType = "chat", className = "" 
 
   /* ─── Resolve template → call onLoad ─── */
   const resolve = useCallback(async (tmpl: string, flags: PromptToggles) => {
-    if (!tmpl) return;
+    if (!tmpl.trim()) return;
     setResolving(true);
     try {
       const { prompt } = await resolvePrompt({ template: tmpl, ...flags });
@@ -77,6 +77,12 @@ export function PromptConfigurator({ onLoad, agentType = "chat", className = "" 
     resolve(template, next);
   };
 
+  /* ─── Manual textarea edit ─── */
+  const handleTemplateChange = (val: string) => {
+    setTemplate(val);
+    resolve(val, toggles);
+  };
+
   return (
     <div className={className}>
       {/* Header row */}
@@ -94,8 +100,12 @@ export function PromptConfigurator({ onLoad, agentType = "chat", className = "" 
         </button>
       </div>
 
+      {/* Amber warning on fetch error — still show textarea below for manual paste */}
       {error && (
-        <div className="text-[11px] text-red-500 mb-2">⚠ {error} — paste template manually if needed</div>
+        <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-2">
+          ⚠ Could not auto-fetch prompt — paste it manually below.
+          <span className="block text-[10px] text-amber-600 mt-0.5 font-mono">{error}</span>
+        </div>
       )}
 
       {/* Toggle rows */}
@@ -129,6 +139,16 @@ export function PromptConfigurator({ onLoad, agentType = "chat", className = "" 
           ? "Loading live Retell template…"
           : "Toggle capabilities above — prompt updates automatically. Edit manually if needed."}
       </div>
+
+      {/* Always-visible editable textarea — populated on fetch, or paste manually */}
+      <textarea
+        value={template}
+        onChange={e => handleTemplateChange(e.target.value)}
+        placeholder={loading ? "Loading…" : "Paste the Retell system prompt here…"}
+        rows={8}
+        className="w-full text-[11px] font-mono border border-[#E5E5E5] rounded-lg px-3 py-2 resize-y bg-white text-[#333] focus:outline-none focus:ring-1 focus:ring-brand-400 disabled:opacity-50"
+        disabled={loading}
+      />
     </div>
   );
 }
