@@ -201,6 +201,11 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
 
   return (
     <div>
+      {/* ── Prompt configurator — always visible, shared across all sub-tabs ── */}
+      <div className="mb-5">
+        <PromptConfigurator agentType="call" onLoad={handlePromptLoad} />
+      </div>
+
       {/* ── Sub-tab bar ── */}
       <div className="flex border-b border-[#EAEAEA] mb-6">
         {([
@@ -384,10 +389,6 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
       {/* ══════════ AI SIM TAB (existing LLM-to-LLM) ══════════ */}
       {subTab === "ai-sim" && (
         <div>
-          <div className="bg-white border border-[#EAEAEA] rounded-xl p-5 mb-5">
-            <PromptConfigurator agentType="call" onLoad={handlePromptLoad} />
-          </div>
-
           {ContextBox}
 
           <div className="flex gap-2 mb-6">
