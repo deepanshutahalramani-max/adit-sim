@@ -165,6 +165,16 @@ SCENARIOS: dict[str, dict] = {
     "post-treatment-followup":{"label": "💊 Post-Treatment Follow-up",   "goal": "Report sensitivity after treatment and book a follow-up check as an existing patient", "opener": "I had a filling done last week and it's still sensitive to cold, I need a follow-up", "type": "book", "persona_idx": 2},
 }
 
+# Scenarios that require an existing patient record in the backend.
+# The runner will automatically book a new-patient appointment first (same phone),
+# then run the main scenario with the same patient credentials.
+REQUIRES_PRIOR_BOOKING: frozenset[str] = frozenset({
+    "existing-routine",
+    "reschedule",
+    "cancel",
+    "post-treatment-followup",
+})
+
 # ── Data classes ──────────────────────────────────────────────────────────────
 @dataclass
 class Turn:
@@ -436,10 +446,37 @@ def _run_simulation_sync(
     oai_key: str, use_judge: bool = True, reuse_phone: Optional[str] = None,
     extra_context: str = "",
     persona_override: Optional[PatientPersona] = None,
+    auto_prereq: bool = True,
 ) -> SimResult:
     config = SCENARIOS.get(scenario_id)
     if not config:
         raise ValueError(f"Unknown scenario: {scenario_id}")
+
+    # ── Two-phase: for existing-patient scenarios, silently book a new patient
+    # first (same phone number) so the backend has a real record to find.
+    if auto_prereq and scenario_id in REQUIRES_PRIOR_BOOKING and persona_override is None:
+        prereq_phone = reuse_phone or _phone()
+        _run_simulation_sync(
+            "new-patient-cleaning", api_base, token, agent_phone, oai_key,
+            use_judge=False, reuse_phone=prereq_phone,
+            extra_context="", persona_override=None, auto_prereq=False,
+        )
+        reuse_phone = prereq_phone
+        # Pass the same name/DOB that was just registered, but with the
+        # existing-patient scenario's reason/preferred-time.
+        booking_p   = PERSONAS[SCENARIOS["new-patient-cleaning"]["persona_idx"]]
+        sc_persona  = PERSONAS[config["persona_idx"]]
+        persona_override = PatientPersona(
+            first_name=booking_p.first_name,
+            last_name=booking_p.last_name,
+            dob=booking_p.dob,
+            insurance=booking_p.insurance,
+            reason=sc_persona.reason,
+            preferred_day=sc_persona.preferred_day,
+            preferred_time=sc_persona.preferred_time,
+            is_new=False,
+        )
+
     persona = _resolve_persona(config, persona_override)
     patient_phone = reuse_phone or _phone()
     turns: list[Turn] = []
@@ -670,6 +707,7 @@ def simulate_chain(req: ChainRequest):
             scenario_id, req.api_base, req.bearer_token,
             req.agent_phone, req.openai_key, reuse_phone=phone,
             persona_override=chained_persona,
+            auto_prereq=False,  # chain manages its own sequencing
         )
         # After the booking step succeeds, carry the same patient (now existing)
         # forward so reschedule / cancel use the same name + DOB the backend just stored.
@@ -1065,9 +1103,32 @@ def _run_call_simulation_sync(
     max_turns: int = 12,
     extra_context: str = "",
     persona_override: Optional[PatientPersona] = None,
+    auto_prereq: bool = True,
 ) -> SimResult:
     """LLM-to-LLM call simulation — returns a SimResult (no streaming)."""
     config = SCENARIOS.get(scenario_id, SCENARIOS["new-patient-cleaning"])
+
+    # ── Two-phase: for existing-patient call scenarios, run a new-patient
+    # booking simulation first so the LLM agent believes a patient exists.
+    if auto_prereq and scenario_id in REQUIRES_PRIOR_BOOKING and persona_override is None:
+        _run_call_simulation_sync(
+            "new-patient-cleaning", call_agent_prompt, oai_key,
+            max_turns=max_turns, extra_context="",
+            persona_override=None, auto_prereq=False,
+        )
+        booking_p   = PERSONAS[SCENARIOS["new-patient-cleaning"]["persona_idx"]]
+        sc_persona  = PERSONAS[config["persona_idx"]]
+        persona_override = PatientPersona(
+            first_name=booking_p.first_name,
+            last_name=booking_p.last_name,
+            dob=booking_p.dob,
+            insurance=booking_p.insurance,
+            reason=sc_persona.reason,
+            preferred_day=sc_persona.preferred_day,
+            preferred_time=sc_persona.preferred_time,
+            is_new=False,
+        )
+
     persona = _resolve_persona(config, persona_override)
     patient_phone = _phone()
     goal = config["goal"]
@@ -1219,7 +1280,29 @@ async def stream_call(req: StreamCallRequest):
     async def gen():
         loop = asyncio.get_event_loop()
         config = SCENARIOS.get(req.scenario_id, SCENARIOS["new-patient-cleaning"])
-        persona = _resolve_persona(config)   # uses registered patient for existing-patient scenarios
+
+        # Two-phase: for existing-patient scenarios, run the booking prereq first
+        prereq_persona: Optional[PatientPersona] = None
+        if req.scenario_id in REQUIRES_PRIOR_BOOKING and not req.repro_opener:
+            yield f"data: {json.dumps({'type': 'status', 'message': '⏳ Running prerequisite new-patient booking…'})}\n\n"
+            booking_p  = PERSONAS[SCENARIOS["new-patient-cleaning"]["persona_idx"]]
+            sc_persona = PERSONAS[config["persona_idx"]]
+            prereq_persona = PatientPersona(
+                first_name=booking_p.first_name, last_name=booking_p.last_name,
+                dob=booking_p.dob, insurance=booking_p.insurance,
+                reason=sc_persona.reason, preferred_day=sc_persona.preferred_day,
+                preferred_time=sc_persona.preferred_time, is_new=False,
+            )
+            await loop.run_in_executor(
+                None,
+                lambda: _run_call_simulation_sync(
+                    "new-patient-cleaning", req.call_agent_prompt, req.openai_key,
+                    req.max_turns, extra_context="",
+                    persona_override=None, auto_prereq=False,
+                ),
+            )
+
+        persona = _resolve_persona(config, prereq_persona)
         patient_phone = _phone()
         # Repro mode overrides goal; otherwise use scenario goal
         goal = f"Reproduce: {req.root_cause}" if req.root_cause else config["goal"]
