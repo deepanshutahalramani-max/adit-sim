@@ -234,6 +234,8 @@ export async function smsSend(params: {
 export async function createWebCall(params?: {
   agent_id?: string;
   agent_phone?: string;
+  scenario_id?: string;
+  mode?: string;
 }): Promise<{ call_id: string; access_token: string; agent_id: string }> {
   return post("/retell/create-web-call", params ?? {});
 }

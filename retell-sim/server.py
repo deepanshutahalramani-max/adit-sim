@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import httpx
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
 
 # ── Retell API base URL ───────────────────────────────────────────────────────
 _RETELL_BASE = "https://api.retellai.com"
@@ -357,7 +357,7 @@ def _llm_judge(scenario_label, turns, oai_key):
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": (
-                    "You are a QA evaluator for a dental front-desk AI SMS agent called Siriyaa.\n"
+                    "You are a QA evaluator for a dental front-desk AI SMS agent.\n"
                     "This agent has two valid completion paths:\n"
                     "  A) DIRECT BOOKING: agent books appointment and gives confirmation\n"
                     "  B) TASK CREATION: agent cannot book directly, collects patient info, creates a task/note for human team\n"
@@ -382,7 +382,7 @@ def _llm_judge(scenario_label, turns, oai_key):
         return 60, f"Judge error: {e}"
 
 def _infer_api_events(agent_msg: str, latency_ms: int, turn_num: int) -> list[str]:
-    """Detect which internal Siriyaa APIs were likely called based on message content + latency."""
+    """Detect which internal agent APIs were likely called based on message content + latency."""
     events = []
     m = agent_msg.lower()
 
@@ -658,6 +658,7 @@ def get_config():
 
 @app.post("/api/simulate")
 def simulate(req: SimRequest):
+    req.openai_key = _resolve_openai_key(req.openai_key)
     try:
         result = _run_simulation_sync(
             req.scenario_id, req.api_base, req.bearer_token,
@@ -672,6 +673,7 @@ def simulate(req: SimRequest):
 
 @app.post("/api/simulate/parallel")
 def simulate_parallel(req: ParallelSimRequest):
+    req.openai_key = _resolve_openai_key(req.openai_key)
     tasks = [(sid, i) for sid in req.scenario_ids for i in range(req.repeats)]
     results = []
     with ThreadPoolExecutor(max_workers=min(req.max_parallel, MAX_PARALLEL)) as ex:
@@ -698,6 +700,7 @@ def simulate_chain(req: ChainRequest):
     Step 1 books as a new patient. Steps 2-3 reuse the SAME patient details
     (same phone + same persona marked is_new=False) so the backend can find them.
     """
+    req.openai_key = _resolve_openai_key(req.openai_key)
     phone = _phone()
     chain = {}
     chained_persona: Optional[PatientPersona] = None
@@ -738,7 +741,7 @@ async def debug_analyze(
         prompt_block = f"\n\nSYSTEM PROMPT (full Retell agent prompt):\n```\n{system_prompt}\n```" if system_prompt.strip() else ""
         context_block = f"\n\nADDITIONAL CONTEXT FROM TESTER: {extra_context}" if extra_context.strip() else ""
 
-        analysis_prompt = f"""You are a senior QA engineer debugging Siriyaa, an AI dental front-desk SMS receptionist.
+        analysis_prompt = f"""You are a senior QA engineer debugging an AI dental front-desk SMS receptionist.
 
 Analyze the conversation screenshot and identify exactly what went wrong.{prompt_block}{context_block}
 
@@ -789,7 +792,7 @@ def debug_analyze_text(req: AnalyzeTextRequest):
         prompt_block = f"\n\nSYSTEM PROMPT (full Retell agent prompt):\n```\n{req.system_prompt}\n```" if req.system_prompt.strip() else ""
         context_block = f"\n\nADDITIONAL CONTEXT FROM TESTER: {req.extra_context}" if req.extra_context.strip() else ""
 
-        analysis_prompt = f"""You are a senior QA engineer debugging Siriyaa, an AI dental front-desk SMS receptionist.
+        analysis_prompt = f"""You are a senior QA engineer debugging an AI dental front-desk SMS receptionist.
 
 A client has escalated this issue:{prompt_block}{context_block}
 
@@ -828,6 +831,7 @@ Return ONLY valid JSON (no markdown, no explanation):
 
 @app.post("/api/debug/validate")
 def debug_validate(req: ValidationRequest):
+    req.openai_key = _resolve_openai_key(req.openai_key)
     # Temporarily inject a custom repro scenario
     repro_id = "debug-repro"
     SCENARIOS[repro_id] = {
@@ -856,7 +860,7 @@ def evaluate_transcript(req: TranscriptRequest):
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": (
-                    "You are a QA evaluator for Siriyaa, an AI dental front desk agent.\n"
+                    "You are a QA evaluator for an AI dental front desk agent.\n"
                     "Evaluate this transcript and return ONLY valid JSON:\n"
                     "{\n"
                     "  \"score\": 0-100,\n"
@@ -921,6 +925,7 @@ def run_generated_scenario(
     agent_phone: str = Form(DEFAULT_AGENT_PHONE),
     openai_key: str = Form(""),
 ):
+    openai_key = _resolve_openai_key(openai_key)
     gen_id = "generated-" + scenario_name.lower().replace(" ", "-")[:30]
     SCENARIOS[gen_id] = {
         "label": scenario_name,
@@ -974,7 +979,7 @@ RUNTIME_DEFAULTS: dict[str, str] = {
     "{{current_day}}":         _now.strftime("%A"),
     "{{current_date}}":        _now.strftime("%B %d, %Y"),
     "{{current_year}}":        str(_now.year),
-    "{{current_time}}":        _now.strftime("%-I:%M %p"),
+    "{{current_time}}":        _now.strftime("%I:%M %p").lstrip("0"),
 }
 
 def _fill_runtime_placeholders(prompt: str) -> str:
@@ -1104,6 +1109,7 @@ def _run_call_simulation_sync(
     extra_context: str = "",
     persona_override: Optional[PatientPersona] = None,
     auto_prereq: bool = True,
+    reuse_phone: Optional[str] = None,
 ) -> SimResult:
     """LLM-to-LLM call simulation — returns a SimResult (no streaming)."""
     config = SCENARIOS.get(scenario_id, SCENARIOS["new-patient-cleaning"])
@@ -1111,11 +1117,14 @@ def _run_call_simulation_sync(
     # ── Two-phase: for existing-patient call scenarios, run a new-patient
     # booking simulation first so the LLM agent believes a patient exists.
     if auto_prereq and scenario_id in REQUIRES_PRIOR_BOOKING and persona_override is None:
+        prereq_phone = reuse_phone or _phone()
         _run_call_simulation_sync(
             "new-patient-cleaning", call_agent_prompt, oai_key,
             max_turns=max_turns, extra_context="",
             persona_override=None, auto_prereq=False,
+            reuse_phone=prereq_phone,
         )
+        reuse_phone = prereq_phone
         booking_p   = PERSONAS[SCENARIOS["new-patient-cleaning"]["persona_idx"]]
         sc_persona  = PERSONAS[config["persona_idx"]]
         persona_override = PatientPersona(
@@ -1130,14 +1139,14 @@ def _run_call_simulation_sync(
         )
 
     persona = _resolve_persona(config, persona_override)
-    patient_phone = _phone()
+    patient_phone = reuse_phone or _phone()
     goal = config["goal"]
 
     system_prompt = (
         _fill_runtime_placeholders(call_agent_prompt)
         if call_agent_prompt.strip()
         else (
-            "You are Siriyaa, an AI voice receptionist for a dental office. "
+            "You are an AI voice receptionist for a dental office. "
             "Help callers book, reschedule, or cancel appointments warmly and efficiently."
         )
     )
@@ -1275,10 +1284,11 @@ async def stream_call(req: StreamCallRequest):
     One GPT-4o instance plays the call agent (using its live Retell prompt).
     One GPT-4o-mini instance plays the patient caller.
     """
+    req.openai_key = _resolve_openai_key(req.openai_key)
     from fastapi.responses import StreamingResponse as SR
 
     async def gen():
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         config = SCENARIOS.get(req.scenario_id, SCENARIOS["new-patient-cleaning"])
 
         # Two-phase: for existing-patient scenarios, run the booking prereq first
@@ -1308,7 +1318,7 @@ async def stream_call(req: StreamCallRequest):
         goal = f"Reproduce: {req.root_cause}" if req.root_cause else config["goal"]
 
         system_prompt = _fill_runtime_placeholders(req.call_agent_prompt) if req.call_agent_prompt.strip() else (
-            "You are Siriyaa, an AI voice receptionist for a dental office. "
+            "You are an AI voice receptionist for a dental office. "
             "Help callers book, reschedule, or cancel appointments warmly and efficiently."
         )
 
@@ -1419,7 +1429,7 @@ async def debug_analyze_call_screenshot(
         prompt_block = f"\n\nCALL AGENT SYSTEM PROMPT:\n```\n{system_prompt}\n```" if system_prompt.strip() else ""
         context_block = f"\n\nADDITIONAL CONTEXT: {extra_context}" if extra_context.strip() else ""
 
-        analysis_prompt = f"""You are a senior QA engineer debugging Siriyaa, an AI dental front-desk VOICE CALL agent.
+        analysis_prompt = f"""You are a senior QA engineer debugging an AI dental front-desk VOICE CALL agent.
 
 Analyze the screenshot — it may show a call transcript, a call recording interface, a conversation log, or any call-related issue.{prompt_block}{context_block}
 
@@ -1476,7 +1486,7 @@ def debug_analyze_call(req: AnalyzeCallRequest):
         prompt_block = f"\n\nCALL AGENT SYSTEM PROMPT:\n```\n{req.system_prompt}\n```" if req.system_prompt.strip() else ""
         context_block = f"\n\nADDITIONAL CONTEXT: {req.extra_context}" if req.extra_context.strip() else ""
 
-        analysis_prompt = f"""You are a senior QA engineer debugging Siriyaa, an AI dental front-desk VOICE CALL agent.
+        analysis_prompt = f"""You are a senior QA engineer debugging an AI dental front-desk VOICE CALL agent.
 
 Analyze this call transcript and identify exactly what the voice agent did wrong.{prompt_block}{context_block}
 
@@ -2018,6 +2028,7 @@ class RegressionRequest(BaseModel):
 @app.post("/api/debug/regression")
 def run_regression(req: RegressionRequest):
     """Run all (or specified) scenarios in parallel and return pass/fail summary."""
+    req.openai_key = _resolve_openai_key(req.openai_key)
     ids = req.scenario_ids if req.scenario_ids else list(SCENARIOS.keys())
     results = []
     with ThreadPoolExecutor(max_workers=min(8, len(ids))) as ex:
@@ -2060,10 +2071,11 @@ class StreamReproRequest(BaseModel):
 @app.post("/api/simulate/stream-repro")
 async def stream_repro(req: StreamReproRequest):
     """Stream a single repro simulation as Server-Sent Events."""
+    req.openai_key = _resolve_openai_key(req.openai_key)
     from fastapi.responses import StreamingResponse as SR
 
     async def gen():
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         patient_phone = _phone()
         turns: list[Turn] = []
         chat_id = None

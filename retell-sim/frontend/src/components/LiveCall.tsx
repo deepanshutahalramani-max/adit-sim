@@ -50,6 +50,7 @@ export function LiveCall({ params, onDone, onError }: Props) {
   const agentName = useAgentName();
   const [messages, setMessages] = useState<CallMsg[]>([]);
   const [status, setStatus] = useState<"connecting" | "running" | "done" | "error">("connecting");
+  const [statusMsg, setStatusMsg] = useState<string>("");
   const [outcome, setOutcome] = useState<{ passed: boolean; label: string } | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
   const [elapsed, setElapsed] = useState(0);
@@ -120,7 +121,10 @@ export function LiveCall({ params, onDone, onError }: Props) {
 
             const ts = Math.floor((Date.now() - startRef.current) / 1000);
 
-            if (ev.type === "patient") {
+            if (ev.type === "status") {
+              setStatusMsg(ev.message as string);
+            } else if (ev.type === "patient") {
+              setStatusMsg("");
               setMessages(m => [...m, { role: "patient", message: ev.message as string, ts }]);
             } else if (ev.type === "agent") {
               setMessages(m => [...m, {
@@ -212,13 +216,29 @@ export function LiveCall({ params, onDone, onError }: Props) {
         </div>
       </div>
 
+      {/* ── Prereq status banner ── */}
+      {statusMsg && (
+        <div className="px-4 py-2 bg-amber-50 border-b border-amber-200 flex items-center gap-2">
+          <div className="w-3 h-3 border-2 border-amber-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+          <span className="text-[12px] text-amber-700 font-medium">{statusMsg}</span>
+        </div>
+      )}
+
       {/* ── Transcript window ── */}
       <div className="h-80 overflow-y-auto p-4 space-y-3 bg-[#F7F7F5]">
-        {status === "connecting" && (
+        {status === "connecting" && !statusMsg && (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
               <div className="w-10 h-10 border-[3px] border-[#22C55E] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
               <div className="text-[13px] text-[#888]">Connecting call…</div>
+            </div>
+          </div>
+        )}
+        {status === "connecting" && statusMsg && messages.length === 0 && (
+          <div className="flex items-center justify-center h-full">
+            <div className="text-center">
+              <div className="w-10 h-10 border-[3px] border-amber-400 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+              <div className="text-[13px] text-[#888]">Setting up scenario…</div>
             </div>
           </div>
         )}
