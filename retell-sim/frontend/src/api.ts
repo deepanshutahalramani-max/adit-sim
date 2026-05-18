@@ -247,6 +247,7 @@ export async function fetchAgentInfo(
   call_agent_id: string;
   sms_agent_name: string;
   call_agent_name: string;
+  persona_name: string;
 }> {
   const params = new URLSearchParams();
   if (agentPhone)  params.set("agent_phone",   agentPhone);

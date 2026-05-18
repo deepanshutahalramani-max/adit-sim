@@ -11,6 +11,7 @@ import base64
 import json
 import os
 import random
+import re
 import string
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -2114,6 +2115,20 @@ async def create_web_call(req: CreateWebCallRequest):
         raise HTTPException(status_code=502, detail=f"Retell web call creation failed: {exc}")
 
 
+def _extract_persona_name(prompt_text: str) -> str:
+    """
+    Pull the AI persona name from a Retell system prompt.
+    Matches patterns like 'You are Cimo,' or 'You are Siriyaa the...'
+    Returns title-cased first word after 'you are', or "" if not found.
+    """
+    if not prompt_text:
+        return ""
+    m = re.search(r"you\s+are\s+([A-Za-z][A-Za-z'-]*)", prompt_text, re.IGNORECASE)
+    if m:
+        return m.group(1).strip().title()
+    return ""
+
+
 @app.get("/api/retell/agent-info")
 async def get_agent_info(
     agent_phone: Optional[str] = None,
@@ -2121,13 +2136,12 @@ async def get_agent_info(
     call_agent_id: Optional[str] = None,
 ):
     """
-    Returns display info (name, id) for the agent.
+    Returns display info (name, id, persona_name) for the agent.
     Priority: explicit agent IDs > phone lookup > hardcoded defaults.
+    persona_name is extracted from 'You are [Name]' in the system prompt.
     """
     sms_id  = RETELL_AGENT_ID
     call_id = RETELL_CALL_AGENT_ID
-    sms_name  = "Siriyaa"
-    call_name = "Siriyaa"
 
     if sms_agent_id:
         sms_id = sms_agent_id
@@ -2143,8 +2157,8 @@ async def get_agent_info(
         if resolved_voice:
             call_id = resolved_voice
 
-    # Fetch display names from Retell
-    async def _get_name(aid: str, channel: str) -> str:
+    # Fetch dashboard names from Retell
+    async def _get_dashboard_name(aid: str, channel: str) -> str:
         try:
             path = f"/get-chat-agent/{aid}" if channel == "chat" else f"/get-agent/{aid}"
             r = await _retell_get(path)
@@ -2156,14 +2170,40 @@ async def get_agent_info(
             pass
         return ""
 
-    sms_name_fetched  = await _get_name(sms_id, "chat")
-    call_name_fetched = await _get_name(call_id, "voice")
+    # Fetch persona name from the SMS agent's LLM prompt
+    async def _get_persona_name(aid: str, channel: str) -> str:
+        try:
+            path = f"/get-chat-agent/{aid}" if channel == "chat" else f"/get-agent/{aid}"
+            r = await _retell_get(path)
+            if r.status_code != 200:
+                return ""
+            agent_data = r.json()
+            llm_id = (
+                agent_data.get("llm_id")
+                or (agent_data.get("response_engine") or {}).get("llm_id")
+            )
+            if not llm_id:
+                return ""
+            errors: list[str] = []
+            llm_result = await _fetch_llm_prompt(llm_id, aid, errors)
+            if llm_result:
+                return _extract_persona_name(llm_result.get("prompt", ""))
+        except Exception:
+            pass
+        return ""
+
+    sms_name, call_name, persona_name = await asyncio.gather(
+        _get_dashboard_name(sms_id, "chat"),
+        _get_dashboard_name(call_id, "voice"),
+        _get_persona_name(sms_id, "chat"),
+    )
 
     return {
         "sms_agent_id":   sms_id,
         "call_agent_id":  call_id,
-        "sms_agent_name":  sms_name_fetched  or sms_name,
-        "call_agent_name": call_name_fetched or call_name,
+        "sms_agent_name":  sms_name  or "Agent",
+        "call_agent_name": call_name or "Agent",
+        "persona_name":    persona_name or "",
     }
 
 

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import clsx from "clsx";
 import type { SimResult } from "../types";
+import { useAgentName } from "../context/AgentNameContext";
 
 const OUTCOME_META: Record<string, { icon: string; label: string; color: string; bg: string; border: string }> = {
   booking_confirmed: { icon: "📅", label: "Booking Confirmed",  color: "#059669", bg: "#F0FDF4", border: "#BBF7D0" },
@@ -23,6 +24,7 @@ interface Props {
 
 export function SimResultCard({ result: r, defaultExpanded = false }: Props) {
   const [expanded, setExpanded] = useState(defaultExpanded);
+  const agentName = useAgentName();
   const meta = OUTCOME_META[r.outcome_type] ?? { icon: "", label: "", color: "#888", bg: "#FAFAF8", border: "#EAEAEA" };
   const nTurns = Math.floor(r.turns.length / 2);
   const statusIcon = r.passed ? "✅" : "❌";
@@ -120,7 +122,7 @@ export function SimResultCard({ result: r, defaultExpanded = false }: Props) {
                         </div>
                         <div className="text-right">
                           <div className="text-[10px] font-bold text-[#D4620A] uppercase tracking-widest mb-1">
-                            Siriyaa {t.latency_ms ? <span className="text-[#ADADAD] normal-case font-normal">· {t.latency_ms.toLocaleString()}ms</span> : null}
+                            {agentName} {t.latency_ms ? <span className="text-[#ADADAD] normal-case font-normal">· {t.latency_ms.toLocaleString()}ms</span> : null}
                           </div>
                           <div className="agent-bubble">{t.message}</div>
                         </div>

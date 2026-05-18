@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { fetchConfig, fetchAgentInfo } from "./api";
 import type { Config } from "./types";
 import { Sidebar } from "./components/Sidebar";
+import { AgentNameContext } from "./context/AgentNameContext";
 import { SimulationsHub } from "./pages/SimulationsHub";
 import { E2EChain } from "./pages/E2EChain";
 import { DebugSuite } from "./pages/DebugSuite";
@@ -66,7 +67,8 @@ export default function App() {
     retry: false,
     enabled: !!(config.smsAgentId || config.callAgentId || config.agentPhone),
   });
-  const agentName = agentInfo?.call_agent_name || agentInfo?.sms_agent_name || "—";
+  // Persona name ("Cimo") > dashboard name ("Test Agents…") > fallback
+  const agentName = agentInfo?.persona_name || agentInfo?.call_agent_name || agentInfo?.sms_agent_name || "—";
 
   const handleSmsResults = (rs: SimResult[]) => {
     if (rs.length === 0) setSmsResults([]);
@@ -81,6 +83,7 @@ export default function App() {
   const allResults = [...smsResults, ...callResults];
 
   return (
+    <AgentNameContext.Provider value={agentName}>
     <div className="flex h-screen bg-[#FAFAF8] overflow-hidden">
       <Sidebar config={config} onChange={setConfig} agentName={agentName} />
 
@@ -168,5 +171,6 @@ export default function App() {
         </main>
       </div>
     </div>
+    </AgentNameContext.Provider>
   );
 }

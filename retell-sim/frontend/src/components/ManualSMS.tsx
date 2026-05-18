@@ -7,6 +7,7 @@ import { useState, useRef, useEffect } from "react";
 import { Send, RefreshCw, MessageSquare } from "lucide-react";
 import clsx from "clsx";
 import { smsStart, smsSend } from "../api";
+import { useAgentName } from "../context/AgentNameContext";
 
 interface Props {
   config: {
@@ -25,6 +26,7 @@ interface Msg {
 }
 
 export function ManualSMS({ config }: Props) {
+  const agentName = useAgentName();
   const [messages, setMessages]     = useState<Msg[]>([]);
   const [input, setInput]           = useState("");
   const [sending, setSending]       = useState(false);
@@ -138,7 +140,7 @@ export function ManualSMS({ config }: Props) {
           <MessageSquare className="w-[18px] h-[18px] text-white" />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-[13px] font-bold text-white leading-tight">Siriyaa · Dental Office</div>
+          <div className="text-[13px] font-bold text-white leading-tight">{agentName} · Dental Office</div>
           <div className="text-[11px] text-white/60 mt-0.5">
             {!started ? "Type a message to start" : sessionDone ? "Session complete" : "Connected · Real SMS agent"}
           </div>
@@ -164,7 +166,7 @@ export function ManualSMS({ config }: Props) {
             <div className="w-12 h-12 rounded-full bg-[#25D366] flex items-center justify-center mb-3">
               <MessageSquare className="w-6 h-6 text-white" />
             </div>
-            <div className="text-[13px] font-semibold text-[#555]">Chat with the real Siriyaa SMS agent</div>
+            <div className="text-[13px] font-semibold text-[#555]">Chat with the real {agentName} SMS agent</div>
             <div className="text-[12px] text-[#888] mt-1">Type your first message below to begin</div>
           </div>
         )}

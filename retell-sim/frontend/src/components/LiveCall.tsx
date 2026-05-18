@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Phone, PhoneOff } from "lucide-react";
 import clsx from "clsx";
+import { useAgentName } from "../context/AgentNameContext";
 
 export interface LiveCallParams {
   scenario_id: string;
@@ -46,6 +47,7 @@ function formatTime(s: number) {
 }
 
 export function LiveCall({ params, onDone, onError }: Props) {
+  const agentName = useAgentName();
   const [messages, setMessages] = useState<CallMsg[]>([]);
   const [status, setStatus] = useState<"connecting" | "running" | "done" | "error">("connecting");
   const [outcome, setOutcome] = useState<{ passed: boolean; label: string } | null>(null);
@@ -197,7 +199,7 @@ export function LiveCall({ params, onDone, onError }: Props) {
           <div className="text-[11px] text-white/50 mt-0.5">
             {status === "done" || status === "error"
               ? `Duration ${formatTime(elapsed)}`
-              : "Dental Office — Siriyaa AI"}
+              : `Dental Office — ${agentName} AI`}
           </div>
         </div>
 
@@ -262,7 +264,7 @@ export function LiveCall({ params, onDone, onError }: Props) {
                     {m.latency_ms ? (
                       <span className="text-[9px] text-[#ADADAD]">{m.latency_ms}ms</span>
                     ) : null}
-                    <span className="text-[9.5px] font-bold uppercase tracking-widest text-[#3B8A4A]">Siriyaa</span>
+                    <span className="text-[9.5px] font-bold uppercase tracking-widest text-[#3B8A4A]">{agentName}</span>
                   </div>
                   <div className="bg-[#EAF6EB] border border-[#C6E8CA] rounded-2xl rounded-tr-sm px-3.5 py-2 text-[13px] text-[#1A3D1E] max-w-[300px] shadow-sm text-left">
                     {m.message}

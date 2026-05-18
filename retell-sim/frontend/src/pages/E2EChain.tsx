@@ -12,6 +12,7 @@ import type { Config, SimResult } from "../types";
 import { SimResultCard } from "../components/SimResultCard";
 import { LiveWebCall, type LiveWebCallDoneResult } from "../components/LiveWebCall";
 import { PromptConfigurator } from "../components/PromptConfigurator";
+import { useAgentName } from "../context/AgentNameContext";
 
 interface Props {
   config: Config;
@@ -29,6 +30,7 @@ type Channel = "sms" | "call";
 type CallPhase = 0 | 1 | 2 | 3 | 4; // 0=idle, 1-3=active phase, 4=done
 
 export function E2EChain({ config, onResults, chainResults }: Props) {
+  const agentName = useAgentName();
   const [channel, setChannel] = useState<Channel>("sms");
 
   /* ── SMS chain ── */
@@ -358,7 +360,7 @@ export function E2EChain({ config, onResults, chainResults }: Props) {
                       <div className="space-y-1.5 max-h-48 overflow-y-auto">
                         {r.transcript.map((t, i) => (
                           <div key={i} className={`flex gap-2 text-[12.5px] ${t.role === "agent" ? "text-green-800" : "text-[#555]"}`}>
-                            <span className="font-bold flex-shrink-0 w-16">{t.role === "agent" ? "Siriyaa" : "Caller"}:</span>
+                            <span className="font-bold flex-shrink-0 w-16">{t.role === "agent" ? agentName : "Caller"}:</span>
                             <span>{t.content}</span>
                           </div>
                         ))}

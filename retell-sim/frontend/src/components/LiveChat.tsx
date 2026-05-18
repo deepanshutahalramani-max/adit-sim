@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from "react";
 import clsx from "clsx";
 import type { ApiCall } from "../types";
+import { useAgentName } from "../context/AgentNameContext";
 
 export interface LiveChatParams {
   repro_opener: string;
@@ -37,6 +38,7 @@ interface Props {
 }
 
 export function LiveChat({ params, onDone, onError }: Props) {
+  const agentName = useAgentName();
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [apiCalls, setApiCalls] = useState<ApiCall[]>([]);
   const [status, setStatus] = useState<"connecting" | "running" | "done" | "error">("connecting");
@@ -177,7 +179,7 @@ export function LiveChat({ params, onDone, onError }: Props) {
                 <div className="w-6 h-6 bg-[#FFF3E8] rounded-full flex items-center justify-center text-[12px] flex-shrink-0 mt-0.5">🤖</div>
                 <div className="text-right">
                   <div className="text-[9.5px] font-bold uppercase tracking-widest text-[#D4620A] mb-1">
-                    Siriyaa {m.latency_ms ? <span className="text-[#ADADAD] normal-case font-normal">· {m.latency_ms}ms</span> : null}
+                    {agentName} {m.latency_ms ? <span className="text-[#ADADAD] normal-case font-normal">· {m.latency_ms}ms</span> : null}
                   </div>
                   <div className="agent-bubble text-[13px] max-w-[340px]">{m.message}</div>
                 </div>
