@@ -186,7 +186,11 @@ export function E2EChain({ config, onResults, chainResults }: Props) {
 
       {/* Prompt configurator — reflects active channel, toggles update live */}
       <div className="mb-6">
-        <PromptConfigurator agentType={channel === "call" ? "call" : undefined} agentPhone={config.agentPhone} />
+        <PromptConfigurator
+          agentType={channel === "call" ? "call" : undefined}
+          agentPhone={config.agentPhone}
+          agentId={channel === "call" ? config.callAgentId : config.smsAgentId}
+        />
       </div>
 
       {/* ══════════ SMS CHAIN ══════════ */}

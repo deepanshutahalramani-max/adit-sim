@@ -19,6 +19,8 @@ interface Props {
    * the hardcoded default. Re-fetches automatically when changed (debounced 800ms).
    */
   agentPhone?: string;
+  /** Explicit Retell agent ID — takes priority over phone lookup when set. */
+  agentId?: string;
   /** Extra class names for the outer wrapper. */
   className?: string;
 }
@@ -37,7 +39,7 @@ const TOGGLE_ROWS: { key: keyof PromptToggles; label: string; emoji: string }[] 
   { key: "cancellation",      label: "Cancellation",                emoji: "❌" },
 ];
 
-export function PromptConfigurator({ onLoad, agentType = "chat", agentPhone, className = "" }: Props) {
+export function PromptConfigurator({ onLoad, agentType = "chat", agentPhone, agentId, className = "" }: Props) {
   const [template, setTemplate]             = useState("");
   const [resolvedPrompt, setResolvedPrompt] = useState("");
   const [toggles, setToggles]               = useState<PromptToggles>(DEFAULT_TOGGLES);
@@ -74,7 +76,8 @@ export function PromptConfigurator({ onLoad, agentType = "chat", agentPhone, cla
     setError("");
     try {
       const fetcher = agentType === "call" ? fetchRetellCallPrompt : fetchRetellPrompt;
-      const { prompt } = await fetcher(phone);
+      // Pass explicit agentId (highest priority) then phone for auto-lookup
+      const { prompt } = await fetcher(phone, agentId);
       setTemplate(prompt);
       templateRef.current = prompt;
       await resolve(prompt, togglesRef.current);
@@ -92,14 +95,14 @@ export function PromptConfigurator({ onLoad, agentType = "chat", agentPhone, cla
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentType]);
 
-  /* ─── Re-fetch when agentPhone changes, debounced 800ms so typing doesn't spam Retell ─── */
+  /* ─── Re-fetch when agentPhone or agentId changes, debounced 800ms ─── */
   const isFirstRender = useRef(true);
   useEffect(() => {
     if (isFirstRender.current) { isFirstRender.current = false; return; }
     const timer = setTimeout(() => { doFetch(agentPhone); }, 800);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agentPhone]);
+  }, [agentPhone, agentId]);
 
   /* ─── Toggle handler ─── */
   const handleToggle = (key: keyof PromptToggles) => {

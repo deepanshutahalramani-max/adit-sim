@@ -1581,57 +1581,109 @@ async def debug_agent_raw(agent_id: str | None = None):
     return report
 
 
+def _norm_phone(p: str) -> str:
+    """Strip spaces, dashes and parentheses for phone comparison."""
+    return p.replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+
+
+def _phone_match(agent: dict, norm: str) -> bool:
+    for field in ("agent_phone_number", "phone_number", "inbound_phone_number", "phone"):
+        val = agent.get(field, "")
+        if val and _norm_phone(val) == norm:
+            return True
+    return False
+
+
+async def _list_agents(channel: str) -> list[dict]:
+    """Return the raw agent list for 'chat' or 'voice' channel."""
+    path = "/list-chat-agents" if channel == "chat" else "/list-agents"
+    try:
+        resp = await _retell_get(path)
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
+        if isinstance(data, dict):
+            data = data.get("agents", data.get("data", []))
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
 async def _resolve_agent_by_phone(phone: str, channel: str) -> str | None:
     """
     Look up the Retell agent ID whose associated phone number matches `phone`.
 
-    channel="chat"  → searches GET /list-chat-agents  (SMS/chat agents)
-    channel="voice" → searches GET /list-agents        (voice agents)
+    Strategy for voice agents:
+      1. Direct phone-field match in GET /list-agents
+
+    Strategy for chat agents (no phone field in Retell):
+      1. Try direct phone-field match in GET /list-chat-agents (in case a future
+         API version exposes it)
+      2. Fallback: find the voice agent for this phone → compare its name with
+         all chat agents → return the chat agent with the most name-word overlap
+         (requires ≥ 3 words in common to avoid false positives)
 
     Returns the agent_id string, or None if not found / API error.
     """
-    try:
-        if channel == "chat":
-            resp = await _retell_get("/list-chat-agents")
-        else:
-            resp = await _retell_get("/list-agents")
+    norm = _norm_phone(phone)
 
-        if resp.status_code != 200:
-            return None
+    if channel == "voice":
+        for agent in await _list_agents("voice"):
+            if _phone_match(agent, norm):
+                return agent.get("agent_id") or agent.get("id")
+        return None
 
-        agents = resp.json()
-        if isinstance(agents, dict):
-            agents = agents.get("agents", agents.get("data", []))
-        if not isinstance(agents, list):
-            return None
+    # ── Chat channel ─────────────────────────────────────────────────────────
+    # Step 1: direct match
+    for agent in await _list_agents("chat"):
+        if _phone_match(agent, norm):
+            return agent.get("agent_id") or agent.get("id")
 
-        # Normalise the phone for comparison (strip spaces/dashes)
-        norm = phone.replace(" ", "").replace("-", "")
-        for agent in agents:
-            # Retell stores the phone on different fields depending on version
-            for field in ("agent_phone_number", "phone_number", "inbound_phone_number"):
-                agent_phone = agent.get(field, "")
-                if agent_phone and agent_phone.replace(" ", "").replace("-", "") == norm:
-                    return agent.get("agent_id") or agent.get("id")
-    except Exception:
-        pass
-    return None
+    # Step 2: name-similarity via voice agent
+    voice_agent: dict | None = None
+    for agent in await _list_agents("voice"):
+        if _phone_match(agent, norm):
+            voice_agent = agent
+            break
+
+    if not voice_agent:
+        return None
+
+    voice_name = (voice_agent.get("agent_name") or voice_agent.get("name") or "").lower()
+    voice_words = set(w for w in voice_name.split() if len(w) > 2)  # ignore short words
+    if not voice_words:
+        return None
+
+    best_id: str | None = None
+    best_score = 0
+    for ca in await _list_agents("chat"):
+        chat_name = (ca.get("agent_name") or ca.get("name") or "").lower()
+        chat_words = set(w for w in chat_name.split() if len(w) > 2)
+        score = len(voice_words & chat_words)
+        if score > best_score:
+            best_score = score
+            best_id = ca.get("agent_id") or ca.get("id")
+
+    # Require at least 3 meaningful words in common to avoid false positives
+    return best_id if best_score >= 3 else None
 
 
 @app.get("/api/retell/fetch-call-prompt")
-async def fetch_call_prompt(agent_phone: Optional[str] = None):
+async def fetch_call_prompt(
+    agent_phone: Optional[str] = None,
+    agent_id: Optional[str] = None,   # explicit override — highest priority
+):
     """
     Fetches the live system prompt for the voice call agent.
-    If agent_phone is provided, resolves the correct call agent for that number.
-    Falls back to the hardcoded RETELL_CALL_AGENT_ID.
+    Priority: explicit agent_id > phone lookup > hardcoded default.
     """
     try:
-        agent_id = RETELL_CALL_AGENT_ID
-        if agent_phone:
+        resolved_id = agent_id or RETELL_CALL_AGENT_ID
+        if not agent_id and agent_phone:
             resolved = await _resolve_agent_by_phone(agent_phone, "voice")
             if resolved:
-                agent_id = resolved
-        return await _fetch_agent_prompt_data(agent_id)
+                resolved_id = resolved
+        return await _fetch_agent_prompt_data(resolved_id)
     except HTTPException:
         raise
     except Exception as exc:
@@ -1639,19 +1691,21 @@ async def fetch_call_prompt(agent_phone: Optional[str] = None):
 
 
 @app.get("/api/retell/fetch-prompt")
-async def fetch_retell_prompt(agent_phone: Optional[str] = None):
+async def fetch_retell_prompt(
+    agent_phone: Optional[str] = None,
+    agent_id: Optional[str] = None,   # explicit override — highest priority
+):
     """
     Fetches the live system prompt from Retell for the SMS/chat agent.
-    If agent_phone is provided, resolves the correct SMS agent for that number.
-    Falls back to the hardcoded RETELL_AGENT_ID.
+    Priority: explicit agent_id > phone-based lookup (voice name similarity) > hardcoded default.
     """
     try:
-        agent_id = RETELL_AGENT_ID
-        if agent_phone:
+        resolved_id = agent_id or RETELL_AGENT_ID
+        if not agent_id and agent_phone:
             resolved = await _resolve_agent_by_phone(agent_phone, "chat")
             if resolved:
-                agent_id = resolved
-        return await _fetch_agent_prompt_data(agent_id)
+                resolved_id = resolved
+        return await _fetch_agent_prompt_data(resolved_id)
     except HTTPException:
         raise
     except Exception as exc:

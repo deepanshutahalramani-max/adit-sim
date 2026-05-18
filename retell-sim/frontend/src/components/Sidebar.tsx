@@ -1,4 +1,5 @@
-import { Check } from "lucide-react";
+import { useState } from "react";
+import { Check, ChevronDown, ChevronRight } from "lucide-react";
 import type { Config } from "../types";
 
 interface Props {
@@ -62,15 +63,23 @@ function SideInput({
 }
 
 export function Sidebar({ config, onChange, agentName = "—" }: Props) {
+  const [agentIdsOpen, setAgentIdsOpen] = useState(
+    !!(config.smsAgentId || config.callAgentId)
+  );
+
   // Track which keys came from localStorage (already persisted)
-  const bearerFromStorage = !!(localStorage.getItem("adit_bearer"));
-  const openaiFromStorage = !!(localStorage.getItem("adit_openai_key"));
-  const phoneFromStorage  = !!(localStorage.getItem("adit_agent_phone"));
+  const bearerFromStorage   = !!(localStorage.getItem("adit_bearer"));
+  const openaiFromStorage   = !!(localStorage.getItem("adit_openai_key"));
+  const phoneFromStorage    = !!(localStorage.getItem("adit_agent_phone"));
+  const smsAgentFromStorage = !!(localStorage.getItem("adit_sms_agent_id"));
+  const callAgentFromStorage= !!(localStorage.getItem("adit_call_agent_id"));
 
   const set = (k: keyof Config, v: unknown) => {
-    if (k === "openaiKey")    localStorage.setItem("adit_openai_key",   v as string);
-    if (k === "bearerToken")  localStorage.setItem("adit_bearer",       v as string);
-    if (k === "agentPhone")   localStorage.setItem("adit_agent_phone",  v as string);
+    if (k === "openaiKey")    localStorage.setItem("adit_openai_key",    v as string);
+    if (k === "bearerToken")  localStorage.setItem("adit_bearer",        v as string);
+    if (k === "agentPhone")   localStorage.setItem("adit_agent_phone",   v as string);
+    if (k === "smsAgentId")   localStorage.setItem("adit_sms_agent_id",  v as string);
+    if (k === "callAgentId")  localStorage.setItem("adit_call_agent_id", v as string);
     onChange({ ...config, [k]: v });
   };
 
@@ -157,6 +166,38 @@ export function Sidebar({ config, onChange, agentName = "—" }: Props) {
           placeholder="sk-proj-…"
           savedFromStorage={openaiFromStorage}
         />
+
+        {/* ── Advanced: explicit Retell Agent IDs ── */}
+        <div className="mb-4">
+          <button
+            onClick={() => setAgentIdsOpen(o => !o)}
+            className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-[#ADADAD] hover:text-[#888] transition-colors w-full text-left mb-1.5"
+          >
+            {agentIdsOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+            Agent IDs <span className="normal-case font-normal text-[#ADADAD] ml-1">(optional)</span>
+          </button>
+          {agentIdsOpen && (
+            <div className="border border-[#F0F0EE] rounded-lg p-3 space-y-3 bg-[#FAFAF8]">
+              <div className="text-[10px] text-[#ADADAD] leading-relaxed">
+                Paste Retell agent IDs to lock the prompt to a specific agent. Overrides phone-based lookup. Copy from Retell dashboard.
+              </div>
+              <SideInput
+                label="SMS Agent ID"
+                value={config.smsAgentId ?? ""}
+                onChange={v => set("smsAgentId", v)}
+                placeholder="agent_ee5d…"
+                savedFromStorage={smsAgentFromStorage}
+              />
+              <SideInput
+                label="Call Agent ID"
+                value={config.callAgentId ?? ""}
+                onChange={v => set("callAgentId", v)}
+                placeholder="agent_8c76…"
+                savedFromStorage={callAgentFromStorage}
+              />
+            </div>
+          )}
+        </div>
 
         {/* LLM Judge toggle */}
         <div className="mb-4">

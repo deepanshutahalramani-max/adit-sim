@@ -139,16 +139,17 @@ export async function applyFix(params: {
   return post("/debug/apply-fix", params);
 }
 
-export async function fetchRetellPrompt(agentPhone?: string): Promise<{
+export async function fetchRetellPrompt(agentPhone?: string, agentId?: string): Promise<{
   prompt: string;
   llm_id: string;
   agent_id: string;
   model: string;
 }> {
-  const url = agentPhone
-    ? `${BASE}/retell/fetch-prompt?agent_phone=${encodeURIComponent(agentPhone)}`
-    : `${BASE}/retell/fetch-prompt`;
-  const r = await fetch(url);
+  const params = new URLSearchParams();
+  if (agentPhone) params.set("agent_phone", agentPhone);
+  if (agentId)    params.set("agent_id",    agentId);
+  const qs = params.toString();
+  const r = await fetch(`${BASE}/retell/fetch-prompt${qs ? `?${qs}` : ""}`);
   if (!r.ok) {
     const err = await r.json().catch(() => ({ detail: r.statusText }));
     throw new Error(err.detail ?? r.statusText);
@@ -177,16 +178,17 @@ export async function runCallParallel(params: {
   return post("/simulate/call/parallel", params);
 }
 
-export async function fetchRetellCallPrompt(agentPhone?: string): Promise<{
+export async function fetchRetellCallPrompt(agentPhone?: string, agentId?: string): Promise<{
   prompt: string;
   llm_id: string;
   agent_id: string;
   model: string;
 }> {
-  const url = agentPhone
-    ? `${BASE}/retell/fetch-call-prompt?agent_phone=${encodeURIComponent(agentPhone)}`
-    : `${BASE}/retell/fetch-call-prompt`;
-  const r = await fetch(url);
+  const params = new URLSearchParams();
+  if (agentPhone) params.set("agent_phone", agentPhone);
+  if (agentId)    params.set("agent_id",    agentId);
+  const qs = params.toString();
+  const r = await fetch(`${BASE}/retell/fetch-call-prompt${qs ? `?${qs}` : ""}`);
   if (!r.ok) {
     const err = await r.json().catch(() => ({ detail: r.statusText }));
     throw new Error(err.detail ?? r.statusText);

@@ -380,7 +380,7 @@ export function DebugSuite({ config, onResults }: Props) {
               <div className="grid grid-cols-2 gap-5 mb-4">
                 <div className="space-y-4">
                   <div>
-                    <PromptConfigurator onLoad={setSystemPrompt} agentPhone={config.agentPhone} />
+                    <PromptConfigurator onLoad={setSystemPrompt} agentPhone={config.agentPhone} agentId={config.smsAgentId} />
                   </div>
                   <div>
                     <label className="text-[10px] font-bold uppercase tracking-widest text-[#ADADAD] block mb-1.5">
@@ -447,7 +447,7 @@ export function DebugSuite({ config, onResults }: Props) {
                 {/* Left — prompt */}
                 <div className="space-y-4">
                   <div>
-                    <PromptConfigurator onLoad={setSystemPrompt} agentType="call" agentPhone={config.agentPhone} />
+                    <PromptConfigurator onLoad={setSystemPrompt} agentType="call" agentPhone={config.agentPhone} agentId={config.callAgentId} />
                   </div>
                   <div>
                     <label className="text-[10px] font-bold uppercase tracking-widest text-[#ADADAD] block mb-1.5">

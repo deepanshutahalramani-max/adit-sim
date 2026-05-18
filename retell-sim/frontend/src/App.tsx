@@ -23,7 +23,9 @@ export default function App() {
   const [config, setConfig] = useState<Config>(() => {
     let bearer = localStorage.getItem("adit_bearer") ?? "";
     let openai = localStorage.getItem("adit_openai_key") ?? "";
-    const phone = localStorage.getItem("adit_agent_phone") ?? "+12673565689";
+    const phone       = localStorage.getItem("adit_agent_phone")   ?? "+12673565689";
+    const smsAgentId  = localStorage.getItem("adit_sms_agent_id")  ?? "";
+    const callAgentId = localStorage.getItem("adit_call_agent_id") ?? "";
 
     // Auto-fix: if OpenAI key was accidentally saved in bearer token field, swap them
     if (bearer.startsWith("sk-") && !openai) {
@@ -40,6 +42,8 @@ export default function App() {
       agentPhone: phone,
       openaiKey: openai,
       useLlmJudge: true,
+      smsAgentId:  smsAgentId  || undefined,
+      callAgentId: callAgentId || undefined,
     };
   });
 

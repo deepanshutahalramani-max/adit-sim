@@ -84,4 +84,7 @@ export interface Config {
   agentPhone: string;
   openaiKey: string;
   useLlmJudge: boolean;
+  /** Optional explicit Retell agent IDs — override phone-based auto-detection */
+  smsAgentId?: string;   // chat/SMS agent ID from Retell dashboard (e.g. agent_ee5d...)
+  callAgentId?: string;  // voice agent ID from Retell dashboard (e.g. agent_8c7...)
 }
