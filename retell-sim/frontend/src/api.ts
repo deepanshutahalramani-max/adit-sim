@@ -139,13 +139,16 @@ export async function applyFix(params: {
   return post("/debug/apply-fix", params);
 }
 
-export async function fetchRetellPrompt(): Promise<{
+export async function fetchRetellPrompt(agentPhone?: string): Promise<{
   prompt: string;
   llm_id: string;
   agent_id: string;
   model: string;
 }> {
-  const r = await fetch(`${BASE}/retell/fetch-prompt`);
+  const url = agentPhone
+    ? `${BASE}/retell/fetch-prompt?agent_phone=${encodeURIComponent(agentPhone)}`
+    : `${BASE}/retell/fetch-prompt`;
+  const r = await fetch(url);
   if (!r.ok) {
     const err = await r.json().catch(() => ({ detail: r.statusText }));
     throw new Error(err.detail ?? r.statusText);
@@ -174,13 +177,16 @@ export async function runCallParallel(params: {
   return post("/simulate/call/parallel", params);
 }
 
-export async function fetchRetellCallPrompt(): Promise<{
+export async function fetchRetellCallPrompt(agentPhone?: string): Promise<{
   prompt: string;
   llm_id: string;
   agent_id: string;
   model: string;
 }> {
-  const r = await fetch(`${BASE}/retell/fetch-call-prompt`);
+  const url = agentPhone
+    ? `${BASE}/retell/fetch-call-prompt?agent_phone=${encodeURIComponent(agentPhone)}`
+    : `${BASE}/retell/fetch-call-prompt`;
+  const r = await fetch(url);
   if (!r.ok) {
     const err = await r.json().catch(() => ({ detail: r.statusText }));
     throw new Error(err.detail ?? r.statusText);

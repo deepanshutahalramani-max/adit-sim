@@ -8,9 +8,15 @@ import { fetchRetellPrompt, fetchRetellCallPrompt, resolvePrompt, type PromptTog
 
 interface Props {
   /** Called whenever the resolved prompt changes (initial load + every toggle). */
-  onLoad: (prompt: string) => void;
+  onLoad?: (prompt: string) => void;
   /** "chat" fetches the SMS/chat agent prompt; "call" fetches the voice call agent prompt. */
   agentType?: "chat" | "call";
+  /**
+   * Agent phone number from sidebar config. When provided, the backend will
+   * look up the correct Retell agent for that phone number instead of using
+   * the hardcoded default. Re-fetches automatically when changed.
+   */
+  agentPhone?: string;
   /** Extra class names for the outer wrapper. */
   className?: string;
 }
@@ -29,7 +35,7 @@ const TOGGLE_ROWS: { key: keyof PromptToggles; label: string; emoji: string }[] 
   { key: "cancellation",      label: "Cancellation",                emoji: "❌" },
 ];
 
-export function PromptConfigurator({ onLoad, agentType = "chat", className = "" }: Props) {
+export function PromptConfigurator({ onLoad, agentType = "chat", agentPhone, className = "" }: Props) {
   const [template, setTemplate]           = useState("");   // raw Retell template ({{placeholders}})
   const [resolvedPrompt, setResolvedPrompt] = useState(""); // substituted output — shown in textarea
   const [toggles, setToggles]             = useState<PromptToggles>(DEFAULT_TOGGLES);
@@ -44,7 +50,7 @@ export function PromptConfigurator({ onLoad, agentType = "chat", className = "" 
     try {
       const { prompt } = await resolvePrompt({ template: tmpl, ...flags });
       setResolvedPrompt(prompt);  // ← update the visible textarea
-      onLoad(prompt);
+      onLoad?.(prompt);
     } catch (e: unknown) {
       setError((e instanceof Error ? e.message : "Failed to resolve prompt"));
     } finally {
@@ -58,7 +64,8 @@ export function PromptConfigurator({ onLoad, agentType = "chat", className = "" 
     setError("");
     try {
       const fetcher = agentType === "call" ? fetchRetellCallPrompt : fetchRetellPrompt;
-      const { prompt } = await fetcher();
+      // Pass agentPhone so backend resolves the correct agent for that number
+      const { prompt } = await fetcher(agentPhone);
       setTemplate(prompt);
       await resolve(prompt, toggles);
     } catch (e: unknown) {
@@ -66,9 +73,9 @@ export function PromptConfigurator({ onLoad, agentType = "chat", className = "" 
     } finally {
       setLoading(false);
     }
-  // agentType is stable per mount — component is always remounted when mode changes
+  // agentType and agentPhone changes both require a fresh fetch
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agentType]);
+  }, [agentType, agentPhone]);
 
   useEffect(() => { fetchTemplate(); }, [fetchTemplate]);
 
@@ -82,7 +89,7 @@ export function PromptConfigurator({ onLoad, agentType = "chat", className = "" 
   /* ─── Manual textarea edit — user is editing the resolved output directly ─── */
   const handleResolvedEdit = (val: string) => {
     setResolvedPrompt(val);
-    onLoad(val);  // bypass resolve — pass edit straight through
+    onLoad?.(val);  // bypass resolve — pass edit straight through
   };
 
   return (

@@ -69,8 +69,19 @@ export default function App() {
         {/* Top header bar */}
         <header className="bg-white border-b border-[#EAEAEA] px-8 py-5 flex items-center justify-between flex-shrink-0">
           <div className="flex items-center gap-4">
-            <div className="w-10 h-10 bg-brand-500 rounded-xl flex items-center justify-center text-white font-extrabold text-xl shadow-sm">
-              a
+            <div className="w-10 h-10 rounded-xl overflow-hidden flex items-center justify-center flex-shrink-0">
+              <img
+                src="/adit-logo.svg"
+                alt="ADIT"
+                className="w-10 h-10 object-contain"
+                onError={e => {
+                  const t = e.currentTarget;
+                  t.onerror = null;
+                  t.style.display = "none";
+                  (t.parentElement as HTMLElement).innerHTML =
+                    '<div class="w-10 h-10 bg-brand-500 rounded-xl flex items-center justify-center text-white font-extrabold text-xl shadow-sm">a</div>';
+                }}
+              />
             </div>
             <div>
               <div className="text-xl font-extrabold text-[#111] leading-tight tracking-tight">Agent QA Platform</div>

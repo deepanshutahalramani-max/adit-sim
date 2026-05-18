@@ -111,7 +111,7 @@ export function Simulations({ config, appConfig, onResults, results }: Props) {
         <>
           {/* Prompt configurator — toggles update resolved prompt live */}
           <div className="mb-4">
-            <PromptConfigurator />
+            <PromptConfigurator agentPhone={config.agentPhone} />
           </div>
 
           {/* Scenario picker */}

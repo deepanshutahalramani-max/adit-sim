@@ -1581,11 +1581,57 @@ async def debug_agent_raw(agent_id: str | None = None):
     return report
 
 
-@app.get("/api/retell/fetch-call-prompt")
-async def fetch_call_prompt():
-    """Fetches the live system prompt for the voice call agent."""
+async def _resolve_agent_by_phone(phone: str, channel: str) -> str | None:
+    """
+    Look up the Retell agent ID whose associated phone number matches `phone`.
+
+    channel="chat"  → searches GET /list-chat-agents  (SMS/chat agents)
+    channel="voice" → searches GET /list-agents        (voice agents)
+
+    Returns the agent_id string, or None if not found / API error.
+    """
     try:
-        return await _fetch_agent_prompt_data(RETELL_CALL_AGENT_ID)
+        if channel == "chat":
+            resp = await _retell_get("/list-chat-agents")
+        else:
+            resp = await _retell_get("/list-agents")
+
+        if resp.status_code != 200:
+            return None
+
+        agents = resp.json()
+        if isinstance(agents, dict):
+            agents = agents.get("agents", agents.get("data", []))
+        if not isinstance(agents, list):
+            return None
+
+        # Normalise the phone for comparison (strip spaces/dashes)
+        norm = phone.replace(" ", "").replace("-", "")
+        for agent in agents:
+            # Retell stores the phone on different fields depending on version
+            for field in ("agent_phone_number", "phone_number", "inbound_phone_number"):
+                agent_phone = agent.get(field, "")
+                if agent_phone and agent_phone.replace(" ", "").replace("-", "") == norm:
+                    return agent.get("agent_id") or agent.get("id")
+    except Exception:
+        pass
+    return None
+
+
+@app.get("/api/retell/fetch-call-prompt")
+async def fetch_call_prompt(agent_phone: Optional[str] = None):
+    """
+    Fetches the live system prompt for the voice call agent.
+    If agent_phone is provided, resolves the correct call agent for that number.
+    Falls back to the hardcoded RETELL_CALL_AGENT_ID.
+    """
+    try:
+        agent_id = RETELL_CALL_AGENT_ID
+        if agent_phone:
+            resolved = await _resolve_agent_by_phone(agent_phone, "voice")
+            if resolved:
+                agent_id = resolved
+        return await _fetch_agent_prompt_data(agent_id)
     except HTTPException:
         raise
     except Exception as exc:
@@ -1593,10 +1639,19 @@ async def fetch_call_prompt():
 
 
 @app.get("/api/retell/fetch-prompt")
-async def fetch_retell_prompt():
-    """Fetches the live system prompt from Retell for the SMS/chat agent."""
+async def fetch_retell_prompt(agent_phone: Optional[str] = None):
+    """
+    Fetches the live system prompt from Retell for the SMS/chat agent.
+    If agent_phone is provided, resolves the correct SMS agent for that number.
+    Falls back to the hardcoded RETELL_AGENT_ID.
+    """
     try:
-        return await _fetch_agent_prompt_data(RETELL_AGENT_ID)
+        agent_id = RETELL_AGENT_ID
+        if agent_phone:
+            resolved = await _resolve_agent_by_phone(agent_phone, "chat")
+            if resolved:
+                agent_id = resolved
+        return await _fetch_agent_prompt_data(agent_id)
     except HTTPException:
         raise
     except Exception as exc:

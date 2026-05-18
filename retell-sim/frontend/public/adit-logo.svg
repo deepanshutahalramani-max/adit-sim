@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 48" fill="none">
+  <!-- Orange "a" pill -->
+  <rect x="0" y="4" width="40" height="40" rx="10" fill="#F5820D"/>
+  <!-- Bold "a" in white -->
+  <text x="20" y="32" font-family="Inter,-apple-system,BlinkMacSystemFont,sans-serif"
+        font-size="26" font-weight="900" fill="white"
+        text-anchor="middle" dominant-baseline="auto">a</text>
+  <!-- "dit" wordmark -->
+  <text x="52" y="34" font-family="Inter,-apple-system,BlinkMacSystemFont,sans-serif"
+        font-size="22" font-weight="800" fill="#1A1A1A"
+        dominant-baseline="auto">dit</text>
+  <!-- Dot accent -->
+  <circle cx="107" cy="10" r="4" fill="#F5820D"/>
+</svg>

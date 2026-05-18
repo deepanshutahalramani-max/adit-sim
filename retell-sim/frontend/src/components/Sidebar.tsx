@@ -89,8 +89,16 @@ export function Sidebar({ config, onChange }: Props) {
       {/* Logo */}
       <div className="px-5 py-4 border-b border-[#F0F0EE]">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 bg-brand-500 rounded-lg flex items-center justify-center text-white font-extrabold text-base shadow-sm flex-shrink-0">
-            a
+          <div className="w-8 h-8 rounded-lg overflow-hidden flex items-center justify-center flex-shrink-0">
+            <img src="/adit-logo.svg" alt="ADIT" className="w-8 h-8 object-contain"
+              onError={e => {
+                const t = e.currentTarget;
+                t.onerror = null;
+                t.style.display = "none";
+                (t.parentElement as HTMLElement).innerHTML =
+                  '<div class="w-8 h-8 bg-brand-500 rounded-lg flex items-center justify-center text-white font-extrabold text-base shadow-sm">a</div>';
+              }}
+            />
           </div>
           <div className="min-w-0">
             <div className="text-[14px] font-bold text-[#111] leading-tight">Agent QA</div>
