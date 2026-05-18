@@ -1219,7 +1219,7 @@ async def stream_call(req: StreamCallRequest):
     async def gen():
         loop = asyncio.get_event_loop()
         config = SCENARIOS.get(req.scenario_id, SCENARIOS["new-patient-cleaning"])
-        persona = PERSONAS[config["persona_idx"]]
+        persona = _resolve_persona(config)   # uses registered patient for existing-patient scenarios
         patient_phone = _phone()
         # Repro mode overrides goal; otherwise use scenario goal
         goal = f"Reproduce: {req.root_cause}" if req.root_cause else config["goal"]
@@ -1985,7 +1985,8 @@ async def stream_repro(req: StreamReproRequest):
         turns: list[Turn] = []
         chat_id = None
         current_msg = req.repro_opener
-        persona = PERSONAS[0]
+        # Use registered patient if available — most debug repros are for existing-patient bugs
+        persona = _REGISTERED_PATIENT if _REGISTERED_PATIENT else PERSONAS[0]
         goal = f"Reproduce: {req.root_cause}"
         api_calls: list[dict] = []
         followup_idx = 0
