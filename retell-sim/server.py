@@ -2115,22 +2115,31 @@ async def create_web_call(req: CreateWebCallRequest):
 
 
 @app.get("/api/retell/agent-info")
-async def get_agent_info(agent_phone: Optional[str] = None):
+async def get_agent_info(
+    agent_phone: Optional[str] = None,
+    sms_agent_id: Optional[str] = None,
+    call_agent_id: Optional[str] = None,
+):
     """
-    Returns display info (name, id) for the agent associated with a phone number.
-    Checks both chat and voice agent lists.
-    Falls back to hardcoded defaults.
+    Returns display info (name, id) for the agent.
+    Priority: explicit agent IDs > phone lookup > hardcoded defaults.
     """
     sms_id  = RETELL_AGENT_ID
     call_id = RETELL_CALL_AGENT_ID
     sms_name  = "Siriyaa"
     call_name = "Siriyaa"
 
-    if agent_phone:
-        resolved_chat  = await _resolve_agent_by_phone(agent_phone, "chat")
-        resolved_voice = await _resolve_agent_by_phone(agent_phone, "voice")
+    if sms_agent_id:
+        sms_id = sms_agent_id
+    elif agent_phone:
+        resolved_chat = await _resolve_agent_by_phone(agent_phone, "chat")
         if resolved_chat:
             sms_id = resolved_chat
+
+    if call_agent_id:
+        call_id = call_agent_id
+    elif agent_phone:
+        resolved_voice = await _resolve_agent_by_phone(agent_phone, "voice")
         if resolved_voice:
             call_id = resolved_voice
 

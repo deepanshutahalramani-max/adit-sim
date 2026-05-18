@@ -238,15 +238,22 @@ export async function createWebCall(params?: {
   return post("/retell/create-web-call", params ?? {});
 }
 
-export async function fetchAgentInfo(agentPhone?: string): Promise<{
+export async function fetchAgentInfo(
+  agentPhone?: string,
+  smsAgentId?: string,
+  callAgentId?: string,
+): Promise<{
   sms_agent_id: string;
   call_agent_id: string;
   sms_agent_name: string;
   call_agent_name: string;
 }> {
-  const url = agentPhone
-    ? `${BASE}/retell/agent-info?agent_phone=${encodeURIComponent(agentPhone)}`
-    : `${BASE}/retell/agent-info`;
+  const params = new URLSearchParams();
+  if (agentPhone)  params.set("agent_phone",   agentPhone);
+  if (smsAgentId)  params.set("sms_agent_id",  smsAgentId);
+  if (callAgentId) params.set("call_agent_id", callAgentId);
+  const qs = params.toString();
+  const url = `${BASE}/retell/agent-info${qs ? `?${qs}` : ""}`;
   const r = await fetch(url);
   if (!r.ok) {
     const err = await r.json().catch(() => ({ detail: r.statusText }));

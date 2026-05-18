@@ -31,10 +31,10 @@ function SavedBadge({ saved }: { saved: boolean }) {
 }
 
 function SideInput({
-  label, value, onChange, type = "text", placeholder, savedFromStorage,
+  label, value, onChange, type = "text", placeholder, savedFromStorage, hint,
 }: {
   label: string; value: string; onChange: (v: string) => void;
-  type?: string; placeholder?: string; savedFromStorage?: boolean;
+  type?: string; placeholder?: string; savedFromStorage?: boolean; hint?: string;
 }) {
   const isSecret = type === "password";
   const hasValue = value.length > 0;
@@ -46,8 +46,6 @@ function SideInput({
         {isSecret && <SavedBadge saved={!!savedFromStorage && hasValue} />}
       </div>
       <input
-        /* Always keep secrets masked — no show/hide toggle so values are never
-           visible to anyone looking at the screen. */
         type={isSecret ? "password" : "text"}
         value={value}
         onChange={e => onChange(e.target.value)}
@@ -55,7 +53,8 @@ function SideInput({
         className="w-full bg-[#F7F7F5] border border-[#E5E5E5] rounded-lg px-3 py-2 text-[13px] text-[#111]
                    focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10"
       />
-      {isSecret && !hasValue && (
+      {hint && <p className="text-[10.5px] text-[#ADADAD] mt-1">{hint}</p>}
+      {isSecret && !hasValue && !hint && (
         <p className="text-[10.5px] text-[#ADADAD] mt-1">Enter once — saved automatically</p>
       )}
     </div>
@@ -63,27 +62,24 @@ function SideInput({
 }
 
 export function Sidebar({ config, onChange, agentName = "—" }: Props) {
-  const [agentIdsOpen, setAgentIdsOpen] = useState(
-    !!(config.smsAgentId || config.callAgentId)
-  );
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
-  // Track which keys came from localStorage (already persisted)
-  const bearerFromStorage   = !!(localStorage.getItem("adit_bearer"));
-  const openaiFromStorage   = !!(localStorage.getItem("adit_openai_key"));
-  const phoneFromStorage    = !!(localStorage.getItem("adit_agent_phone"));
-  const smsAgentFromStorage = !!(localStorage.getItem("adit_sms_agent_id"));
-  const callAgentFromStorage= !!(localStorage.getItem("adit_call_agent_id"));
+  const stored = (key: string) => !!(localStorage.getItem(key));
 
   const set = (k: keyof Config, v: unknown) => {
-    if (k === "openaiKey")    localStorage.setItem("adit_openai_key",    v as string);
-    if (k === "bearerToken")  localStorage.setItem("adit_bearer",        v as string);
-    if (k === "agentPhone")   localStorage.setItem("adit_agent_phone",   v as string);
-    if (k === "smsAgentId")   localStorage.setItem("adit_sms_agent_id",  v as string);
-    if (k === "callAgentId")  localStorage.setItem("adit_call_agent_id", v as string);
+    const map: Partial<Record<keyof Config, string>> = {
+      openaiKey:    "adit_openai_key",
+      bearerToken:  "adit_bearer",
+      agentPhone:   "adit_agent_phone",
+      smsAgentId:   "adit_sms_agent_id",
+      callAgentId:  "adit_call_agent_id",
+    };
+    if (map[k]) localStorage.setItem(map[k]!, v as string);
     onChange({ ...config, [k]: v });
   };
 
-  const allGood = !!config.bearerToken && !!config.openaiKey;
+  const allGood = !!config.bearerToken && !!config.openaiKey
+    && !!config.smsAgentId && !!config.callAgentId;
 
   return (
     <aside className="w-64 bg-white border-r border-[#EAEAEA] flex flex-col flex-shrink-0 overflow-y-auto">
@@ -94,8 +90,7 @@ export function Sidebar({ config, onChange, agentName = "—" }: Props) {
             <img src="/adit-logo.svg" alt="ADIT" className="w-8 h-8 object-contain"
               onError={e => {
                 const t = e.currentTarget;
-                t.onerror = null;
-                t.style.display = "none";
+                t.onerror = null; t.style.display = "none";
                 (t.parentElement as HTMLElement).innerHTML =
                   '<div class="w-8 h-8 bg-brand-500 rounded-lg flex items-center justify-center text-white font-extrabold text-base shadow-sm">a</div>';
               }}
@@ -109,54 +104,54 @@ export function Sidebar({ config, onChange, agentName = "—" }: Props) {
       </div>
 
       <div className="flex-1 px-5 py-4 overflow-y-auto">
-        {/* Missing keys warning */}
+        {/* Warning */}
         {!allGood && (
           <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-4">
             <p className="text-[11px] font-semibold text-amber-700">
-              {!config.bearerToken && !config.openaiKey
-                ? "Enter bearer token + OpenAI key to run simulations"
-                : !config.bearerToken
-                  ? "Bearer token required to run simulations"
-                  : "OpenAI key required for AI judge & patient simulation"}
+              {!config.bearerToken
+                ? "Bearer token required"
+                : !config.smsAgentId || !config.callAgentId
+                  ? "Paste both Retell Agent IDs to get started"
+                  : "OpenAI key required for AI features"}
             </p>
           </div>
         )}
 
-        {/* Environment */}
-        <div className="mb-4">
-          <Label>Environment</Label>
-          <select
-            value={config.environment}
-            onChange={e => {
-              const env = e.target.value;
-              set("environment", env);
-              set("apiBase", HOSTS[env] ?? HOSTS.live);
-            }}
-            className="w-full bg-[#F7F7F5] border border-[#E5E5E5] rounded-lg px-3 py-2 text-[13px] text-[#111]
-                       focus:outline-none focus:border-brand-500 truncate"
-          >
-            <option value="live">🟢 Live</option>
-            <option value="dev">🔵 Dev (RunPod)</option>
-          </select>
-          <p className="text-[10.5px] text-[#ADADAD] mt-1 truncate">{config.apiBase}</p>
-        </div>
-
+        {/* ── Core credentials ── */}
         <SideInput
           label="Bearer Token"
           value={config.bearerToken}
           onChange={v => set("bearerToken", v)}
           type="password"
           placeholder="Paste bearer token…"
-          savedFromStorage={bearerFromStorage}
+          savedFromStorage={stored("adit_bearer")}
+        />
+
+        <hr className="border-[#F0F0EE] my-3" />
+        <div className="text-[10px] font-bold uppercase tracking-widest text-[#ADADAD] mb-3">
+          Retell Agents
+          <span className="normal-case font-normal ml-1 text-[#ADADAD]">— copy IDs from dashboard</span>
+        </div>
+
+        <SideInput
+          label="SMS Agent ID"
+          value={config.smsAgentId ?? ""}
+          onChange={v => set("smsAgentId", v || undefined)}
+          placeholder="agent_ee5d…"
+          savedFromStorage={stored("adit_sms_agent_id")}
+          hint="Chat / inbound SMS agent"
         />
 
         <SideInput
-          label="Agent Phone"
-          value={config.agentPhone}
-          onChange={v => set("agentPhone", v)}
-          placeholder="+12673565689"
-          savedFromStorage={phoneFromStorage}
+          label="Call Agent ID"
+          value={config.callAgentId ?? ""}
+          onChange={v => set("callAgentId", v || undefined)}
+          placeholder="agent_8c76…"
+          savedFromStorage={stored("adit_call_agent_id")}
+          hint="Voice / inbound call agent"
         />
+
+        <hr className="border-[#F0F0EE] my-3" />
 
         <SideInput
           label="OpenAI API Key"
@@ -164,40 +159,8 @@ export function Sidebar({ config, onChange, agentName = "—" }: Props) {
           onChange={v => set("openaiKey", v)}
           type="password"
           placeholder="sk-proj-…"
-          savedFromStorage={openaiFromStorage}
+          savedFromStorage={stored("adit_openai_key")}
         />
-
-        {/* ── Advanced: explicit Retell Agent IDs ── */}
-        <div className="mb-4">
-          <button
-            onClick={() => setAgentIdsOpen(o => !o)}
-            className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-[#ADADAD] hover:text-[#888] transition-colors w-full text-left mb-1.5"
-          >
-            {agentIdsOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-            Agent IDs <span className="normal-case font-normal text-[#ADADAD] ml-1">(optional)</span>
-          </button>
-          {agentIdsOpen && (
-            <div className="border border-[#F0F0EE] rounded-lg p-3 space-y-3 bg-[#FAFAF8]">
-              <div className="text-[10px] text-[#ADADAD] leading-relaxed">
-                Paste Retell agent IDs to lock the prompt to a specific agent. Overrides phone-based lookup. Copy from Retell dashboard.
-              </div>
-              <SideInput
-                label="SMS Agent ID"
-                value={config.smsAgentId ?? ""}
-                onChange={v => set("smsAgentId", v)}
-                placeholder="agent_ee5d…"
-                savedFromStorage={smsAgentFromStorage}
-              />
-              <SideInput
-                label="Call Agent ID"
-                value={config.callAgentId ?? ""}
-                onChange={v => set("callAgentId", v)}
-                placeholder="agent_8c76…"
-                savedFromStorage={callAgentFromStorage}
-              />
-            </div>
-          )}
-        </div>
 
         {/* LLM Judge toggle */}
         <div className="mb-4">
@@ -217,46 +180,109 @@ export function Sidebar({ config, onChange, agentName = "—" }: Props) {
           </div>
         </div>
 
+        {/* ── Advanced ── */}
+        <div className="mb-4">
+          <button
+            onClick={() => setAdvancedOpen(o => !o)}
+            className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-[#ADADAD] hover:text-[#888] transition-colors w-full text-left"
+          >
+            {advancedOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+            Advanced
+          </button>
+
+          {advancedOpen && (
+            <div className="mt-3 border border-[#F0F0EE] rounded-lg p-3 bg-[#FAFAF8] space-y-3">
+              {/* Environment */}
+              <div>
+                <Label>Environment</Label>
+                <select
+                  value={config.environment}
+                  onChange={e => {
+                    const env = e.target.value;
+                    set("environment", env);
+                    set("apiBase", HOSTS[env] ?? HOSTS.live);
+                  }}
+                  className="w-full bg-white border border-[#E5E5E5] rounded-lg px-3 py-2 text-[13px] text-[#111]
+                             focus:outline-none focus:border-brand-500 truncate"
+                >
+                  <option value="live">🟢 Live</option>
+                  <option value="dev">🔵 Dev (RunPod)</option>
+                </select>
+                <p className="text-[10.5px] text-[#ADADAD] mt-1 truncate">{config.apiBase}</p>
+              </div>
+
+              {/* Agent Phone — still needed for ADIT SMS routing */}
+              <SideInput
+                label="ADIT Practice Phone"
+                value={config.agentPhone}
+                onChange={v => set("agentPhone", v)}
+                placeholder="+12673565689"
+                savedFromStorage={stored("adit_agent_phone")}
+                hint="Routes SMS simulations to the right practice"
+              />
+            </div>
+          )}
+        </div>
+
         <hr className="border-[#F0F0EE] my-4" />
 
         {/* Status */}
         <div>
           <Label>Status</Label>
           <div className="space-y-1.5">
-            <div className="flex items-center gap-2">
-              <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${config.bearerToken ? "bg-green-500" : "bg-[#DADAD8]"}`} />
-              <span className="text-[12px] text-[#666]">Bearer token</span>
-              <span className={`text-[11px] font-semibold ml-auto ${config.bearerToken ? "text-green-600" : "text-[#ADADAD]"}`}>
-                {config.bearerToken ? "Set" : "Missing"}
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${config.openaiKey ? "bg-green-500" : "bg-amber-400"}`} />
-              <span className="text-[12px] text-[#666]">OpenAI key</span>
-              <span className={`text-[11px] font-semibold ml-auto ${config.openaiKey ? "text-green-600" : "text-amber-600"}`}>
-                {config.openaiKey ? "Set" : "Missing"}
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-500" />
-              <span className="text-[12px] text-[#666]">Agent</span>
-              <span className="text-[11px] font-semibold ml-auto text-[#555]">{agentName}</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-500" />
-              <span className="text-[12px] text-[#666]">Phone</span>
-              <code className="text-[10.5px] font-mono text-[#D4620A] bg-[#FFF3E8] rounded px-1 ml-auto">{config.agentPhone}</code>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${config.environment === "live" ? "bg-green-500" : "bg-blue-400"}`} />
-              <span className="text-[12px] text-[#666]">Env</span>
-              <span className="text-[11px] font-semibold ml-auto text-[#555]">
-                {config.environment === "live" ? "Production" : "Dev"}
-              </span>
-            </div>
+            <StatusRow
+              ok={!!config.bearerToken}
+              label="Bearer token"
+              value={config.bearerToken ? "Set" : "Missing"}
+              valueClass={config.bearerToken ? "text-green-600" : "text-[#ADADAD]"}
+            />
+            <StatusRow
+              ok={!!config.openaiKey}
+              okColor={config.openaiKey ? "bg-green-500" : "bg-amber-400"}
+              label="OpenAI key"
+              value={config.openaiKey ? "Set" : "Missing"}
+              valueClass={config.openaiKey ? "text-green-600" : "text-amber-600"}
+            />
+            <StatusRow
+              ok={!!config.smsAgentId}
+              label="SMS agent"
+              value={config.smsAgentId
+                ? <code className="text-[10px] font-mono text-[#D4620A] bg-[#FFF3E8] rounded px-1">{config.smsAgentId.slice(0, 12)}…</code>
+                : <span className="text-[#ADADAD]">Not set</span>}
+            />
+            <StatusRow
+              ok={!!config.callAgentId}
+              label="Call agent"
+              value={config.callAgentId
+                ? <code className="text-[10px] font-mono text-[#D4620A] bg-[#FFF3E8] rounded px-1">{config.callAgentId.slice(0, 12)}…</code>
+                : <span className="text-[#ADADAD]">Not set</span>}
+            />
+            {agentName !== "—" && (
+              <StatusRow ok label="Name" value={agentName} valueClass="text-[#555]" />
+            )}
+            <StatusRow
+              ok={config.environment === "live"}
+              okColor={config.environment === "live" ? "bg-green-500" : "bg-blue-400"}
+              label="Env"
+              value={config.environment === "live" ? "Production" : "Dev"}
+              valueClass="text-[#555]"
+            />
           </div>
         </div>
       </div>
     </aside>
+  );
+}
+
+function StatusRow({ ok, okColor, label, value, valueClass }: {
+  ok: boolean; okColor?: string; label: string;
+  value: React.ReactNode; valueClass?: string;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${okColor ?? (ok ? "bg-green-500" : "bg-[#DADAD8]")}`} />
+      <span className="text-[12px] text-[#666]">{label}</span>
+      <span className={`text-[11px] font-semibold ml-auto ${valueClass ?? ""}`}>{value}</span>
+    </div>
   );
 }

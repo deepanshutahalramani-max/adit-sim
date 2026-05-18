@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fetchConfig, fetchAgentInfo } from "./api";
 import type { Config } from "./types";
@@ -54,21 +54,19 @@ export default function App() {
 
   const { data: appConfig } = useQuery({ queryKey: ["config"], queryFn: fetchConfig });
 
-  // Debounce the phone so we don't query Retell on every keystroke while typing
-  const [debouncedPhone, setDebouncedPhone] = useState(config.agentPhone);
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedPhone(config.agentPhone), 800);
-    return () => clearTimeout(t);
-  }, [config.agentPhone]);
-
-  // Fetch agent display name for the debounced phone
+  // Fetch agent display names using explicit agent IDs (highest priority) or phone fallback
   const { data: agentInfo } = useQuery({
-    queryKey: ["agentInfo", debouncedPhone],
-    queryFn: () => fetchAgentInfo(debouncedPhone),
+    queryKey: ["agentInfo", config.smsAgentId, config.callAgentId, config.agentPhone],
+    queryFn: () => fetchAgentInfo(
+      config.agentPhone || undefined,
+      config.smsAgentId || undefined,
+      config.callAgentId || undefined,
+    ),
     staleTime: 60_000,
     retry: false,
+    enabled: !!(config.smsAgentId || config.callAgentId || config.agentPhone),
   });
-  const agentName = agentInfo?.call_agent_name || agentInfo?.sms_agent_name || "Siriyaa";
+  const agentName = agentInfo?.call_agent_name || agentInfo?.sms_agent_name || "—";
 
   const handleSmsResults = (rs: SimResult[]) => {
     if (rs.length === 0) setSmsResults([]);
