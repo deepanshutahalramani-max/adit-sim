@@ -117,6 +117,43 @@ PERSONAS = [
     PatientPersona("David",  "Kim",     "March 15, 1982",   "United Concordia", "crown came loose",            "today if possible",   "any time",  False),
 ]
 
+# ── Registered patient store ──────────────────────────────────────────────────
+# After a successful new-patient booking simulation, the patient's details are
+# stored here so that "existing patient" scenarios (reschedule, cancel, etc.)
+# can look them up consistently — matching what was just created in the backend.
+_REGISTERED_PATIENT: Optional[PatientPersona] = None
+_REGISTERED_PATIENT_PHONE: str = ""
+
+
+def _register_patient(persona: PatientPersona, phone: str) -> None:
+    """Store a newly-booked patient so existing-patient scenarios can reuse their details."""
+    global _REGISTERED_PATIENT, _REGISTERED_PATIENT_PHONE
+    _REGISTERED_PATIENT = PatientPersona(
+        persona.first_name, persona.last_name, persona.dob,
+        persona.insurance, persona.reason, persona.preferred_day,
+        persona.preferred_time,
+        is_new=False,  # they are now an existing patient
+    )
+    _REGISTERED_PATIENT_PHONE = phone
+
+
+def _resolve_persona(
+    config: dict,
+    persona_override: Optional[PatientPersona] = None,
+) -> PatientPersona:
+    """
+    Return the right persona for a scenario:
+      1. Explicit override (used by E2E chain to reuse the newly-booked patient)
+      2. If scenario needs an existing patient AND we have a registered patient → use them
+      3. Default persona for the scenario
+    """
+    if persona_override:
+        return persona_override
+    default = PERSONAS[config["persona_idx"]]
+    if not default.is_new and _REGISTERED_PATIENT:
+        return _REGISTERED_PATIENT
+    return default
+
 SCENARIOS: dict[str, dict] = {
     "new-patient-cleaning":   {"label": "🆕 New Patient – Cleaning",    "goal": "Book a new patient dental cleaning/check-up appointment from start to full confirmation", "opener": "Hi, I need to book a new patient appointment", "type": "book", "persona_idx": 0},
     "dental-emergency":       {"label": "🚨 Dental Emergency",           "goal": "Get an urgent/emergency appointment as soon as possible today", "opener": "Hi I have a bad toothache and need to see someone urgently", "type": "book", "persona_idx": 1},
@@ -398,11 +435,12 @@ def _run_simulation_sync(
     scenario_id: str, api_base: str, token: str, agent_phone: str,
     oai_key: str, use_judge: bool = True, reuse_phone: Optional[str] = None,
     extra_context: str = "",
+    persona_override: Optional[PatientPersona] = None,
 ) -> SimResult:
     config = SCENARIOS.get(scenario_id)
     if not config:
         raise ValueError(f"Unknown scenario: {scenario_id}")
-    persona = PERSONAS[config["persona_idx"]]
+    persona = _resolve_persona(config, persona_override)
     patient_phone = reuse_phone or _phone()
     turns: list[Turn] = []
     chat_id: Optional[str] = None
@@ -524,6 +562,12 @@ def _run_simulation_sync(
     if not failure_reason and not passed:
         failure_reason = judge_reason
 
+    # Auto-register a new patient that was just successfully booked so that
+    # subsequent existing-patient scenarios (reschedule, cancel, etc.) can use
+    # the same details and the backend will actually find them.
+    if passed and persona.is_new and outcome_type in ("booking_confirmed", "task_created"):
+        _register_patient(persona, patient_phone)
+
     return SimResult(
         scenario=scenario_id,
         scenario_label=config["label"],
@@ -612,13 +656,31 @@ def simulate_parallel(req: ParallelSimRequest):
 
 @app.post("/api/simulate/chain")
 def simulate_chain(req: ChainRequest):
+    """
+    Book → Reschedule → Cancel chain.
+    Step 1 books as a new patient. Steps 2-3 reuse the SAME patient details
+    (same phone + same persona marked is_new=False) so the backend can find them.
+    """
     phone = _phone()
     chain = {}
+    chained_persona: Optional[PatientPersona] = None
+
     for scenario_id in ["new-patient-cleaning", "reschedule", "cancel"]:
         result = _run_simulation_sync(
             scenario_id, req.api_base, req.bearer_token,
             req.agent_phone, req.openai_key, reuse_phone=phone,
+            persona_override=chained_persona,
         )
+        # After the booking step succeeds, carry the same patient (now existing)
+        # forward so reschedule / cancel use the same name + DOB the backend just stored.
+        if scenario_id == "new-patient-cleaning" and result.passed:
+            booking_config = SCENARIOS["new-patient-cleaning"]
+            p = PERSONAS[booking_config["persona_idx"]]
+            chained_persona = PatientPersona(
+                p.first_name, p.last_name, p.dob,
+                p.insurance, p.reason, p.preferred_day,
+                p.preferred_time, is_new=False,
+            )
         chain[scenario_id] = _result_to_dict(result)
     return chain
 
@@ -1002,10 +1064,11 @@ def _run_call_simulation_sync(
     oai_key: str,
     max_turns: int = 12,
     extra_context: str = "",
+    persona_override: Optional[PatientPersona] = None,
 ) -> SimResult:
     """LLM-to-LLM call simulation — returns a SimResult (no streaming)."""
     config = SCENARIOS.get(scenario_id, SCENARIOS["new-patient-cleaning"])
-    persona = PERSONAS[config["persona_idx"]]
+    persona = _resolve_persona(config, persona_override)
     patient_phone = _phone()
     goal = config["goal"]
 
@@ -1058,6 +1121,10 @@ def _run_call_simulation_sync(
 
     total_ms = int((time.time() - t_start) * 1000)
     score, judge_reason = _llm_judge(config["label"], turns, oai_key) if turns else (0, "No turns")
+
+    # Auto-register newly-booked patient for reuse in existing-patient call scenarios
+    if passed and persona.is_new and outcome_type in ("booking_confirmed", "task_created"):
+        _register_patient(persona, patient_phone)
 
     return SimResult(
         scenario=scenario_id,
@@ -2137,6 +2204,53 @@ def _extract_persona_name(prompt_text: str) -> str:
     if m:
         return m.group(1).strip().title()
     return ""
+
+
+# ── Registered patient endpoints ──────────────────────────────────────────────
+
+@app.get("/api/registered-patient")
+def get_registered_patient():
+    """Return the currently-stored registered patient (from the last successful new booking)."""
+    if not _REGISTERED_PATIENT:
+        return {"registered": False}
+    return {
+        "registered": True,
+        "first_name":    _REGISTERED_PATIENT.first_name,
+        "last_name":     _REGISTERED_PATIENT.last_name,
+        "dob":           _REGISTERED_PATIENT.dob,
+        "insurance":     _REGISTERED_PATIENT.insurance,
+        "phone":         _REGISTERED_PATIENT_PHONE,
+    }
+
+
+@app.delete("/api/registered-patient")
+def clear_registered_patient():
+    """Clear the stored registered patient so scenarios revert to default personas."""
+    global _REGISTERED_PATIENT, _REGISTERED_PATIENT_PHONE
+    _REGISTERED_PATIENT = None
+    _REGISTERED_PATIENT_PHONE = ""
+    return {"cleared": True}
+
+
+@app.post("/api/registered-patient")
+def set_registered_patient(body: dict):
+    """
+    Manually set a registered patient (for when you know who's in the system).
+    Body: {first_name, last_name, dob, insurance, phone}
+    """
+    global _REGISTERED_PATIENT, _REGISTERED_PATIENT_PHONE
+    _REGISTERED_PATIENT = PatientPersona(
+        first_name=body.get("first_name", ""),
+        last_name=body.get("last_name", ""),
+        dob=body.get("dob", ""),
+        insurance=body.get("insurance", ""),
+        reason=body.get("reason", "routine cleaning"),
+        preferred_day=body.get("preferred_day", "any weekday"),
+        preferred_time=body.get("preferred_time", "any time"),
+        is_new=False,
+    )
+    _REGISTERED_PATIENT_PHONE = body.get("phone", "")
+    return {"registered": True, "first_name": _REGISTERED_PATIENT.first_name, "last_name": _REGISTERED_PATIENT.last_name}
 
 
 @app.get("/api/retell/agent-info")

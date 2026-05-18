@@ -1,10 +1,12 @@
 import { useState, useRef } from "react";
 import { Play, Trash2, Paperclip, X } from "lucide-react";
 import { runParallel, extractContextFromImage } from "../api";
+import { useQueryClient } from "@tanstack/react-query";
 import type { Config, AppConfig, SimResult } from "../types";
 import { SimResultCard } from "../components/SimResultCard";
 import { ManualSMS } from "../components/ManualSMS";
 import { PromptConfigurator } from "../components/PromptConfigurator";
+import { RegisteredPatientCard } from "../components/RegisteredPatientCard";
 
 interface Props {
   config: Config;
@@ -32,6 +34,7 @@ export function Simulations({ config, appConfig, onResults, results }: Props) {
   const [parallel, setParallel] = useState(5);
   const [running, setRunning]   = useState(false);
   const [error, setError]       = useState("");
+  const qc = useQueryClient();
 
   /* ── Scenario context ── */
   const [simContext, setSimContext]      = useState("");
@@ -77,6 +80,8 @@ export function Simulations({ config, appConfig, onResults, results }: Props) {
       setError(e instanceof Error ? e.message : "Run failed");
     } finally {
       setRunning(false);
+      // Refresh registered patient in case a new-patient booking just ran
+      qc.invalidateQueries({ queryKey: ["registeredPatient"] });
     }
   };
 
@@ -113,6 +118,9 @@ export function Simulations({ config, appConfig, onResults, results }: Props) {
           <div className="mb-4">
             <PromptConfigurator agentPhone={config.agentPhone} agentId={config.smsAgentId} />
           </div>
+
+          {/* ── Registered Patient ── */}
+          <RegisteredPatientCard />
 
           {/* Scenario picker */}
           <div className="bg-white border border-[#EAEAEA] rounded-xl p-5 mb-4">

@@ -8,9 +8,11 @@
 import { useState, useRef } from "react";
 import { Phone, Play, Trash2, RefreshCw, Paperclip, X } from "lucide-react";
 import { runCallParallel, extractContextFromImage } from "../api";
+import { useQueryClient } from "@tanstack/react-query";
 import type { Config, AppConfig, SimResult } from "../types";
 import { SimResultCard } from "../components/SimResultCard";
 import { PromptConfigurator } from "../components/PromptConfigurator";
+import { RegisteredPatientCard } from "../components/RegisteredPatientCard";
 import { LiveCall, type LiveCallDoneResult } from "../components/LiveCall";
 import { LiveWebCall, type LiveWebCallDoneResult } from "../components/LiveWebCall";
 
@@ -46,6 +48,7 @@ const CALL_SCENARIO_LABELS: Record<string, string> = {
 
 export function CallSimulations({ config, appConfig, onResults, results }: Props) {
   const scenarios = appConfig?.scenarios ?? [];
+  const qc = useQueryClient();
   const [subTab, setSubTab] = useState<SubTab>("manual");
 
   /* ── Shared prompt (used by AI Sim and AI Caller) ── */
@@ -142,6 +145,7 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
       setBatchError(e instanceof Error ? e.message : "Batch run failed");
     } finally {
       setBatchRunning(false);
+      qc.invalidateQueries({ queryKey: ["registeredPatient"] });
     }
   };
 
@@ -390,6 +394,9 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
       {subTab === "ai-sim" && (
         <div>
           {ContextBox}
+
+          {/* Registered patient — reused for existing-patient call scenarios */}
+          <RegisteredPatientCard />
 
           <div className="flex gap-2 mb-6">
             {([

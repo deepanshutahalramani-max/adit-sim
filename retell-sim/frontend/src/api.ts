@@ -299,6 +299,34 @@ export async function listRetellCalls(params?: {
   return post("/retell/list-calls", params ?? {});
 }
 
+/* ── Registered patient ── */
+export async function fetchRegisteredPatient(): Promise<{
+  registered: boolean;
+  first_name?: string;
+  last_name?: string;
+  dob?: string;
+  insurance?: string;
+  phone?: string;
+}> {
+  const r = await fetch(`${BASE}/registered-patient`);
+  return r.json();
+}
+
+export async function clearRegisteredPatient(): Promise<void> {
+  await fetch(`${BASE}/registered-patient`, { method: "DELETE" });
+}
+
+export async function setRegisteredPatient(data: {
+  first_name: string; last_name: string; dob: string;
+  insurance?: string; phone?: string; reason?: string;
+}): Promise<void> {
+  await fetch(`${BASE}/registered-patient`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
 export async function extractContextFromImage(
   screenshot: File,
   openaiKey: string,
