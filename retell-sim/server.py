@@ -2314,6 +2314,95 @@ async def create_web_call(req: CreateWebCallRequest):
         raise HTTPException(status_code=502, detail=f"Retell web call creation failed: {exc}")
 
 
+# ── Phone call (outbound) ─────────────────────────────────────────────────────
+
+class CreatePhoneCallRequest(BaseModel):
+    from_number: str                    # Retell-owned number (agent phone)
+    to_number: str                      # Destination (tester / patient phone)
+    override_agent_id: Optional[str] = None
+    scenario_id: Optional[str] = None
+    mode: Optional[str] = None
+
+
+@app.post("/api/retell/create-phone-call")
+async def create_phone_call(req: CreatePhoneCallRequest):
+    """
+    Creates an outbound Retell phone call:  from_number (agent) → to_number (patient/tester).
+    Returns call_id and initial call_status.
+    """
+    try:
+        metadata: dict = {
+            "source":      "adit_sim_platform",
+            "call_type":   "phone_call",
+            "from_number": req.from_number,
+            "to_number":   req.to_number,
+        }
+        if req.override_agent_id:
+            metadata["agent_id"] = req.override_agent_id
+        if req.scenario_id:
+            sc = SCENARIOS.get(req.scenario_id, {})
+            metadata["scenario_id"]    = req.scenario_id
+            metadata["scenario_label"] = sc.get("label", req.scenario_id)
+            metadata["scenario_goal"]  = sc.get("goal", "")
+        if req.mode:
+            metadata["mode"] = req.mode
+
+        body: dict = {
+            "from_number": req.from_number,
+            "to_number":   req.to_number,
+            "metadata":    metadata,
+        }
+        if req.override_agent_id:
+            body["override_agent_id"] = req.override_agent_id
+
+        r = await _retell_post("/v2/create-phone-call", body)
+        if r.status_code not in (200, 201):
+            raise HTTPException(
+                status_code=502,
+                detail=f"Retell create-phone-call failed ({r.status_code}): {r.text[:300]}",
+            )
+        data = r.json()
+        return {
+            "call_id":     data.get("call_id", ""),
+            "agent_id":    data.get("agent_id", ""),
+            "call_status": data.get("call_status", "registered"),
+            "from_number": data.get("from_number", req.from_number),
+            "to_number":   data.get("to_number", req.to_number),
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Retell phone call creation failed: {exc}")
+
+
+@app.get("/api/retell/call-status/{call_id}")
+async def get_call_status(call_id: str):
+    """
+    Poll Retell for live call status + transcript.
+    Frontend polls this every few seconds while a phone call is in progress.
+    """
+    try:
+        r = await _retell_get(f"/v2/get-call/{call_id}")
+        if r.status_code == 404:
+            raise HTTPException(status_code=404, detail="Call not found")
+        if r.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"Retell error ({r.status_code}): {r.text[:200]}")
+        data = r.json()
+        start_ts = data.get("start_timestamp") or 0
+        end_ts   = data.get("end_timestamp")   or 0
+        return {
+            "call_id":     data.get("call_id", call_id),
+            "call_status": data.get("call_status", "unknown"),
+            "transcript":  data.get("transcript", []),
+            "call_analysis": data.get("call_analysis") or {},
+            "duration_ms": (end_ts - start_ts) if end_ts and start_ts else 0,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
 def _extract_persona_name(prompt_text: str) -> str:
     """
     Pull the AI persona name from a Retell system prompt.

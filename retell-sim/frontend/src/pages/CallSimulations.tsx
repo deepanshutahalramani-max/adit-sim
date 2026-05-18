@@ -237,13 +237,12 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
       {subTab === "manual" && (
         <div>
           <div className="bg-[#F0FDF4] border border-[#BBF7D0] rounded-xl px-5 py-3.5 mb-5 flex items-start gap-3">
-            <div className="text-[20px] mt-0.5">🎙️</div>
+            <div className="text-[20px] mt-0.5">📞</div>
             <div>
-              <div className="text-[13px] font-bold text-green-800 mb-0.5">Connected to the real Retell call agent</div>
+              <div className="text-[13px] font-bold text-green-800 mb-0.5">Agent calls your real phone number</div>
               <div className="text-[12.5px] text-green-700 leading-relaxed">
-                Your microphone and speaker connect directly to the call agent via WebRTC.
-                Speak as a patient — hear the real agent voice, see the live transcript.
-                Use headphones to avoid echo.
+                Enter your phone number — Retell dials you directly as an outbound call.
+                Pick up and speak as a patient. Live transcript is polled every 3 seconds.
               </div>
             </div>
           </div>
@@ -271,22 +270,15 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
             <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-[13px] text-red-600 mb-4">{webCallError}</div>
           )}
 
-          {manualCallKey === 0 ? (
-            <button onClick={() => startWebCall("manual")}
-              className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white font-semibold text-[14px] rounded-xl px-8 py-3 transition-colors shadow-sm mb-5">
-              <Phone className="w-4 h-4" />
-              Start Manual Call
-            </button>
-          ) : (
-            <div className="mb-5">
-              <LiveWebCall
-                key={manualCallKey}
-                params={{ mode: "manual", openai_key: config.openaiKey, scenario_id: webCallScenario, agent_phone: config.agentPhone, agent_id: config.callAgentId }}
-                onDone={result => { setWebCallRunning(false); setWebCallDone(result); }}
-                onError={msg => { setWebCallRunning(false); setWebCallError(msg); }}
-              />
-            </div>
-          )}
+          {/* LiveWebCall always mounted for manual mode — idle state shows the phone number input */}
+          <div className="mb-5">
+            <LiveWebCall
+              key={manualCallKey}
+              params={{ mode: "manual", openai_key: config.openaiKey, scenario_id: webCallScenario, agent_phone: config.agentPhone, agent_id: config.callAgentId }}
+              onDone={result => { setWebCallRunning(false); setWebCallDone(result); }}
+              onError={msg => { setWebCallRunning(false); setWebCallError(msg); }}
+            />
+          </div>
 
           {webCallDone && (
             <div className={`flex items-center gap-4 px-5 py-4 rounded-xl border mb-4 ${
@@ -299,9 +291,9 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
                 </div>
                 <div className="text-[12px] text-[#888] mt-0.5">{webCallDone.transcript.length} transcript turns</div>
               </div>
-              <button onClick={() => startWebCall("manual")}
+              <button onClick={() => setManualCallKey(k => k + 1)}
                 className="ml-auto flex items-center gap-1.5 text-[12px] font-semibold text-[#888] border border-[#E5E5E5] bg-white rounded-lg px-3 py-2 hover:border-[#ADADAD]">
-                <RefreshCw className="w-3 h-3" /> Call again
+                <RefreshCw className="w-3 h-3" /> New call
               </button>
             </div>
           )}
@@ -317,7 +309,7 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
               <div className="text-[13px] font-bold text-green-800 mb-0.5">AI patient calls the real Retell agent</div>
               <div className="text-[12.5px] text-green-700 leading-relaxed">
                 GPT-4o-mini generates the patient's spoken responses → OpenAI TTS converts to audio →
-                injected into the real Retell WebRTC call. Watch the live transcript as it unfolds.
+                injected into a Retell WebRTC session. Watch the live transcript as it unfolds.
               </div>
             </div>
           </div>

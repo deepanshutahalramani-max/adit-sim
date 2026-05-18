@@ -1,13 +1,16 @@
 /**
- * LiveWebCall — connects to the REAL Retell call agent via WebRTC.
+ * LiveWebCall — connects to the REAL Retell call agent.
  *
  * Two modes:
- *   "manual"  — user's mic and speaker; they play the patient caller
+ *   "manual"  — Retell calls the tester's real phone number (phone call API).
+ *               Enter your phone number → agent dials you → live transcript polled.
  *   "ai"      — AI patient caller (GPT-4o-mini → OpenAI TTS → injected as mic audio)
- *               agent audio is transcribed from Retell's own transcript events
+ *               via WebRTC web-call. Agent audio transcribed from Retell transcript events.
  *
- * Backend: POST /api/retell/create-web-call → { access_token, call_id }
- * SDK:     retell-client-js-sdk  (RetellWebClient)
+ * Manual backend: POST /api/retell/create-phone-call → { call_id }
+ *                 GET  /api/retell/call-status/{call_id} (polled every 3s)
+ * AI backend:     POST /api/retell/create-web-call → { access_token, call_id }
+ *                 SDK: retell-client-js-sdk (RetellWebClient)
  */
 import { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from "react";
 import { Phone, PhoneOff, Mic, MicOff, Volume2 } from "lucide-react";
@@ -21,7 +24,7 @@ export interface LiveWebCallParams {
   mode: WebCallMode;
   openai_key: string;           // needed for AI caller TTS + GPT responses
   agent_id?: string;            // explicit agent ID (overrides phone lookup)
-  agent_phone?: string;         // sidebar phone → backend resolves the correct call agent
+  agent_phone?: string;         // sidebar phone → used as from_number for phone calls
   scenario_id?: string;         // used to pick the AI caller's opening line
   autoStart?: boolean;          // if true, call starts automatically on mount
   extra_context?: string;       // optional tester-provided context for AI patient behaviour
@@ -85,22 +88,26 @@ function formatTime(s: number) {
 }
 
 export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWebCall({ params, onDone, onError }, ref) {
-  const [status, setStatus]       = useState<"idle" | "connecting" | "active" | "done" | "error">("idle");
+  const [status, setStatus]         = useState<"idle" | "connecting" | "active" | "done" | "error">("idle");
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
-  const [apiEvents, setApiEvents] = useState<ApiEvent[]>([]);
-  const [elapsed, setElapsed]     = useState(0);
-  const [errorMsg, setErrorMsg]   = useState("");
-  const [isMuted, setIsMuted]     = useState(false);
-  const [outcome, setOutcome]     = useState<{ passed: boolean; label: string } | null>(null);
+  const [apiEvents, setApiEvents]   = useState<ApiEvent[]>([]);
+  const [elapsed, setElapsed]       = useState(0);
+  const [errorMsg, setErrorMsg]     = useState("");
+  const [isMuted, setIsMuted]       = useState(false);
+  const [outcome, setOutcome]       = useState<{ passed: boolean; label: string } | null>(null);
   const [agentSpeaking, setAgentSpeaking] = useState(false);
 
-  const clientRef   = useRef<RetellWebClient | null>(null);
-  const timerRef    = useRef<ReturnType<typeof setInterval> | null>(null);
-  const startRef    = useRef(0);
-  const callIdRef   = useRef("");
-  const bottomRef   = useRef<HTMLDivElement>(null);
-  // Mirror of transcript state — used in event callbacks to avoid stale closures
-  const transcriptRef = useRef<TranscriptEntry[]>([]);
+  // Manual mode — phone number the agent will call
+  const [toNumber, setToNumber] = useState("");
+
+  // Refs
+  const clientRef      = useRef<RetellWebClient | null>(null);
+  const timerRef       = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollRef        = useRef<ReturnType<typeof setInterval> | null>(null);
+  const startRef       = useRef(0);
+  const callIdRef      = useRef("");
+  const bottomRef      = useRef<HTMLDivElement>(null);
+  const transcriptRef  = useRef<TranscriptEntry[]>([]);
 
   // AI caller state
   const audioCtxRef      = useRef<AudioContext | null>(null);
@@ -113,13 +120,10 @@ export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWeb
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [transcript, apiEvents]);
 
-  // Auto-start the call if requested (used by E2E chain)
   useEffect(() => {
-    if (params.autoStart) {
-      startCall();
-    }
+    if (params.autoStart) startCall();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // intentionally empty — only fires on mount
+  }, []);
 
   useEffect(() => {
     if (status === "active") {
@@ -155,7 +159,6 @@ export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWeb
 
   // ── AI caller: generate next patient response via backend ─────────────────
   const generateAiReply = useCallback(async (agentText: string, turnHistory: TranscriptEntry[]): Promise<string> => {
-    // repro_opener takes priority over scenario openers
     const opener = params.repro_opener
       ?? AI_OPENERS[params.scenario_id ?? "new-patient-cleaning"]
       ?? "Hi, I need to schedule an appointment.";
@@ -164,7 +167,6 @@ export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWeb
       `${t.role === "user" ? "Caller" : "Agent"}: ${t.content}`
     ).join("\n");
 
-    // Inject repro followup script into extra_context so GPT follows the prescribed path
     const reproScript = params.repro_followups?.length
       ? `\n\nREPRO SCRIPT — follow these lines in order after the opener:\n${params.repro_followups.map((f, i) => `${i + 1}. ${f}`).join("\n")}`
       : "";
@@ -185,23 +187,20 @@ export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWeb
     if (!resp.ok) throw new Error(await resp.text());
     const data = await resp.json();
     return data.reply as string;
-  }, [params.openai_key, params.scenario_id]);
+  }, [params.openai_key, params.scenario_id, params.extra_context, params.repro_opener, params.repro_followups]);
 
   // ── AI caller: convert text to audio and inject into WebRTC mic ───────────
   const speakAsPatient = useCallback(async (text: string) => {
     if (!audioCtxRef.current || !destNodeRef.current) return;
     if (speakingRef.current) return;
     speakingRef.current = true;
-
     try {
-      // OpenAI TTS
       const ttsResp = await fetch("/api/tts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text, openai_key: params.openai_key, voice: "shimmer" }),
       });
       if (!ttsResp.ok) throw new Error("TTS failed");
-
       const arrayBuffer = await ttsResp.arrayBuffer();
       const audioCtx = audioCtxRef.current;
       const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
@@ -217,8 +216,78 @@ export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWeb
     }
   }, [params.openai_key]);
 
-  // ── Start call ─────────────────────────────────────────────────────────────
-  const startCall = useCallback(async () => {
+  // ── MANUAL MODE: phone call flow ──────────────────────────────────────────
+  const startPhoneCall = async () => {
+    const phone = toNumber.trim();
+    if (!phone) { setErrorMsg("Enter your phone number — the agent will call you on it."); return; }
+
+    setStatus("connecting");
+    setTranscript([]);
+    setApiEvents([]);
+    setOutcome(null);
+    setErrorMsg("");
+    transcriptRef.current = [];
+
+    try {
+      const resp = await fetch("/api/retell/create-phone-call", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from_number:        params.agent_phone,
+          to_number:          phone,
+          override_agent_id:  params.agent_id,
+          scenario_id:        params.scenario_id,
+          mode:               params.mode,
+        }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+        throw new Error(err.detail ?? "Failed to create phone call");
+      }
+      const { call_id } = await resp.json();
+      callIdRef.current = call_id;
+      setStatus("active");
+
+      // Poll Retell every 3s for live transcript + call status
+      pollRef.current = setInterval(async () => {
+        try {
+          const pr = await fetch(`/api/retell/call-status/${call_id}`);
+          if (!pr.ok) return;
+          const data = await pr.json();
+
+          // Sync transcript
+          const raw: Array<{ role: string; content: string }> = data.transcript ?? [];
+          if (raw.length) {
+            const entries: TranscriptEntry[] = raw.map(t => ({
+              role:    t.role === "agent" ? "agent" : "user",
+              content: t.content,
+            }));
+            transcriptRef.current = entries;
+            setTranscript(entries);
+          }
+
+          // Call ended
+          if (data.call_status === "ended" || data.call_status === "error") {
+            if (pollRef.current) clearInterval(pollRef.current);
+            const snap   = transcriptRef.current;
+            const passed = snap.some(t => DONE_KWS.some(kw => t.content.toLowerCase().includes(kw)));
+            setOutcome({ passed, label: passed ? "Goal reached ✓" : "Call ended — goal not reached" });
+            setStatus("done");
+            onDone({ passed, outcome: passed ? "completed" : "incomplete", transcript: snap, call_id });
+          }
+        } catch { /* ignore transient poll errors */ }
+      }, 3000);
+
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Failed to start phone call";
+      setErrorMsg(msg);
+      setStatus("error");
+      onError?.(msg);
+    }
+  };
+
+  // ── AI MODE: WebRTC web-call flow ─────────────────────────────────────────
+  const startWebCall = useCallback(async () => {
     setStatus("connecting");
     setTranscript([]);
     setApiEvents([]);
@@ -227,7 +296,6 @@ export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWeb
     callActiveRef.current = true;
 
     try {
-      // 1. Get access token from our backend
       const tokenResp = await fetch("/api/retell/create-web-call", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -245,57 +313,39 @@ export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWeb
       const { access_token, call_id } = await tokenResp.json();
       callIdRef.current = call_id;
 
-      // 2. For AI caller mode — set up synthetic audio stream
-      if (params.mode === "ai") {
-        // Use browser default sample rate (typically 48000Hz) — avoids TTS audio distortion
-        const audioCtx = new AudioContext();
-        const destNode = audioCtx.createMediaStreamDestination();
-        audioCtxRef.current = audioCtx;
-        destNodeRef.current = destNode;
+      // Set up synthetic audio stream for AI caller
+      const audioCtx = new AudioContext();
+      const destNode = audioCtx.createMediaStreamDestination();
+      audioCtxRef.current = audioCtx;
+      destNodeRef.current = destNode;
 
-        // Override getUserMedia to return our synthetic stream as the "mic"
-        const fakeStream = destNode.stream;
-        const origGUM = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
-        navigator.mediaDevices.getUserMedia = async (constraints) => {
-          if (constraints?.audio) return fakeStream;
-          return origGUM(constraints);
-        };
-        // Store origGUM so we can restore it on cleanup
-        (window as unknown as Record<string, unknown>)["__origGUM"] = origGUM;
-      }
+      const fakeStream = destNode.stream;
+      const origGUM = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+      navigator.mediaDevices.getUserMedia = async (constraints) => {
+        if (constraints?.audio) return fakeStream;
+        return origGUM(constraints);
+      };
+      (window as unknown as Record<string, unknown>)["__origGUM"] = origGUM;
 
-      // 3. Create and start Retell SDK client
       const client = new RetellWebClient();
       clientRef.current = client;
 
-      // ── SDK event handlers ──
-
       client.on("call_started", () => {
         setStatus("active");
-        // AI caller speaks first
-        if (params.mode === "ai") {
-          const opener = params.repro_opener
-            ?? AI_OPENERS[params.scenario_id ?? "new-patient-cleaning"]
-            ?? "Hi, I need to schedule an appointment.";
-          // Small delay to let Retell's agent greeting finish first
-          setTimeout(() => {
-            if (callActiveRef.current) speakAsPatient(opener);
-          }, 2500);
-        }
+        const opener = params.repro_opener
+          ?? AI_OPENERS[params.scenario_id ?? "new-patient-cleaning"]
+          ?? "Hi, I need to schedule an appointment.";
+        setTimeout(() => {
+          if (callActiveRef.current) speakAsPatient(opener);
+        }, 2500);
       });
 
       client.on("call_ended", () => {
-        // Use the ref — the state variable would be stale (captured at call-start)
-        const transcriptSnapshot = transcriptRef.current;
-        const passed = transcriptSnapshot.some(t =>
-          DONE_KWS.some(kw => t.content.toLowerCase().includes(kw))
-        );
-        setOutcome({
-          passed,
-          label: passed ? "Goal reached ✓" : "Call ended — goal not reached",
-        });
+        const snap   = transcriptRef.current;
+        const passed = snap.some(t => DONE_KWS.some(kw => t.content.toLowerCase().includes(kw)));
+        setOutcome({ passed, label: passed ? "Goal reached ✓" : "Call ended — goal not reached" });
         setStatus("done");
-        onDone({ passed, outcome: passed ? "completed" : "incomplete", transcript: transcriptSnapshot, call_id });
+        onDone({ passed, outcome: passed ? "completed" : "incomplete", transcript: snap, call_id });
       });
 
       client.on("error", (err: Error) => {
@@ -305,19 +355,14 @@ export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWeb
         onError?.(msg);
       });
 
-      // update: sync transcript + infer API events. Never trigger AI reply here —
-      // the agent may still be mid-sentence. Reply is triggered by agent_stop_talking.
       client.on("update", (update: { transcript?: TranscriptEntry[] }) => {
         if (!update?.transcript) return;
         const entries = update.transcript;
-        transcriptRef.current = entries;  // keep ref in sync
+        transcriptRef.current = entries;
         setTranscript(entries);
-
         const lastAgent = [...entries].reverse().find(e => e.role === "agent");
         if (lastAgent) {
-          // Track latest agent text so agent_stop_talking handler can use it
           lastAgentTextRef.current = lastAgent.content;
-
           const evs = inferEvents(lastAgent.content);
           if (evs.length) {
             setApiEvents(prev => [...prev, ...evs.map(e => ({ text: e, ts: Date.now() }))]);
@@ -325,35 +370,24 @@ export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWeb
         }
       });
 
-      // agent_start_talking / agent_stop_talking: SDK fires these when Retell's
-      // agent audio actually starts and stops — the correct moment to respond.
-      client.on("agent_start_talking", () => {
-        setAgentSpeaking(true);
-      });
+      client.on("agent_start_talking", () => setAgentSpeaking(true));
 
       client.on("agent_stop_talking", () => {
         setAgentSpeaking(false);
-        if (params.mode !== "ai" || !callActiveRef.current || speakingRef.current) return;
-
-        const entries = transcriptRef.current;
+        if (!callActiveRef.current || speakingRef.current) return;
+        const entries  = transcriptRef.current;
         const lastAgent = [...entries].reverse().find(e => e.role === "agent");
         if (!lastAgent) return;
-
-        // Check if conversation is complete
         if (DONE_KWS.some(kw => lastAgent.content.toLowerCase().includes(kw))) {
           setTimeout(() => { if (callActiveRef.current) client.stopCall(); }, 1500);
           return;
         }
-
-        // Small buffer after agent stops, then speak
         setTimeout(async () => {
           if (!callActiveRef.current || speakingRef.current) return;
           try {
             const reply = await generateAiReply(lastAgent.content, entries);
             if (callActiveRef.current) await speakAsPatient(reply);
-          } catch (e) {
-            console.warn("AI reply error:", e);
-          }
+          } catch (e) { console.warn("AI reply error:", e); }
         }, 400);
       });
 
@@ -365,60 +399,79 @@ export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWeb
       setStatus("error");
       onError?.(msg);
     }
-  // transcript removed from deps — we use transcriptRef to avoid stale closures in event handlers
   }, [params, generateAiReply, speakAsPatient, onDone, onError]);
 
-  const endCall = () => {
-    clientRef.current?.stopCall();
-    callActiveRef.current = false;
-    // Restore getUserMedia if it was overridden for AI mode
-    if (params.mode === "ai") {
+  // ── Unified start ─────────────────────────────────────────────────────────
+  const startCall = useCallback(async () => {
+    if (params.mode === "manual") {
+      await startPhoneCall();
+    } else {
+      await startWebCall();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.mode, toNumber, startWebCall]);
+
+  // ── End call ──────────────────────────────────────────────────────────────
+  const endCall = useCallback(() => {
+    if (params.mode === "manual") {
+      // Phone call: stop the polling; the actual call will run to completion on Retell's side
+      if (pollRef.current) clearInterval(pollRef.current);
+      setStatus("done");
+      const snap = transcriptRef.current;
+      const passed = snap.some(t => DONE_KWS.some(kw => t.content.toLowerCase().includes(kw)));
+      setOutcome({ passed, label: "Call ended by tester" });
+      onDone({ passed, outcome: "incomplete", transcript: snap, call_id: callIdRef.current });
+    } else {
+      clientRef.current?.stopCall();
+      callActiveRef.current = false;
       const origGUM = (window as unknown as Record<string, unknown>)["__origGUM"];
       if (origGUM) {
         navigator.mediaDevices.getUserMedia = origGUM as typeof navigator.mediaDevices.getUserMedia;
         delete (window as unknown as Record<string, unknown>)["__origGUM"];
       }
+      if (audioCtxRef.current && audioCtxRef.current.state !== "closed") {
+        audioCtxRef.current.close();
+      }
     }
-    // Close AudioContext to release resources
-    if (audioCtxRef.current && audioCtxRef.current.state !== "closed") {
-      audioCtxRef.current.close();
-    }
-  };
+  }, [params.mode, onDone]);
 
-  // Expose endCall imperatively so parent (e.g. Back button) can cut the call
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, []);
+
   useImperativeHandle(ref, () => ({ endCall }), [endCall]);
 
   const toggleMute = () => {
     if (!clientRef.current) return;
-    // Retell SDK v2: separate mute() and unmute() methods
-    if (isMuted) {
-      clientRef.current.unmute();
-    } else {
-      clientRef.current.mute();
-    }
+    if (isMuted) clientRef.current.unmute();
+    else         clientRef.current.mute();
     setIsMuted(m => !m);
   };
 
-  const isActive = status === "active";
+  const isActive     = status === "active";
   const isConnecting = status === "connecting";
 
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="bg-white border border-[#EAEAEA] rounded-2xl overflow-hidden shadow-sm">
+
       {/* ── Phone header ── */}
       <div className={clsx(
         "px-5 py-3.5 flex items-center gap-3 transition-colors duration-300",
-        status === "idle"       ? "bg-[#1A1A1A]" :
-        isConnecting            ? "bg-[#1A1A1A]" :
-        isActive                ? "bg-[#1C3A1A]" :
-        status === "done"       ? "bg-[#1C2B1A]" :
-                                  "bg-[#2B1A1A]",
+        status === "idle"  ? "bg-[#1A1A1A]" :
+        isConnecting       ? "bg-[#1A1A1A]" :
+        isActive           ? "bg-[#1C3A1A]" :
+        status === "done"  ? "bg-[#1C2B1A]" :
+                             "bg-[#2B1A1A]",
       )}>
         <div className={clsx(
           "w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0",
-          isActive    ? "bg-green-500" :
-          status === "done" ? "bg-[#4CAF50]" :
-          status === "error" ? "bg-red-500" :
-                              "bg-[#333]",
+          isActive           ? "bg-green-500" :
+          status === "done"  ? "bg-[#4CAF50]" :
+          status === "error" ? "bg-red-500"   : "bg-[#333]",
         )}>
           {status === "done" || status === "error"
             ? <PhoneOff className="w-[18px] h-[18px] text-white" />
@@ -428,22 +481,22 @@ export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWeb
 
         <div className="flex-1 min-w-0">
           <div className="text-[13px] font-bold text-white leading-tight">
-            {status === "idle"       ? (params.mode === "manual" ? "Manual Call — Ready" : "AI Caller — Ready") :
-             isConnecting            ? "Connecting to Retell…" :
-             isActive                ? (params.mode === "manual" ? "Live — You are the caller" : "AI Caller active") :
-             status === "done"       ? "Call ended" :
-                                       "Call failed"}
+            {status === "idle"      ? (params.mode === "manual" ? "Manual Call — Ready" : "AI Caller — Ready") :
+             isConnecting           ? (params.mode === "manual" ? `Dialing ${toNumber}…` : "Connecting to Retell…") :
+             isActive               ? (params.mode === "manual" ? `Live call → ${toNumber}` : "AI Caller active") :
+             status === "done"      ? "Call ended" : "Call failed"}
           </div>
           <div className="text-[11px] text-white/50 mt-0.5">
             {isActive || status === "done"
-              ? `Real Retell agent · ${params.mode === "manual" ? "Manual" : "AI Caller"} · ${formatTime(elapsed)}`
+              ? params.mode === "manual"
+                ? `Outbound phone call · ${formatTime(elapsed)}`
+                : `Real Retell agent · AI Caller · ${formatTime(elapsed)}`
               : params.mode === "manual"
-              ? "Your mic → Retell call agent"
+              ? "Agent calls your phone number"
               : "GPT-4o-mini + TTS → Retell call agent"}
           </div>
         </div>
 
-        {/* Timer */}
         {(isActive || status === "done") && (
           <div className={clsx(
             "text-[15px] font-mono font-bold tabular-nums",
@@ -453,8 +506,7 @@ export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWeb
           </div>
         )}
 
-        {/* Agent speaking indicator */}
-        {isActive && agentSpeaking && (
+        {isActive && agentSpeaking && params.mode === "ai" && (
           <div className="flex items-center gap-1 px-2.5 py-1 bg-green-500/20 rounded-full">
             <Volume2 className="w-3 h-3 text-green-400" />
             <span className="text-[10px] text-green-400 font-semibold">Agent</span>
@@ -464,32 +516,70 @@ export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWeb
 
       {/* ── Transcript ── */}
       <div className="h-80 overflow-y-auto p-4 space-y-3 bg-[#F7F7F5]">
-        {status === "idle" && (
+
+        {/* Idle state */}
+        {status === "idle" && params.mode === "manual" && (
+          <div className="flex items-center justify-center h-full">
+            <div className="w-full max-w-xs text-center">
+              <div className="text-[32px] mb-3">📞</div>
+              <div className="text-[13px] font-semibold text-[#555] mb-4">
+                Enter your phone number — the agent will call you
+              </div>
+              <input
+                type="tel"
+                value={toNumber}
+                onChange={e => setToNumber(e.target.value)}
+                placeholder="+1 (415) 555-0100"
+                className="w-full border border-[#E5E5E5] rounded-xl px-4 py-2.5 text-[14px] text-center focus:outline-none focus:border-green-400 mb-1"
+              />
+              <div className="text-[11px] text-[#ADADAD]">E.164 format, e.g. +14155550100</div>
+            </div>
+          </div>
+        )}
+
+        {status === "idle" && params.mode === "ai" && (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
-              <div className="text-[32px] mb-3">{params.mode === "manual" ? "🎙️" : "🤖"}</div>
+              <div className="text-[32px] mb-3">🤖</div>
               <div className="text-[13px] font-semibold text-[#555]">
-                {params.mode === "manual" ? "Click Start Call — your mic connects to the real Retell agent" : "Click Start Call — AI caller will talk to the real Retell agent"}
+                Click Start Call — AI caller will talk to the real Retell agent
               </div>
               <div className="text-[11.5px] text-[#ADADAD] mt-1">
-                {params.mode === "manual" ? "Use headphones to avoid echo" : "Watch the transcript live as it happens"}
+                Watch the transcript live as it happens
               </div>
             </div>
           </div>
         )}
 
+        {/* Connecting */}
         {isConnecting && (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
               <div className="w-10 h-10 border-[3px] border-green-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-              <div className="text-[13px] text-[#888]">Connecting to Retell…</div>
+              <div className="text-[13px] text-[#888]">
+                {params.mode === "manual" ? `Calling ${toNumber}…` : "Connecting to Retell…"}
+              </div>
+              {params.mode === "manual" && (
+                <div className="text-[11px] text-[#ADADAD] mt-1">Pick up when your phone rings</div>
+              )}
             </div>
           </div>
         )}
 
+        {/* Active — phone call with no transcript yet */}
+        {isActive && transcript.length === 0 && params.mode === "manual" && (
+          <div className="flex items-center justify-center h-full">
+            <div className="text-center">
+              <div className="w-10 h-10 border-[3px] border-green-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+              <div className="text-[13px] text-[#888]">Waiting for transcript…</div>
+              <div className="text-[11px] text-[#ADADAD] mt-1">Updates every 3 seconds</div>
+            </div>
+          </div>
+        )}
+
+        {/* Transcript bubbles */}
         {transcript.map((entry, i) => (
           <div key={i}>
-            {/* API events before agent turns */}
             {entry.role === "agent" && (() => {
               const evs = inferEvents(entry.content);
               return evs.length > 0 ? (
@@ -505,7 +595,6 @@ export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWeb
             })()}
 
             {entry.role === "user" ? (
-              /* Caller — left */
               <div className="flex items-start gap-2.5">
                 <div className="w-7 h-7 bg-[#E8E8E6] rounded-full flex items-center justify-center text-[12px] flex-shrink-0 mt-0.5">
                   {params.mode === "manual" ? "🙋" : "🤖"}
@@ -520,7 +609,6 @@ export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWeb
                 </div>
               </div>
             ) : (
-              /* Agent — right */
               <div className="flex items-start gap-2.5 flex-row-reverse">
                 <div className="w-7 h-7 bg-[#E8F5E9] rounded-full flex items-center justify-center text-[12px] flex-shrink-0 mt-0.5">🏥</div>
                 <div className="text-right">
@@ -534,7 +622,7 @@ export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWeb
           </div>
         ))}
 
-        {/* Agent typing while active and last turn was user */}
+        {/* Typing indicator */}
         {isActive && transcript.length > 0 && transcript[transcript.length - 1].role === "user" && (
           <div className="flex items-center gap-2.5 flex-row-reverse">
             <div className="w-7 h-7 bg-[#E8F5E9] rounded-full flex items-center justify-center text-[12px] flex-shrink-0">🏥</div>
@@ -569,7 +657,31 @@ export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWeb
 
       {/* ── Controls ── */}
       <div className="px-5 py-3 border-t border-[#EAEAEA] bg-white flex items-center gap-3">
-        {status === "idle" && (
+
+        {/* Manual mode idle — phone number input + call button */}
+        {status === "idle" && params.mode === "manual" && (
+          <>
+            <input
+              type="tel"
+              value={toNumber}
+              onChange={e => setToNumber(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && startCall()}
+              placeholder="+14155550100"
+              className="flex-1 border border-[#E5E5E5] rounded-xl px-3 py-2 text-[13px] focus:outline-none focus:border-green-400"
+            />
+            <button
+              onClick={startCall}
+              disabled={!toNumber.trim()}
+              className="flex items-center gap-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-[13px] rounded-xl px-5 py-2.5 transition-colors shadow-sm"
+            >
+              <Phone className="w-4 h-4" />
+              Call Me
+            </button>
+          </>
+        )}
+
+        {/* AI mode idle */}
+        {status === "idle" && params.mode === "ai" && (
           <button
             onClick={startCall}
             className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white font-semibold text-[13px] rounded-xl px-5 py-2.5 transition-colors shadow-sm"
@@ -582,13 +694,14 @@ export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWeb
         {isConnecting && (
           <button disabled className="flex items-center gap-2 bg-[#888] text-white font-semibold text-[13px] rounded-xl px-5 py-2.5 opacity-60 cursor-not-allowed">
             <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-            Connecting…
+            {params.mode === "manual" ? "Calling…" : "Connecting…"}
           </button>
         )}
 
         {isActive && (
           <>
-            {params.mode === "manual" && (
+            {/* AI mode: mute/unmute is irrelevant (TTS injection), but show for web-call completeness */}
+            {params.mode === "ai" && (
               <button
                 onClick={toggleMute}
                 className={clsx(
@@ -602,31 +715,41 @@ export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWeb
                 {isMuted ? "Unmute" : "Mute"}
               </button>
             )}
+
+            {/* Phone call: polling indicator */}
+            {params.mode === "manual" && (
+              <div className="flex items-center gap-2 text-[11.5px] text-[#888]">
+                <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                Live call in progress · polling transcript
+              </div>
+            )}
+
             <button
               onClick={endCall}
               className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white font-semibold text-[13px] rounded-xl px-5 py-2.5 transition-colors shadow-sm ml-auto"
             >
               <PhoneOff className="w-3.5 h-3.5" />
-              End Call
+              {params.mode === "manual" ? "Stop Tracking" : "End Call"}
             </button>
           </>
         )}
 
         {(status === "done" || status === "error") && (
           <button
-            onClick={startCall}
+            onClick={() => {
+              setStatus("idle");
+              setTranscript([]);
+              setApiEvents([]);
+              setOutcome(null);
+              setErrorMsg("");
+              setElapsed(0);
+              transcriptRef.current = [];
+            }}
             className="flex items-center gap-2 bg-[#1A1A1A] hover:bg-[#333] text-white font-semibold text-[13px] rounded-xl px-5 py-2.5 transition-colors shadow-sm"
           >
             <Phone className="w-3.5 h-3.5" />
-            Call again
+            {params.mode === "manual" ? "New Call" : "Call again"}
           </button>
-        )}
-
-        {params.mode === "manual" && isActive && (
-          <div className="flex items-center gap-2 text-[11.5px] text-[#888]">
-            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-            Real Retell agent — live call
-          </div>
         )}
       </div>
     </div>
