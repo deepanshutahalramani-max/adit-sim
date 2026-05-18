@@ -2316,30 +2316,6 @@ async def create_web_call(req: CreateWebCallRequest):
 
 # ── Phone call (outbound) ─────────────────────────────────────────────────────
 
-def _build_dynamic_vars(from_number: str, to_number: str) -> dict:
-    """
-    Build retell_llm_dynamic_variables matching what ADIT injects for real inbound calls.
-    Computed fresh at call-creation time so date/time values are current.
-    """
-    import datetime as _dt
-    now = _dt.datetime.now()
-    return {
-        "agent_phone_number":              from_number,
-        "patient_phone_number":            to_number,
-        "office_status":                   "open",
-        "business_hours":                  "Monday through Friday 8 AM to 5 PM, Saturday 9 AM to 2 PM",
-        "current_day":                     now.strftime("%A").lower(),
-        "current_date":                    now.strftime("%Y-%m-%d"),
-        "current_time":                    now.strftime("%I:%M %p").lstrip("0"),
-        "current_year":                    str(now.year),
-        "calendar_buffer_date":            now.strftime("%Y-%m-%d %-I %p") if os.name != "nt"
-                                           else now.strftime("%Y-%m-%d ") + now.strftime("%I %p").lstrip("0"),
-        "cancellation_fallback_prompt":    CANCELLATION_ON.strip(),
-        "rescheduling_fallback_prompt":    RESCHEDULING_ON.strip(),
-        "schedule_existing_fallback_prompt": SCHEDULE_EXISTING_ON.strip(),
-    }
-
-
 class CreatePhoneCallRequest(BaseModel):
     from_number: str   # Retell-owned number (agent phone)
     to_number: str     # Destination (tester / patient phone)
@@ -2348,15 +2324,14 @@ class CreatePhoneCallRequest(BaseModel):
 @app.post("/api/retell/create-phone-call")
 async def create_phone_call(req: CreatePhoneCallRequest):
     """
-    Outbound phone call via POST /v2/create-phone-call.
-    Passes retell_llm_dynamic_variables so the agent has the same runtime context
-    it would receive from ADIT's webhook on a real inbound call.
+    Outbound phone call: POST /v2/create-phone-call with from_number + to_number only.
+    Retell fires its webhook to ADIT on call_started — ADIT injects
+    retell_llm_dynamic_variables the same way it does for real inbound calls.
     """
     try:
         r = await _retell_post("/v2/create-phone-call", {
-            "from_number":                req.from_number,
-            "to_number":                  req.to_number,
-            "retell_llm_dynamic_variables": _build_dynamic_vars(req.from_number, req.to_number),
+            "from_number": req.from_number,
+            "to_number":   req.to_number,
         })
         if r.status_code not in (200, 201):
             raise HTTPException(
