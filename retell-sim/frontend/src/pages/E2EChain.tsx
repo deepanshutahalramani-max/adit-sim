@@ -329,6 +329,7 @@ export function E2EChain({ config, onResults, chainResults }: Props) {
                   openai_key: config.openaiKey,
                   scenario_id: PHASES[callPhase - 1].id,
                   autoStart: true,
+                  agent_phone: config.agentPhone,
                 }}
                 onDone={result => handleCallPhaseDone(result, callPhase - 1)}
                 onError={msg => { setCallError(`Phase ${callPhase} error: ${msg}`); setCallPhase(4); }}

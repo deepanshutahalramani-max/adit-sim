@@ -2025,16 +2025,24 @@ def sms_send(req: SmsSendRequest):
 # ── Retell Web Call: create a browser-based WebRTC session ────────────────────
 
 class CreateWebCallRequest(BaseModel):
-    agent_id: str = RETELL_CALL_AGENT_ID
+    agent_id: Optional[str] = None
+    agent_phone: Optional[str] = None  # resolves agent_id dynamically when supplied
 
 @app.post("/api/retell/create-web-call")
 async def create_web_call(req: CreateWebCallRequest):
     """
     Creates a Retell web call session.
-    Returns access_token for the Retell JS SDK and call_id for tracking.
+    If agent_phone is supplied, the correct voice agent is looked up dynamically.
+    Falls back to RETELL_CALL_AGENT_ID if neither is provided.
     """
     try:
-        r = await _retell_post("/v2/create-web-call", {"agent_id": req.agent_id})
+        agent_id = req.agent_id or RETELL_CALL_AGENT_ID
+        if req.agent_phone and not req.agent_id:
+            resolved = await _resolve_agent_by_phone(req.agent_phone, "voice")
+            if resolved:
+                agent_id = resolved
+
+        r = await _retell_post("/v2/create-web-call", {"agent_id": agent_id})
         if r.status_code not in (200, 201):
             raise HTTPException(
                 status_code=502,
@@ -2044,12 +2052,56 @@ async def create_web_call(req: CreateWebCallRequest):
         return {
             "call_id":      data.get("call_id", ""),
             "access_token": data.get("access_token", ""),
-            "agent_id":     req.agent_id,
+            "agent_id":     agent_id,
         }
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Retell web call creation failed: {exc}")
+
+
+@app.get("/api/retell/agent-info")
+async def get_agent_info(agent_phone: Optional[str] = None):
+    """
+    Returns display info (name, id) for the agent associated with a phone number.
+    Checks both chat and voice agent lists.
+    Falls back to hardcoded defaults.
+    """
+    sms_id  = RETELL_AGENT_ID
+    call_id = RETELL_CALL_AGENT_ID
+    sms_name  = "Siriyaa"
+    call_name = "Siriyaa"
+
+    if agent_phone:
+        resolved_chat  = await _resolve_agent_by_phone(agent_phone, "chat")
+        resolved_voice = await _resolve_agent_by_phone(agent_phone, "voice")
+        if resolved_chat:
+            sms_id = resolved_chat
+        if resolved_voice:
+            call_id = resolved_voice
+
+    # Fetch display names from Retell
+    async def _get_name(aid: str, channel: str) -> str:
+        try:
+            path = f"/get-chat-agent/{aid}" if channel == "chat" else f"/get-agent/{aid}"
+            r = await _retell_get(path)
+            if r.status_code == 200:
+                data = r.json()
+                if isinstance(data, dict) and data.get("status") != "error":
+                    return data.get("agent_name") or data.get("name") or ""
+        except Exception:
+            pass
+        return ""
+
+    sms_name_fetched  = await _get_name(sms_id, "chat")
+    call_name_fetched = await _get_name(call_id, "voice")
+
+    return {
+        "sms_agent_id":   sms_id,
+        "call_agent_id":  call_id,
+        "sms_agent_name":  sms_name_fetched  or sms_name,
+        "call_agent_name": call_name_fetched or call_name,
+    }
 
 
 # ── AI Caller helper: generate patient reply + TTS for web call AI mode ──────

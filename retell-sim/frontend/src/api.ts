@@ -231,8 +231,26 @@ export async function smsSend(params: {
 /* ── Real Retell Web Call ── */
 export async function createWebCall(params?: {
   agent_id?: string;
+  agent_phone?: string;
 }): Promise<{ call_id: string; access_token: string; agent_id: string }> {
   return post("/retell/create-web-call", params ?? {});
+}
+
+export async function fetchAgentInfo(agentPhone?: string): Promise<{
+  sms_agent_id: string;
+  call_agent_id: string;
+  sms_agent_name: string;
+  call_agent_name: string;
+}> {
+  const url = agentPhone
+    ? `${BASE}/retell/agent-info?agent_phone=${encodeURIComponent(agentPhone)}`
+    : `${BASE}/retell/agent-info`;
+  const r = await fetch(url);
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(err.detail ?? r.statusText);
+  }
+  return r.json();
 }
 
 export async function analyzeCallDebugScreenshot(

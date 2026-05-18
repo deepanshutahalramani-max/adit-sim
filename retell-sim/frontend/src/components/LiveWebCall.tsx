@@ -20,7 +20,8 @@ export type WebCallMode = "manual" | "ai";
 export interface LiveWebCallParams {
   mode: WebCallMode;
   openai_key: string;           // needed for AI caller TTS + GPT responses
-  agent_id?: string;            // defaults to the call agent on the backend
+  agent_id?: string;            // explicit agent ID (overrides phone lookup)
+  agent_phone?: string;         // sidebar phone → backend resolves the correct call agent
   scenario_id?: string;         // used to pick the AI caller's opening line
   autoStart?: boolean;          // if true, call starts automatically on mount
   extra_context?: string;       // optional tester-provided context for AI patient behaviour
@@ -230,7 +231,7 @@ export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWeb
       const tokenResp = await fetch("/api/retell/create-web-call", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ agent_id: params.agent_id }),
+        body: JSON.stringify({ agent_id: params.agent_id, agent_phone: params.agent_phone }),
       });
       if (!tokenResp.ok) {
         const err = await tokenResp.json().catch(() => ({ detail: tokenResp.statusText }));

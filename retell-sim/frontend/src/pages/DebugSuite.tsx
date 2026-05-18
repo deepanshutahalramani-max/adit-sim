@@ -694,6 +694,7 @@ export function DebugSuite({ config, onResults }: Props) {
                       repro_opener: diagnosis.repro_opener,
                       repro_followups: diagnosis.repro_followups ?? [],
                       autoStart: true,
+                      agent_phone: config.agentPhone,
                     }}
                     onDone={result => handleCallRunDone(result.passed)}
                     onError={msg => { setError(msg); setCurrentRunId(0); }}

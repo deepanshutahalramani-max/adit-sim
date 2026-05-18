@@ -277,7 +277,7 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
             <div className="mb-5">
               <LiveWebCall
                 key={manualCallKey}
-                params={{ mode: "manual", openai_key: config.openaiKey, scenario_id: webCallScenario }}
+                params={{ mode: "manual", openai_key: config.openaiKey, scenario_id: webCallScenario, agent_phone: config.agentPhone }}
                 onDone={result => { setWebCallRunning(false); setWebCallDone(result); }}
                 onError={msg => { setWebCallRunning(false); setWebCallError(msg); }}
               />
@@ -359,7 +359,7 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
             <div className="mb-5">
               <LiveWebCall
                 key={aiCallerKey}
-                params={{ mode: "ai", openai_key: config.openaiKey, scenario_id: webCallScenario, extra_context: simContext }}
+                params={{ mode: "ai", openai_key: config.openaiKey, scenario_id: webCallScenario, extra_context: simContext, agent_phone: config.agentPhone }}
                 onDone={result => { setWebCallRunning(false); setWebCallDone(result); }}
                 onError={msg => { setWebCallRunning(false); setWebCallError(msg); }}
               />

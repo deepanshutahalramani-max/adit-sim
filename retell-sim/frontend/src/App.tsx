@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { fetchConfig } from "./api";
+import { fetchConfig, fetchAgentInfo } from "./api";
 import type { Config } from "./types";
 import { Sidebar } from "./components/Sidebar";
 import { SimulationsHub } from "./pages/SimulationsHub";
@@ -49,6 +49,15 @@ export default function App() {
 
   const { data: appConfig } = useQuery({ queryKey: ["config"], queryFn: fetchConfig });
 
+  // Fetch agent display info whenever the agent phone changes
+  const { data: agentInfo } = useQuery({
+    queryKey: ["agentInfo", config.agentPhone],
+    queryFn: () => fetchAgentInfo(config.agentPhone),
+    staleTime: 60_000,   // cache for 1 min — avoid hammering Retell on every keystroke
+    retry: false,
+  });
+  const agentName = agentInfo?.call_agent_name || agentInfo?.sms_agent_name || "Siriyaa";
+
   const handleSmsResults = (rs: SimResult[]) => {
     if (rs.length === 0) setSmsResults([]);
     else setSmsResults(prev => [...rs, ...prev]);
@@ -90,7 +99,7 @@ export default function App() {
           </div>
           <div className="flex items-center gap-3">
             <div className="text-right">
-              <div className="text-[13.5px] font-semibold text-[#333]">Siriyaa</div>
+              <div className="text-[13.5px] font-semibold text-[#333]">{agentName}</div>
               <div className="text-[11.5px] text-[#ADADAD]">Test QA · AI Agent</div>
             </div>
             <div className="flex items-center gap-1.5 bg-[#F2FDF4] border border-[#B8EFC8] px-3.5 py-1.5 rounded-full">
