@@ -78,8 +78,8 @@ export function Sidebar({ config, onChange, agentName = "—" }: Props) {
     onChange({ ...config, [k]: v });
   };
 
-  const allGood = !!config.bearerToken && !!config.openaiKey
-    && !!config.smsAgentId && !!config.callAgentId;
+  // OpenAI key is optional — the server falls back to its own env key
+  const allGood = !!config.bearerToken && !!config.smsAgentId && !!config.callAgentId;
 
   return (
     <aside className="w-64 bg-white border-r border-[#EAEAEA] flex flex-col flex-shrink-0 overflow-y-auto">
@@ -110,9 +110,7 @@ export function Sidebar({ config, onChange, agentName = "—" }: Props) {
             <p className="text-[11px] font-semibold text-amber-700">
               {!config.bearerToken
                 ? "Bearer token required"
-                : !config.smsAgentId || !config.callAgentId
-                  ? "Paste both Retell Agent IDs to get started"
-                  : "OpenAI key required for AI features"}
+                : "Paste both Retell Agent IDs to get started"}
             </p>
           </div>
         )}
@@ -158,8 +156,9 @@ export function Sidebar({ config, onChange, agentName = "—" }: Props) {
           value={config.openaiKey}
           onChange={v => set("openaiKey", v)}
           type="password"
-          placeholder="sk-proj-…"
+          placeholder="Optional — server key used by default"
           savedFromStorage={stored("adit_openai_key")}
+          hint="Leave blank to use the shared server key"
         />
 
         {/* LLM Judge toggle */}
@@ -237,11 +236,11 @@ export function Sidebar({ config, onChange, agentName = "—" }: Props) {
               valueClass={config.bearerToken ? "text-green-600" : "text-[#ADADAD]"}
             />
             <StatusRow
-              ok={!!config.openaiKey}
-              okColor={config.openaiKey ? "bg-green-500" : "bg-amber-400"}
+              ok={true}
+              okColor="bg-green-500"
               label="OpenAI key"
-              value={config.openaiKey ? "Set" : "Missing"}
-              valueClass={config.openaiKey ? "text-green-600" : "text-amber-600"}
+              value={config.openaiKey ? "Custom" : "Server default"}
+              valueClass={config.openaiKey ? "text-green-600" : "text-[#888]"}
             />
             <StatusRow
               ok={!!config.smsAgentId}

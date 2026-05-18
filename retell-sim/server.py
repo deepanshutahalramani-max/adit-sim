@@ -627,10 +627,9 @@ async def debug_analyze(
     screenshot: UploadFile = File(...),
     system_prompt: str = Form(""),
     extra_context: str = Form(""),
-    openai_key: str = Form(...),
+    openai_key: str = Form(""),
 ):
-    if not openai_key:
-        raise HTTPException(status_code=400, detail="OpenAI API key required")
+    openai_key = _resolve_openai_key(openai_key)
     image_bytes = await screenshot.read()
     try:
         from openai import OpenAI
@@ -683,11 +682,10 @@ class AnalyzeTextRequest(BaseModel):
 @app.post("/api/debug/analyze-text")
 def debug_analyze_text(req: AnalyzeTextRequest):
     """Text-only escalation analysis (no screenshot)."""
-    if not req.openai_key:
-        raise HTTPException(status_code=400, detail="OpenAI API key required")
+    openai_key = _resolve_openai_key(req.openai_key)
     try:
         from openai import OpenAI
-        client = OpenAI(api_key=req.openai_key)
+        client = OpenAI(api_key=openai_key)
         prompt_block = f"\n\nSYSTEM PROMPT (full Retell agent prompt):\n```\n{req.system_prompt}\n```" if req.system_prompt.strip() else ""
         context_block = f"\n\nADDITIONAL CONTEXT FROM TESTER: {req.extra_context}" if req.extra_context.strip() else ""
 
@@ -749,11 +747,10 @@ def debug_validate(req: ValidationRequest):
 
 @app.post("/api/evaluate/transcript")
 def evaluate_transcript(req: TranscriptRequest):
-    if not req.openai_key:
-        raise HTTPException(status_code=400, detail="OpenAI key required")
+    openai_key = _resolve_openai_key(req.openai_key)
     try:
         from openai import OpenAI
-        client = OpenAI(api_key=req.openai_key)
+        client = OpenAI(api_key=openai_key)
         prompt_ctx = f"\n\nSystem Prompt:\n```\n{req.system_prompt}\n```" if req.system_prompt.strip() else ""
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -787,11 +784,10 @@ def evaluate_transcript(req: TranscriptRequest):
 
 @app.post("/api/generate/scenarios")
 def generate_scenarios(req: ScenarioGenRequest):
-    if not req.openai_key:
-        raise HTTPException(status_code=400, detail="OpenAI key required")
+    openai_key = _resolve_openai_key(req.openai_key)
     try:
         from openai import OpenAI
-        client = OpenAI(api_key=req.openai_key)
+        client = OpenAI(api_key=openai_key)
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
@@ -847,6 +843,24 @@ class ApplyFixRequest(BaseModel):
 RETELL_API_KEY       = "key_fb275adbb9a079ffa32be77492db"
 RETELL_AGENT_ID      = "agent_ee5d7e7f782caa9f1789765182"   # chat / SMS agent
 RETELL_CALL_AGENT_ID = "agent_8c769ad3395e9b058984c07628"   # voice call agent
+
+# ── OpenAI default key ────────────────────────────────────────────────────────
+# Loaded from environment so it is never sent to the browser.
+# Individual requests can still override it by passing their own key.
+DEFAULT_OPENAI_KEY: str = os.environ.get("OPENAI_API_KEY", "")
+
+
+def _resolve_openai_key(request_key: str) -> str:
+    """Return the request-level key if set, otherwise fall back to server default."""
+    key = (request_key or "").strip()
+    if key:
+        return key
+    if DEFAULT_OPENAI_KEY:
+        return DEFAULT_OPENAI_KEY
+    raise HTTPException(
+        status_code=400,
+        detail="OpenAI API key required — set OPENAI_API_KEY env var on the server or enter it in the sidebar.",
+    )
 
 # Runtime placeholder defaults injected before LLM simulation (Retell fills
 # these at call-time normally; for simulation we use plausible values).
@@ -1081,8 +1095,7 @@ class CallParallelRequest(BaseModel):
 @app.post("/api/simulate/call")
 def simulate_call(req: CallSimRequest):
     """Single synchronous call simulation."""
-    if not req.openai_key:
-        raise HTTPException(status_code=400, detail="OpenAI key required")
+    req.openai_key = _resolve_openai_key(req.openai_key)
     result = _run_call_simulation_sync(
         req.scenario_id, req.call_agent_prompt, req.openai_key, req.max_turns,
         req.extra_context,
@@ -1093,8 +1106,7 @@ def simulate_call(req: CallSimRequest):
 @app.post("/api/simulate/call/parallel")
 def simulate_call_parallel(req: CallParallelRequest):
     """Parallel call simulations — LLM-to-LLM, no ADIT backend needed."""
-    if not req.openai_key:
-        raise HTTPException(status_code=400, detail="OpenAI key required")
+    req.openai_key = _resolve_openai_key(req.openai_key)
     tasks = [(sid, i) for sid in req.scenario_ids for i in range(req.repeats)]
     results = []
     with ThreadPoolExecutor(max_workers=min(req.max_parallel, 5)) as ex:
@@ -1245,11 +1257,10 @@ async def debug_analyze_call_screenshot(
     screenshot: UploadFile = File(...),
     system_prompt: str = Form(""),
     extra_context: str = Form(""),
-    openai_key: str = Form(...),
+    openai_key: str = Form(""),
 ):
     """Analyze a call-related screenshot using GPT-4o vision (call agent debug mode)."""
-    if not openai_key:
-        raise HTTPException(status_code=400, detail="OpenAI API key required")
+    openai_key = _resolve_openai_key(openai_key)
     image_bytes = await screenshot.read()
     try:
         from openai import OpenAI
@@ -1308,11 +1319,10 @@ Return ONLY valid JSON (no markdown):
 @app.post("/api/debug/analyze-call")
 def debug_analyze_call(req: AnalyzeCallRequest):
     """Analyze a voice call transcript for agent issues."""
-    if not req.openai_key:
-        raise HTTPException(status_code=400, detail="OpenAI API key required")
+    openai_key = _resolve_openai_key(req.openai_key)
     try:
         from openai import OpenAI
-        client = OpenAI(api_key=req.openai_key)
+        client = OpenAI(api_key=openai_key)
         prompt_block = f"\n\nCALL AGENT SYSTEM PROMPT:\n```\n{req.system_prompt}\n```" if req.system_prompt.strip() else ""
         context_block = f"\n\nADDITIONAL CONTEXT: {req.extra_context}" if req.extra_context.strip() else ""
 
@@ -2234,11 +2244,10 @@ def ai_caller_reply(req: AiCallerReplyRequest):
     Generates the next spoken reply from the AI patient caller during a live
     Retell web call. Used exclusively by LiveWebCall in 'ai' mode.
     """
-    if not req.openai_key:
-        raise HTTPException(status_code=400, detail="OpenAI key required")
+    openai_key = _resolve_openai_key(req.openai_key)
     try:
         from openai import OpenAI
-        client = OpenAI(api_key=req.openai_key)
+        client = OpenAI(api_key=openai_key)
         goal = CALL_SCENARIOS_GOALS.get(req.scenario_id, "Book a dental appointment")
         extra_ctx_block = f"\n\nADDITIONAL SCENARIO CONTEXT (use this to make your replies more realistic and specific):\n{req.extra_context.strip()}" if req.extra_context.strip() else ""
         system = f"""You are a patient calling a dental office on the phone.
@@ -2267,15 +2276,14 @@ Output ONLY your spoken reply — no labels, no quotes."""
 @app.post("/api/extract-context")
 async def extract_context(
     screenshot: UploadFile = File(...),
-    openai_key: str = Form(...),
+    openai_key: str = Form(""),
 ):
     """
     Upload a screenshot (or any image) and extract scenario context from it
     using GPT-4o vision. The returned text is used to guide AI patient
     behaviour during simulations.
     """
-    if not openai_key:
-        raise HTTPException(status_code=400, detail="OpenAI key required")
+    openai_key = _resolve_openai_key(openai_key)
     image_bytes = await screenshot.read()
     try:
         from openai import OpenAI
@@ -2312,12 +2320,11 @@ async def text_to_speech(req: TtsRequest):
     Convert text to MP3 audio via OpenAI TTS.
     Used by LiveWebCall AI caller mode to inject voice into the Retell WebRTC session.
     """
-    if not req.openai_key:
-        raise HTTPException(status_code=400, detail="OpenAI key required")
+    openai_key = _resolve_openai_key(req.openai_key)
     try:
         from openai import OpenAI
         from fastapi.responses import Response as FastResponse
-        client = OpenAI(api_key=req.openai_key)
+        client = OpenAI(api_key=openai_key)
         resp = client.audio.speech.create(
             model="tts-1",
             voice=req.voice,
