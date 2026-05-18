@@ -2534,6 +2534,154 @@ async def text_to_speech(req: TtsRequest):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+# ── Retell call webhooks ──────────────────────────────────────────────────────
+#
+# Point Retell's "Add an inbound webhook" URL (in Phone Numbers settings) at:
+#
+#     https://<this-server>/api/retell/webhook
+#
+# Retell fires this URL for every call lifecycle event.  This handler:
+#   1. call_started   → extract from_number/to_number/call_id
+#                        → POST /api/v1/incoming_call  to ADIT with full metadata
+#   2. call_ended     → forward basic call info to ADIT
+#   3. call_analyzed  → forward full transcript + analysis to ADIT
+#                        → POST /api/v1/call_completed to ADIT
+#
+# ADIT voice base URL is read from ADIT_VOICE_BASE env var so it works in
+# dev and prod without code changes.
+# ─────────────────────────────────────────────────────────────────────────────
+
+ADIT_VOICE_BASE: str = os.environ.get(
+    "ADIT_VOICE_BASE", "https://voicereceiption.adit.com"
+)
+
+# In-memory ring-buffer of the last 100 webhook events (for UI inspection)
+_call_events: list[dict] = []
+_MAX_CALL_EVENTS = 100
+
+
+def _store_call_event(event: dict) -> None:
+    _call_events.append(event)
+    if len(_call_events) > _MAX_CALL_EVENTS:
+        _call_events.pop(0)
+
+
+import logging as _wh_log
+_wh_logger = _wh_log.getLogger("retell.webhook")
+
+
+async def _forward_to_adit(path: str, body: dict) -> None:
+    """POST body to ADIT voice backend.  Logs but never raises — webhook must return 200."""
+    url = f"{ADIT_VOICE_BASE}{path}"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(url, json=body, headers={"Content-Type": "application/json"})
+            _wh_logger.info("ADIT %s → HTTP %s  call_id=%s", path, r.status_code, body.get("call_id", "?"))
+    except Exception as exc:
+        _wh_logger.warning("ADIT %s failed: %s", path, exc)
+
+
+@app.post("/api/retell/webhook")
+async def retell_webhook(request: Request):
+    """
+    Unified Retell webhook receiver for all call lifecycle events.
+
+    Configure in Retell dashboard → Phone Numbers → <number> → Add inbound webhook:
+        https://<this-server>/api/retell/webhook
+
+    Also register this URL as the post-call webhook in Retell → Agents → <agent>
+    → Post-call webhook URL (for call_analyzed / transcript delivery).
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    event = payload.get("event", "")
+    call  = payload.get("call", {})
+
+    # ── Extract universal fields ──────────────────────────────────────────────
+    call_id      = call.get("call_id", "")
+    from_number  = call.get("from_number", "")    # patient's phone
+    to_number    = call.get("to_number", "")      # practice's Retell number
+    agent_id     = call.get("agent_id", "")
+    direction    = call.get("direction", "inbound")
+    call_type    = call.get("call_type", "phone_call")
+    start_ts     = call.get("start_timestamp")
+
+    _store_call_event({
+        "event":   event,
+        "call_id": call_id,
+        "from":    from_number,
+        "to":      to_number,
+        "ts":      time.time(),
+    })
+
+    # ── call_started: send metadata to ADIT incoming_call ────────────────────
+    if event == "call_started":
+        await _forward_to_adit("/api/v1/incoming_call", {
+            "call_id":              call_id,
+            "patient_phone_number": from_number,
+            "agent_phone_number":   to_number,
+            "agent_id":             agent_id,
+            "direction":            direction,
+            "call_type":            call_type,
+            "start_timestamp":      start_ts,
+            "metadata": {
+                "call_id":     call_id,
+                "from_number": from_number,
+                "to_number":   to_number,
+                "agent_id":    agent_id,
+                "source":      "retell_inbound_webhook",
+            },
+        })
+
+    # ── call_ended / call_analyzed: send transcript + analysis to ADIT ───────
+    elif event in ("call_ended", "call_analyzed"):
+        # Build readable transcript from structured object if available
+        transcript_obj: list = call.get("transcript_object") or []
+        transcript_str: str  = call.get("transcript", "")
+        if not transcript_str and transcript_obj:
+            transcript_str = "\n".join(
+                f"{t.get('role', 'unknown').capitalize()}: {t.get('content', '')}"
+                for t in transcript_obj
+            )
+
+        analysis      = call.get("call_analysis") or {}
+        duration_ms   = call.get("duration_ms", 0)
+        recording_url = call.get("recording_url", "")
+        end_ts        = call.get("end_timestamp")
+
+        await _forward_to_adit("/api/v1/call_completed", {
+            "call_id":              call_id,
+            "patient_phone_number": from_number,
+            "agent_phone_number":   to_number,
+            "agent_id":             agent_id,
+            "direction":            direction,
+            "start_timestamp":      start_ts,
+            "end_timestamp":        end_ts,
+            "duration_ms":          duration_ms,
+            "recording_url":        recording_url,
+            "transcript":           transcript_str,
+            "transcript_object":    transcript_obj,
+            "call_successful":      analysis.get("call_successful"),
+            "call_summary":         analysis.get("call_summary", ""),
+            "user_sentiment":       analysis.get("user_sentiment", ""),
+            "in_voicemail":         analysis.get("in_voicemail", False),
+        })
+
+    else:
+        _wh_logger.debug("Unhandled Retell event: %s", event)
+
+    return {"ok": True, "event": event, "call_id": call_id}
+
+
+@app.get("/api/retell/call-events")
+def get_call_events():
+    """Recent Retell webhook events — newest first.  Useful for debugging the webhook flow."""
+    return {"events": list(reversed(_call_events))}
+
+
 # ── Serve built React frontend ─────────────────────────────────────────────────
 _dist = Path(__file__).parent / "frontend" / "dist"
 _index = _dist / "index.html"
