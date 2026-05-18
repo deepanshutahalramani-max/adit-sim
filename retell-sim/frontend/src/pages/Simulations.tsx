@@ -244,7 +244,7 @@ export function Simulations({ config, appConfig, onResults, results }: Props) {
           <div className="mb-4">
             <h2 className="text-[14px] font-bold text-[#111] mb-1">Manual SMS Chat</h2>
             <p className="text-[13px] text-[#888] leading-relaxed">
-              Type as a patient — your messages go directly to the <strong>real Siriyaa SMS agent</strong> via the ADIT backend.
+              Type as a patient — your messages go directly to the <strong>real SMS agent</strong> via the ADIT backend.
               Exactly what a real patient texting in would experience.
             </p>
             {!config.bearerToken && (

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fetchConfig, fetchAgentInfo } from "./api";
 import type { Config } from "./types";
@@ -23,6 +23,7 @@ export default function App() {
   const [config, setConfig] = useState<Config>(() => {
     let bearer = localStorage.getItem("adit_bearer") ?? "";
     let openai = localStorage.getItem("adit_openai_key") ?? "";
+    const phone = localStorage.getItem("adit_agent_phone") ?? "+12673565689";
 
     // Auto-fix: if OpenAI key was accidentally saved in bearer token field, swap them
     if (bearer.startsWith("sk-") && !openai) {
@@ -36,7 +37,7 @@ export default function App() {
       environment: "live",
       apiBase: "https://frontdeskchatagent.adit.com",
       bearerToken: bearer,
-      agentPhone: "+12673565689",
+      agentPhone: phone,
       openaiKey: openai,
       useLlmJudge: true,
     };
@@ -49,11 +50,18 @@ export default function App() {
 
   const { data: appConfig } = useQuery({ queryKey: ["config"], queryFn: fetchConfig });
 
-  // Fetch agent display info whenever the agent phone changes
+  // Debounce the phone so we don't query Retell on every keystroke while typing
+  const [debouncedPhone, setDebouncedPhone] = useState(config.agentPhone);
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedPhone(config.agentPhone), 800);
+    return () => clearTimeout(t);
+  }, [config.agentPhone]);
+
+  // Fetch agent display name for the debounced phone
   const { data: agentInfo } = useQuery({
-    queryKey: ["agentInfo", config.agentPhone],
-    queryFn: () => fetchAgentInfo(config.agentPhone),
-    staleTime: 60_000,   // cache for 1 min — avoid hammering Retell on every keystroke
+    queryKey: ["agentInfo", debouncedPhone],
+    queryFn: () => fetchAgentInfo(debouncedPhone),
+    staleTime: 60_000,
     retry: false,
   });
   const agentName = agentInfo?.call_agent_name || agentInfo?.sms_agent_name || "Siriyaa";
@@ -72,7 +80,7 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-[#FAFAF8] overflow-hidden">
-      <Sidebar config={config} onChange={setConfig} />
+      <Sidebar config={config} onChange={setConfig} agentName={agentName} />
 
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {/* Top header bar */}

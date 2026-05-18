@@ -1,8 +1,10 @@
 /**
  * PromptConfigurator — Fetches the live Retell template, lets you toggle 4
  * behavioural flags, and streams the resolved prompt back via `onLoad`.
+ *
+ * Phone changes are debounced (800ms) so a fetch isn't triggered on every keystroke.
  */
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { fetchRetellPrompt, fetchRetellCallPrompt, resolvePrompt, type PromptToggles } from "../api";
 
@@ -14,7 +16,7 @@ interface Props {
   /**
    * Agent phone number from sidebar config. When provided, the backend will
    * look up the correct Retell agent for that phone number instead of using
-   * the hardcoded default. Re-fetches automatically when changed.
+   * the hardcoded default. Re-fetches automatically when changed (debounced 800ms).
    */
   agentPhone?: string;
   /** Extra class names for the outer wrapper. */
@@ -36,60 +38,80 @@ const TOGGLE_ROWS: { key: keyof PromptToggles; label: string; emoji: string }[] 
 ];
 
 export function PromptConfigurator({ onLoad, agentType = "chat", agentPhone, className = "" }: Props) {
-  const [template, setTemplate]           = useState("");   // raw Retell template ({{placeholders}})
-  const [resolvedPrompt, setResolvedPrompt] = useState(""); // substituted output — shown in textarea
-  const [toggles, setToggles]             = useState<PromptToggles>(DEFAULT_TOGGLES);
-  const [loading, setLoading]             = useState(true);
-  const [resolving, setResolving]         = useState(false);
-  const [error, setError]                 = useState("");
+  const [template, setTemplate]             = useState("");
+  const [resolvedPrompt, setResolvedPrompt] = useState("");
+  const [toggles, setToggles]               = useState<PromptToggles>(DEFAULT_TOGGLES);
+  const [loading, setLoading]               = useState(true);
+  const [resolving, setResolving]           = useState(false);
+  const [error, setError]                   = useState("");
 
-  /* ─── Resolve template → update textarea + call onLoad ─── */
-  const resolve = useCallback(async (tmpl: string, flags: PromptToggles) => {
+  // Keep refs so async callbacks always see the latest values without stale closures
+  const onLoadRef    = useRef(onLoad);
+  const togglesRef   = useRef(toggles);
+  const templateRef  = useRef(template);
+  useEffect(() => { onLoadRef.current   = onLoad;   }, [onLoad]);
+  useEffect(() => { togglesRef.current  = toggles;  }, [toggles]);
+  useEffect(() => { templateRef.current = template; }, [template]);
+
+  /* ─── Core: resolve a raw template with flags → update textarea + fire onLoad ─── */
+  const resolve = async (tmpl: string, flags: PromptToggles) => {
     if (!tmpl.trim()) return;
     setResolving(true);
     try {
       const { prompt } = await resolvePrompt({ template: tmpl, ...flags });
-      setResolvedPrompt(prompt);  // ← update the visible textarea
-      onLoad?.(prompt);
-    } catch (e: unknown) {
-      setError((e instanceof Error ? e.message : "Failed to resolve prompt"));
+      setResolvedPrompt(prompt);
+      onLoadRef.current?.(prompt);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to resolve prompt");
     } finally {
       setResolving(false);
     }
-  }, [onLoad]);
+  };
 
-  /* ─── Fetch live Retell template ─── */
-  const fetchTemplate = useCallback(async () => {
+  /* ─── Fetch live Retell template then resolve it ─── */
+  const doFetch = async (phone?: string) => {
     setLoading(true);
     setError("");
     try {
       const fetcher = agentType === "call" ? fetchRetellCallPrompt : fetchRetellPrompt;
-      // Pass agentPhone so backend resolves the correct agent for that number
-      const { prompt } = await fetcher(agentPhone);
+      const { prompt } = await fetcher(phone);
       setTemplate(prompt);
-      await resolve(prompt, toggles);
-    } catch (e: unknown) {
-      setError((e instanceof Error ? e.message : "Failed to fetch Retell prompt"));
+      templateRef.current = prompt;
+      await resolve(prompt, togglesRef.current);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to fetch Retell prompt");
     } finally {
       setLoading(false);
     }
-  // agentType and agentPhone changes both require a fresh fetch
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agentType, agentPhone]);
+  };
 
-  useEffect(() => { fetchTemplate(); }, [fetchTemplate]);
+  /* ─── Initial mount: fetch once for current agentType ─── */
+  useEffect(() => {
+    doFetch(agentPhone);
+    // Only run on mount and agentType changes — agentPhone gets its own debounced effect below
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentType]);
 
-  /* ─── Toggle handler — re-resolves from raw template so substitution reflects new flag ─── */
+  /* ─── Re-fetch when agentPhone changes, debounced 800ms so typing doesn't spam Retell ─── */
+  const isFirstRender = useRef(true);
+  useEffect(() => {
+    if (isFirstRender.current) { isFirstRender.current = false; return; }
+    const timer = setTimeout(() => { doFetch(agentPhone); }, 800);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentPhone]);
+
+  /* ─── Toggle handler ─── */
   const handleToggle = (key: keyof PromptToggles) => {
     const next = { ...toggles, [key]: !toggles[key] };
     setToggles(next);
-    resolve(template, next);  // always re-resolve from the raw template
+    resolve(templateRef.current, next);
   };
 
-  /* ─── Manual textarea edit — user is editing the resolved output directly ─── */
+  /* ─── Manual textarea edit ─── */
   const handleResolvedEdit = (val: string) => {
     setResolvedPrompt(val);
-    onLoad?.(val);  // bypass resolve — pass edit straight through
+    onLoadRef.current?.(val);
   };
 
   return (
@@ -100,7 +122,7 @@ export function PromptConfigurator({ onLoad, agentType = "chat", agentPhone, cla
           Retell System Prompt
         </span>
         <button
-          onClick={fetchTemplate}
+          onClick={() => doFetch(agentPhone)}
           disabled={loading || resolving}
           className="flex items-center gap-1.5 text-[11px] font-semibold text-brand-500 hover:text-brand-600 disabled:opacity-40 transition-colors"
         >
@@ -109,7 +131,7 @@ export function PromptConfigurator({ onLoad, agentType = "chat", agentPhone, cla
         </button>
       </div>
 
-      {/* Amber warning on fetch error — still show textarea below for manual paste */}
+      {/* Amber warning on fetch error */}
       {error && (
         <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-2">
           {error.includes("custom-llm") || error.includes("ADIT backend")
@@ -152,8 +174,6 @@ export function PromptConfigurator({ onLoad, agentType = "chat", agentPhone, cla
           : "Resolved prompt — toggling capabilities updates it live. Edit manually if needed."}
       </div>
 
-      {/* Textarea shows the RESOLVED prompt (placeholders substituted).
-          Toggling a flag re-resolves and updates this. Manual edits bypass resolve. */}
       <textarea
         value={resolvedPrompt}
         onChange={e => handleResolvedEdit(e.target.value)}

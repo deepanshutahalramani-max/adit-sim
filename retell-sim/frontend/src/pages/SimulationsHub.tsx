@@ -34,7 +34,7 @@ const CHANNELS = [
     label: "SMS",
     badge: "Text agent",
     color: "brand",
-    desc: "Test the Siriyaa SMS text agent — manual or AI-driven conversations.",
+    desc: "Test the SMS text agent — manual or AI-driven conversations.",
   },
   {
     id: "call" as Channel,
@@ -42,7 +42,7 @@ const CHANNELS = [
     label: "Call",
     badge: "Voice agent",
     color: "dark",
-    desc: "Test the Siriyaa voice call agent — live WebRTC or LLM-to-LLM simulation.",
+    desc: "Test the voice call agent — live WebRTC or LLM-to-LLM simulation.",
   },
 ];
 
@@ -61,7 +61,7 @@ export function SimulationsHub({
           Simulations
         </h1>
         <p className="text-[13.5px] text-[#888]">
-          Test Siriyaa manually or with an AI patient — across SMS and voice call.
+          Test your AI agent manually or with an AI patient — across SMS and voice call.
         </p>
       </div>
 

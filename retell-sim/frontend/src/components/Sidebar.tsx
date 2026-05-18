@@ -1,10 +1,10 @@
-import { useState } from "react";
-import { Eye, EyeOff, Check } from "lucide-react";
+import { Check } from "lucide-react";
 import type { Config } from "../types";
 
 interface Props {
   config: Config;
   onChange: (c: Config) => void;
+  agentName?: string;
 }
 
 const HOSTS: Record<string, string> = {
@@ -35,50 +35,42 @@ function SideInput({
   label: string; value: string; onChange: (v: string) => void;
   type?: string; placeholder?: string; savedFromStorage?: boolean;
 }) {
-  const [show, setShow] = useState(false);
-  const isPassword = type === "password";
+  const isSecret = type === "password";
   const hasValue = value.length > 0;
 
   return (
     <div className="mb-4">
       <div className="flex items-center justify-between mb-1.5">
         <Label>{label}</Label>
-        {isPassword && <SavedBadge saved={!!savedFromStorage && hasValue} />}
+        {isSecret && <SavedBadge saved={!!savedFromStorage && hasValue} />}
       </div>
-      <div className="relative">
-        <input
-          type={isPassword && !show ? "password" : "text"}
-          value={value}
-          onChange={e => onChange(e.target.value)}
-          placeholder={placeholder}
-          className="w-full bg-[#F7F7F5] border border-[#E5E5E5] rounded-lg px-3 py-2 text-[13px] text-[#111]
-                     focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10 pr-8"
-        />
-        {isPassword && (
-          <button
-            type="button"
-            onClick={() => setShow(s => !s)}
-            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#ADADAD] hover:text-[#666]"
-          >
-            {show ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-          </button>
-        )}
-      </div>
-      {isPassword && !hasValue && (
+      <input
+        /* Always keep secrets masked — no show/hide toggle so values are never
+           visible to anyone looking at the screen. */
+        type={isSecret ? "password" : "text"}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="w-full bg-[#F7F7F5] border border-[#E5E5E5] rounded-lg px-3 py-2 text-[13px] text-[#111]
+                   focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10"
+      />
+      {isSecret && !hasValue && (
         <p className="text-[10.5px] text-[#ADADAD] mt-1">Enter once — saved automatically</p>
       )}
     </div>
   );
 }
 
-export function Sidebar({ config, onChange }: Props) {
+export function Sidebar({ config, onChange, agentName = "—" }: Props) {
   // Track which keys came from localStorage (already persisted)
   const bearerFromStorage = !!(localStorage.getItem("adit_bearer"));
   const openaiFromStorage = !!(localStorage.getItem("adit_openai_key"));
+  const phoneFromStorage  = !!(localStorage.getItem("adit_agent_phone"));
 
   const set = (k: keyof Config, v: unknown) => {
-    if (k === "openaiKey") localStorage.setItem("adit_openai_key", v as string);
-    if (k === "bearerToken") localStorage.setItem("adit_bearer", v as string);
+    if (k === "openaiKey")    localStorage.setItem("adit_openai_key",   v as string);
+    if (k === "bearerToken")  localStorage.setItem("adit_bearer",       v as string);
+    if (k === "agentPhone")   localStorage.setItem("adit_agent_phone",  v as string);
     onChange({ ...config, [k]: v });
   };
 
@@ -154,6 +146,7 @@ export function Sidebar({ config, onChange }: Props) {
           value={config.agentPhone}
           onChange={v => set("agentPhone", v)}
           placeholder="+12673565689"
+          savedFromStorage={phoneFromStorage}
         />
 
         <SideInput
@@ -206,7 +199,7 @@ export function Sidebar({ config, onChange }: Props) {
             <div className="flex items-center gap-2">
               <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-500" />
               <span className="text-[12px] text-[#666]">Agent</span>
-              <span className="text-[11px] font-semibold ml-auto text-[#555]">Siriyaa</span>
+              <span className="text-[11px] font-semibold ml-auto text-[#555]">{agentName}</span>
             </div>
             <div className="flex items-center gap-2">
               <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-500" />

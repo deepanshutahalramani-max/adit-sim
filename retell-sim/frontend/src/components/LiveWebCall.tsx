@@ -519,7 +519,7 @@ export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWeb
               <div className="flex items-start gap-2.5 flex-row-reverse">
                 <div className="w-7 h-7 bg-[#E8F5E9] rounded-full flex items-center justify-center text-[12px] flex-shrink-0 mt-0.5">🏥</div>
                 <div className="text-right">
-                  <div className="text-[9.5px] font-bold uppercase tracking-widest text-[#3B8A4A] mb-0.5">Siriyaa</div>
+                  <div className="text-[9.5px] font-bold uppercase tracking-widest text-[#3B8A4A] mb-0.5">Agent</div>
                   <div className="bg-[#EAF6EB] border border-[#C6E8CA] rounded-2xl rounded-tr-sm px-3.5 py-2 text-[13px] text-[#1A3D1E] max-w-[300px] shadow-sm text-left">
                     {entry.content}
                   </div>

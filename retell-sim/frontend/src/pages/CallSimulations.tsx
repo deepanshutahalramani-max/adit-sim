@@ -237,7 +237,7 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
             <div>
               <div className="text-[13px] font-bold text-green-800 mb-0.5">Connected to the real Retell call agent</div>
               <div className="text-[12.5px] text-green-700 leading-relaxed">
-                Your microphone and speaker connect directly to Siriyaa via WebRTC.
+                Your microphone and speaker connect directly to the call agent via WebRTC.
                 Speak as a patient — hear the real agent voice, see the live transcript.
                 Use headphones to avoid echo.
               </div>
