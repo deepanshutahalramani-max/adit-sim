@@ -233,11 +233,8 @@ export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWeb
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          from_number:        params.agent_phone,
-          to_number:          phone,
-          override_agent_id:  params.agent_id,
-          scenario_id:        params.scenario_id,
-          mode:               params.mode,
+          from_number: params.agent_phone,
+          to_number:   phone,
         }),
       });
       if (!resp.ok) {

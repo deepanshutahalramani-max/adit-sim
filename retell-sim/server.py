@@ -2317,45 +2317,18 @@ async def create_web_call(req: CreateWebCallRequest):
 # ── Phone call (outbound) ─────────────────────────────────────────────────────
 
 class CreatePhoneCallRequest(BaseModel):
-    from_number: str                    # Retell-owned number (agent phone)
-    to_number: str                      # Destination (tester / patient phone)
-    override_agent_id: Optional[str] = None
-    scenario_id: Optional[str] = None
-    mode: Optional[str] = None
+    from_number: str   # Retell-owned number (agent phone)
+    to_number: str     # Destination (tester / patient phone)
 
 
 @app.post("/api/retell/create-phone-call")
 async def create_phone_call(req: CreatePhoneCallRequest):
-    """
-    Creates an outbound Retell phone call:  from_number (agent) → to_number (patient/tester).
-    Returns call_id and initial call_status.
-    """
+    """Outbound phone call: POST /v2/create-phone-call with from_number + to_number only."""
     try:
-        metadata: dict = {
-            "source":      "adit_sim_platform",
-            "call_type":   "phone_call",
+        r = await _retell_post("/v2/create-phone-call", {
             "from_number": req.from_number,
             "to_number":   req.to_number,
-        }
-        if req.override_agent_id:
-            metadata["agent_id"] = req.override_agent_id
-        if req.scenario_id:
-            sc = SCENARIOS.get(req.scenario_id, {})
-            metadata["scenario_id"]    = req.scenario_id
-            metadata["scenario_label"] = sc.get("label", req.scenario_id)
-            metadata["scenario_goal"]  = sc.get("goal", "")
-        if req.mode:
-            metadata["mode"] = req.mode
-
-        body: dict = {
-            "from_number": req.from_number,
-            "to_number":   req.to_number,
-            "metadata":    metadata,
-        }
-        if req.override_agent_id:
-            body["override_agent_id"] = req.override_agent_id
-
-        r = await _retell_post("/v2/create-phone-call", body)
+        })
         if r.status_code not in (200, 201):
             raise HTTPException(
                 status_code=502,
@@ -2364,10 +2337,7 @@ async def create_phone_call(req: CreatePhoneCallRequest):
         data = r.json()
         return {
             "call_id":     data.get("call_id", ""),
-            "agent_id":    data.get("agent_id", ""),
             "call_status": data.get("call_status", "registered"),
-            "from_number": data.get("from_number", req.from_number),
-            "to_number":   data.get("to_number", req.to_number),
         }
     except HTTPException:
         raise
