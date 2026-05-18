@@ -2242,7 +2242,9 @@ def sms_send(req: SmsSendRequest):
 
 class CreateWebCallRequest(BaseModel):
     agent_id: Optional[str] = None
-    agent_phone: Optional[str] = None  # resolves agent_id dynamically when supplied
+    agent_phone: Optional[str] = None   # resolves agent_id dynamically when supplied
+    scenario_id: Optional[str] = None   # passed through to Retell metadata
+    mode: Optional[str] = None          # "manual" | "ai" — for metadata
 
 @app.post("/api/retell/create-web-call")
 async def create_web_call(req: CreateWebCallRequest):
@@ -2250,6 +2252,9 @@ async def create_web_call(req: CreateWebCallRequest):
     Creates a Retell web call session.
     If agent_phone is supplied, the correct voice agent is looked up dynamically.
     Falls back to RETELL_CALL_AGENT_ID if neither is provided.
+
+    Passes metadata into the Retell call so it appears in Call History
+    and is included in the inbound + post-call webhook payloads sent to ADIT.
     """
     try:
         agent_id = req.agent_id or RETELL_CALL_AGENT_ID
@@ -2258,7 +2263,27 @@ async def create_web_call(req: CreateWebCallRequest):
             if resolved:
                 agent_id = resolved
 
-        r = await _retell_post("/v2/create-web-call", {"agent_id": agent_id})
+        # Build metadata — stored by Retell and forwarded on every webhook event.
+        # This is what populates the "Metadata" section in Retell Call History
+        # and what flows into ADIT via the inbound + post-call webhooks.
+        metadata: dict = {
+            "source":       "adit_sim_platform",
+            "call_type":    "web_call",
+            "agent_phone":  req.agent_phone or "",
+            "agent_id":     agent_id,
+        }
+        if req.scenario_id:
+            sc = SCENARIOS.get(req.scenario_id, {})
+            metadata["scenario_id"]    = req.scenario_id
+            metadata["scenario_label"] = sc.get("label", req.scenario_id)
+            metadata["scenario_goal"]  = sc.get("goal", "")
+        if req.mode:
+            metadata["mode"] = req.mode
+
+        r = await _retell_post("/v2/create-web-call", {
+            "agent_id": agent_id,
+            "metadata": metadata,
+        })
         if r.status_code not in (200, 201):
             raise HTTPException(
                 status_code=502,
@@ -2269,6 +2294,7 @@ async def create_web_call(req: CreateWebCallRequest):
             "call_id":      data.get("call_id", ""),
             "access_token": data.get("access_token", ""),
             "agent_id":     agent_id,
+            "metadata":     metadata,
         }
     except HTTPException:
         raise
@@ -2608,17 +2634,30 @@ async def retell_webhook(request: Request):
     direction    = call.get("direction", "inbound")
     call_type    = call.get("call_type", "phone_call")
     start_ts     = call.get("start_timestamp")
+    # Retell passes back the metadata we attached at call creation (or empty dict)
+    retell_meta: dict = call.get("metadata") or {}
 
     _store_call_event({
-        "event":   event,
-        "call_id": call_id,
-        "from":    from_number,
-        "to":      to_number,
-        "ts":      time.time(),
+        "event":    event,
+        "call_id":  call_id,
+        "from":     from_number,
+        "to":       to_number,
+        "metadata": retell_meta,
+        "ts":       time.time(),
     })
 
     # ── call_started: send metadata to ADIT incoming_call ────────────────────
     if event == "call_started":
+        # Merge Retell's own metadata (scenario info, source, etc.) with call fields
+        merged_metadata = {
+            "call_id":     call_id,
+            "from_number": from_number,
+            "to_number":   to_number,
+            "agent_id":    agent_id,
+            "call_type":   call_type,
+            "source":      retell_meta.get("source", "retell_inbound_webhook"),
+            **retell_meta,   # include scenario_id, scenario_label, mode, etc.
+        }
         await _forward_to_adit("/api/v1/incoming_call", {
             "call_id":              call_id,
             "patient_phone_number": from_number,
@@ -2627,13 +2666,7 @@ async def retell_webhook(request: Request):
             "direction":            direction,
             "call_type":            call_type,
             "start_timestamp":      start_ts,
-            "metadata": {
-                "call_id":     call_id,
-                "from_number": from_number,
-                "to_number":   to_number,
-                "agent_id":    agent_id,
-                "source":      "retell_inbound_webhook",
-            },
+            "metadata":             merged_metadata,
         })
 
     # ── call_ended / call_analyzed: send transcript + analysis to ADIT ───────
@@ -2668,6 +2701,7 @@ async def retell_webhook(request: Request):
             "call_summary":         analysis.get("call_summary", ""),
             "user_sentiment":       analysis.get("user_sentiment", ""),
             "in_voicemail":         analysis.get("in_voicemail", False),
+            "metadata":             retell_meta,   # scenario info, source, etc.
         })
 
     else:

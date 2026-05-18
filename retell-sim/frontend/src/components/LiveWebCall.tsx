@@ -231,7 +231,12 @@ export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWeb
       const tokenResp = await fetch("/api/retell/create-web-call", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ agent_id: params.agent_id, agent_phone: params.agent_phone }),
+        body: JSON.stringify({
+          agent_id:    params.agent_id,
+          agent_phone: params.agent_phone,
+          scenario_id: params.scenario_id,
+          mode:        params.mode,
+        }),
       });
       if (!tokenResp.ok) {
         const err = await tokenResp.json().catch(() => ({ detail: tokenResp.statusText }));
