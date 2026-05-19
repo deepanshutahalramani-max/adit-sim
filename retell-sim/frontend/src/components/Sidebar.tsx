@@ -1,5 +1,3 @@
-import { useState } from "react";
-import { Check, ChevronDown, ChevronRight } from "lucide-react";
 import type { Config } from "../types";
 
 interface Props {
@@ -14,16 +12,6 @@ const HOSTS: Record<string, string> = {
   dev:  "https://gjqwwdfeo35edl-8009.proxy.runpod.net",
 };
 
-/** Auto-fill Retell agent IDs when switching environments (bearer managed server-side). */
-const ENV_PRESETS: Record<string, { smsAgentId?: string; callAgentId?: string }> = {
-  live: {},
-  beta: {
-    smsAgentId:  "agent_b1eb03374f40eadbfa6efd0ce3",
-    callAgentId: "agent_f0fbd593add84dbebe88f36638",
-  },
-  dev:  {},
-};
-
 function Label({ children }: { children: React.ReactNode }) {
   return (
     <div className="text-[10px] font-bold uppercase tracking-widest text-[#ADADAD] mb-1.5">
@@ -32,67 +20,10 @@ function Label({ children }: { children: React.ReactNode }) {
   );
 }
 
-function SavedBadge({ saved }: { saved: boolean }) {
-  if (!saved) return null;
-  return (
-    <span className="flex items-center gap-0.5 text-[10px] font-semibold text-green-600">
-      <Check className="w-2.5 h-2.5" /> Saved
-    </span>
-  );
-}
-
-function SideInput({
-  label, value, onChange, type = "text", placeholder, savedFromStorage, hint,
-}: {
-  label: string; value: string; onChange: (v: string) => void;
-  type?: string; placeholder?: string; savedFromStorage?: boolean; hint?: string;
-}) {
-  const isSecret = type === "password";
-  const hasValue = value.length > 0;
-
-  return (
-    <div className="mb-4">
-      <div className="flex items-center justify-between mb-1.5">
-        <Label>{label}</Label>
-        {isSecret && <SavedBadge saved={!!savedFromStorage && hasValue} />}
-      </div>
-      <input
-        type={isSecret ? "password" : "text"}
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        placeholder={placeholder}
-        className="w-full bg-[#F7F7F5] border border-[#E5E5E5] rounded-lg px-3 py-2 text-[13px] text-[#111]
-                   focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10"
-      />
-      {hint && <p className="text-[10.5px] text-[#ADADAD] mt-1">{hint}</p>}
-      {isSecret && !hasValue && !hint && (
-        <p className="text-[10.5px] text-[#ADADAD] mt-1">Enter once — saved automatically</p>
-      )}
-    </div>
-  );
-}
-
 export function Sidebar({ config, onChange, agentName = "—" }: Props) {
-  const [advancedOpen, setAdvancedOpen] = useState(false);
-
-  const env = config.environment ?? "live";
-
   const set = (k: keyof Config, v: unknown) => {
-    const envMap: Partial<Record<keyof Config, string>> = {
-      smsAgentId:  "adit_sms_agent_id",
-      callAgentId: "adit_call_agent_id",
-    };
-    const flatMap: Partial<Record<keyof Config, string>> = {
-      agentPhone: "adit_agent_phone",
-    };
-    if (envMap[k])  localStorage.setItem(`${envMap[k]!}_${env}`, v as string);
-    if (flatMap[k]) localStorage.setItem(flatMap[k]!, v as string);
     onChange({ ...config, [k]: v });
   };
-
-  const stored = (base: string) => !!localStorage.getItem(`${base}_${env}`);
-
-  const allGood = !!config.smsAgentId && !!config.callAgentId;
 
   return (
     <aside className="w-64 bg-white border-r border-[#EAEAEA] flex flex-col flex-shrink-0 overflow-y-auto">
@@ -117,41 +48,35 @@ export function Sidebar({ config, onChange, agentName = "—" }: Props) {
       </div>
 
       <div className="flex-1 px-5 py-4 overflow-y-auto">
-        {/* Warning */}
-        {!allGood && (
-          <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-4">
-            <p className="text-[11px] font-semibold text-amber-700">
-              Paste both Retell Agent IDs to get started
-            </p>
-          </div>
-        )}
 
-        <div className="text-[10px] font-bold uppercase tracking-widest text-[#ADADAD] mb-3">
-          Retell Agents
-          <span className="normal-case font-normal ml-1 text-[#ADADAD]">— copy IDs from dashboard</span>
+        {/* ── Environment selector (top-level, always visible) ── */}
+        <div className="mb-4">
+          <Label>Environment</Label>
+          <select
+            value={config.environment}
+            onChange={e => {
+              const newEnv = e.target.value;
+              localStorage.setItem("adit_env", newEnv);
+              onChange({
+                ...config,
+                environment: newEnv,
+                apiBase:     HOSTS[newEnv] ?? HOSTS.live,
+                // agent IDs will be refreshed by App.tsx useEffect on apiBase change
+                smsAgentId:  undefined,
+                callAgentId: undefined,
+              });
+            }}
+            className="w-full bg-[#F7F7F5] border border-[#E5E5E5] rounded-lg px-3 py-2 text-[13px] text-[#111]
+                       focus:outline-none focus:border-brand-500"
+          >
+            <option value="live">🟢 Live (PROD)</option>
+            <option value="beta">🟡 Beta</option>
+            <option value="dev">🔵 Dev (RunPod)</option>
+          </select>
+          <p className="text-[10.5px] text-[#ADADAD] mt-1 truncate">{config.apiBase}</p>
         </div>
 
-        <SideInput
-          label="SMS Agent ID"
-          value={config.smsAgentId ?? ""}
-          onChange={v => set("smsAgentId", v || undefined)}
-          placeholder="agent_ee5d…"
-          savedFromStorage={stored("adit_sms_agent_id")}
-          hint="Chat / inbound SMS agent"
-        />
-
-        <SideInput
-          label="Call Agent ID"
-          value={config.callAgentId ?? ""}
-          onChange={v => set("callAgentId", v || undefined)}
-          placeholder="agent_8c76…"
-          savedFromStorage={stored("adit_call_agent_id")}
-          hint="Voice / inbound call agent"
-        />
-
-        <hr className="border-[#F0F0EE] my-3" />
-
-        {/* LLM Judge toggle */}
+        {/* ── LLM Judge toggle ── */}
         <div className="mb-4">
           <Label>LLM Judge Scoring</Label>
           <div className="flex items-center gap-3">
@@ -169,79 +94,9 @@ export function Sidebar({ config, onChange, agentName = "—" }: Props) {
           </div>
         </div>
 
-        {/* ── Advanced ── */}
-        <div className="mb-4">
-          <button
-            onClick={() => setAdvancedOpen(o => !o)}
-            className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-[#ADADAD] hover:text-[#888] transition-colors w-full text-left"
-          >
-            {advancedOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-            Advanced
-          </button>
-
-          {advancedOpen && (
-            <div className="mt-3 border border-[#F0F0EE] rounded-lg p-3 bg-[#FAFAF8] space-y-3">
-              {/* Environment */}
-              <div>
-                <Label>Environment</Label>
-                <select
-                  value={config.environment}
-                  onChange={e => {
-                    const newEnv = e.target.value;
-                    const curEnv = config.environment ?? "live";
-
-                    // Save current env's agent IDs before switching
-                    localStorage.setItem(`adit_sms_agent_id_${curEnv}`,  config.smsAgentId  ?? "");
-                    localStorage.setItem(`adit_call_agent_id_${curEnv}`, config.callAgentId ?? "");
-                    localStorage.setItem("adit_env", newEnv);
-
-                    // Load saved or preset agent IDs for the new env
-                    const preset     = ENV_PRESETS[newEnv] ?? {};
-                    const savedSmsId  = localStorage.getItem(`adit_sms_agent_id_${newEnv}`)  ?? "";
-                    const savedCallId = localStorage.getItem(`adit_call_agent_id_${newEnv}`) ?? "";
-
-                    const resolvedSmsId  = savedSmsId  || preset.smsAgentId  || "";
-                    const resolvedCallId = savedCallId || preset.callAgentId || "";
-
-                    if (resolvedSmsId)  localStorage.setItem(`adit_sms_agent_id_${newEnv}`,  resolvedSmsId);
-                    if (resolvedCallId) localStorage.setItem(`adit_call_agent_id_${newEnv}`, resolvedCallId);
-
-                    onChange({
-                      ...config,
-                      environment: newEnv,
-                      apiBase:     HOSTS[newEnv] ?? HOSTS.live,
-                      bearerToken: "",
-                      openaiKey:   "",
-                      smsAgentId:  resolvedSmsId  || undefined,
-                      callAgentId: resolvedCallId || undefined,
-                    });
-                  }}
-                  className="w-full bg-white border border-[#E5E5E5] rounded-lg px-3 py-2 text-[13px] text-[#111]
-                             focus:outline-none focus:border-brand-500 truncate"
-                >
-                  <option value="live">🟢 Live (PROD)</option>
-                  <option value="beta">🟡 Beta</option>
-                  <option value="dev">🔵 Dev (RunPod)</option>
-                </select>
-                <p className="text-[10.5px] text-[#ADADAD] mt-1 truncate">{config.apiBase}</p>
-              </div>
-
-              {/* Agent Phone — still needed for ADIT SMS routing */}
-              <SideInput
-                label="ADIT Practice Phone"
-                value={config.agentPhone}
-                onChange={v => set("agentPhone", v)}
-                placeholder="+12673565689"
-                savedFromStorage={stored("adit_agent_phone")}
-                hint="Routes SMS simulations to the right practice"
-              />
-            </div>
-          )}
-        </div>
-
         <hr className="border-[#F0F0EE] my-4" />
 
-        {/* Status */}
+        {/* ── Status panel ── */}
         <div>
           <Label>Status</Label>
           <div className="space-y-1.5">
@@ -250,14 +105,14 @@ export function Sidebar({ config, onChange, agentName = "—" }: Props) {
               label="SMS agent"
               value={config.smsAgentId
                 ? <code className="text-[10px] font-mono text-[#D4620A] bg-[#FFF3E8] rounded px-1">{config.smsAgentId.slice(0, 12)}…</code>
-                : <span className="text-[#ADADAD]">Not set</span>}
+                : <span className="text-[#ADADAD]">Loading…</span>}
             />
             <StatusRow
               ok={!!config.callAgentId}
               label="Call agent"
               value={config.callAgentId
                 ? <code className="text-[10px] font-mono text-[#D4620A] bg-[#FFF3E8] rounded px-1">{config.callAgentId.slice(0, 12)}…</code>
-                : <span className="text-[#ADADAD]">Not set</span>}
+                : <span className="text-[#ADADAD]">Loading…</span>}
             />
             {agentName !== "—" && (
               <StatusRow ok label="Name" value={agentName} valueClass="text-[#555]" />
@@ -268,6 +123,13 @@ export function Sidebar({ config, onChange, agentName = "—" }: Props) {
               label="Env"
               value={config.environment === "live" ? "Production" : config.environment === "beta" ? "Beta" : "Dev"}
               valueClass="text-[#555]"
+            />
+            <StatusRow
+              ok={true}
+              okColor="bg-green-500"
+              label="Credentials"
+              value="Server-managed"
+              valueClass="text-green-600"
             />
           </div>
         </div>

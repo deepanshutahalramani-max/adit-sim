@@ -43,11 +43,26 @@ def _resolve_retell_key(api_base: str | None) -> str:
     return RETELL_API_KEY
 
 
-# ── Per-environment ADIT bearer tokens ───────────────────────────────────────
-# Stored server-side so the frontend never needs to handle them.
+# ── Per-environment config (all credentials stored server-side) ───────────────
+# Nothing sensitive ever reaches the browser.
+ENV_CONFIG_MAP: dict[str, dict] = {
+    "https://frontdeskchatagent.adit.com": {
+        "bearer_token": os.environ.get("ADIT_BEARER_PROD", "e6a1967d-2121-4db7-b573-6b9a317339f7"),
+        "sms_agent_id":  os.environ.get("PROD_SMS_AGENT_ID",  ""),
+        "call_agent_id": os.environ.get("PROD_CALL_AGENT_ID", ""),
+        "agent_phone":   os.environ.get("PROD_AGENT_PHONE",   DEFAULT_AGENT_PHONE),
+    },
+    "https://betafrontdeskchatagent.adit.com": {
+        "bearer_token": os.environ.get("ADIT_BEARER_BETA", "2f81fe52-7a0e-4b29-b7bb-6944d0d97125"),
+        "sms_agent_id":  "agent_b1eb03374f40eadbfa6efd0ce3",
+        "call_agent_id": "agent_f0fbd593add84dbebe88f36638",
+        "agent_phone":   DEFAULT_AGENT_PHONE,
+    },
+}
+
+# Keep a flat bearer map for the legacy _resolve_bearer helper
 BEARER_TOKEN_MAP: dict[str, str] = {
-    "https://frontdeskchatagent.adit.com":     os.environ.get("ADIT_BEARER_PROD", ""),
-    "https://betafrontdeskchatagent.adit.com": os.environ.get("ADIT_BEARER_BETA", "e6a1967d-2121-4db7-b573-6b9a317339f7"),
+    k: v["bearer_token"] for k, v in ENV_CONFIG_MAP.items()
 }
 
 
@@ -61,7 +76,7 @@ def _resolve_bearer(api_base: str | None, provided: str = "") -> str:
             return token
     raise HTTPException(
         status_code=400,
-        detail="ADIT bearer token required — set ADIT_BEARER_PROD env var on the server.",
+        detail="ADIT bearer token not configured for this environment.",
     )
 
 
@@ -695,6 +710,16 @@ def get_config():
         "default_agent_phone": DEFAULT_AGENT_PHONE,
         "max_parallel": MAX_PARALLEL,
         "hosts": HOSTS,
+    }
+
+@app.get("/api/env-config")
+def get_env_config(api_base: str = "https://frontdeskchatagent.adit.com"):
+    """Return non-sensitive per-environment config so the frontend can auto-populate agent IDs."""
+    cfg = ENV_CONFIG_MAP.get(api_base.rstrip("/"), ENV_CONFIG_MAP["https://frontdeskchatagent.adit.com"])
+    return {
+        "sms_agent_id":  cfg["sms_agent_id"],
+        "call_agent_id": cfg["call_agent_id"],
+        "agent_phone":   cfg["agent_phone"],
     }
 
 @app.post("/api/simulate")

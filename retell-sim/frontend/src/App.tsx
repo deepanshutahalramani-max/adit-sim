@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { fetchConfig, fetchAgentInfo } from "./api";
+import { fetchConfig, fetchAgentInfo, fetchEnvConfig } from "./api";
 import type { Config } from "./types";
 import { Sidebar } from "./components/Sidebar";
 import { AgentNameContext } from "./context/AgentNameContext";
@@ -54,6 +54,19 @@ export default function App() {
   const [chainResults, setChainResults] = useState<Record<string, SimResult> | null>(null);
 
   const { data: appConfig } = useQuery({ queryKey: ["config"], queryFn: fetchConfig });
+
+  // Auto-load agent IDs + phone from server whenever the environment changes
+  useEffect(() => {
+    fetchEnvConfig(config.apiBase).then(ec => {
+      setConfig(prev => ({
+        ...prev,
+        smsAgentId:  ec.sms_agent_id  || prev.smsAgentId,
+        callAgentId: ec.call_agent_id || prev.callAgentId,
+        agentPhone:  ec.agent_phone   || prev.agentPhone,
+      }));
+    }).catch(() => {/* silently ignore — server may not have PROD agent IDs configured */});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.apiBase]);
 
   // Fetch agent display names using explicit agent IDs (highest priority) or phone fallback
   const { data: agentInfo } = useQuery({

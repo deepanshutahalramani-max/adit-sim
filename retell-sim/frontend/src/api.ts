@@ -23,6 +23,15 @@ export async function fetchConfig(): Promise<AppConfig> {
   return r.json();
 }
 
+export async function fetchEnvConfig(apiBase: string): Promise<{
+  sms_agent_id: string;
+  call_agent_id: string;
+  agent_phone: string;
+}> {
+  const r = await fetch(`${BASE}/env-config?api_base=${encodeURIComponent(apiBase)}`);
+  return r.json();
+}
+
 export async function runSimulation(params: {
   scenario_id: string;
   api_base: string;
