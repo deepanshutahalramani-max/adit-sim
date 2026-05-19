@@ -50,7 +50,6 @@ export function CallEvaluator({ config, appConfig, onResults }: Props) {
   /* ── Handlers ── */
   const handleAnalyze = async () => {
     if (!transcript.trim()) return;
-    if (!config.openaiKey) { setEvalError("OpenAI API key required in sidebar."); return; }
     setEvalError("");
     setAnalyzing(true);
     try {
@@ -89,7 +88,6 @@ export function CallEvaluator({ config, appConfig, onResults }: Props) {
   };
 
   const handleCallRun = () => {
-    if (!config.openaiKey) { setSimError("OpenAI key required."); return; }
     if (!simScenario)       { setSimError("Select a scenario."); return; }
     setSimError("");
     setCallDone(null);
@@ -326,15 +324,9 @@ export function CallEvaluator({ config, appConfig, onResults }: Props) {
                 </div>
               </div>
 
-              {!config.openaiKey && (
-                <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-2.5 text-[12.5px] text-amber-700 mb-4">
-                  ⚠ OpenAI key required in sidebar — used for AI patient responses and TTS.
-                </div>
-              )}
-
               <button
                 onClick={handleCallRun}
-                disabled={callRunning || !config.openaiKey}
+                disabled={callRunning}
                 className="flex items-center gap-2 bg-[#1A1A1A] hover:bg-[#333] text-white font-semibold text-[14px] rounded-xl px-8 py-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed mb-5 shadow-sm"
               >
                 <Phone className="w-4 h-4" />

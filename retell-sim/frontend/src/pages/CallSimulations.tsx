@@ -89,7 +89,6 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
   const handleContextFile = async (file: File) => {
     setContextFile(file);
     setExtractError("");
-    if (!config.openaiKey) { setExtractError("OpenAI key required to extract context from image."); return; }
     setExtracting(true);
     try {
       const { context } = await extractContextFromImage(file, config.openaiKey);
@@ -112,15 +111,11 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
 
   /* ── Handlers ── */
   const startAiCallerCall = () => {
-    if (!config.openaiKey) {
-      setWebCallError("OpenAI key required in sidebar for AI Caller mode."); return;
-    }
     setWebCallError(""); setWebCallDone(null); setWebCallRunning(true);
     setAiCallerKey(k => k + 1);
   };
 
   const handleLiveRun = () => {
-    if (!config.openaiKey) { setLiveError("OpenAI key required in sidebar."); return; }
     setLiveError(""); setLiveDone(null); setLiveRunning(true); setLiveKey(k => k + 1);
   };
 
@@ -130,7 +125,6 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
     setSelected(s => s.length === scenarios.length ? [] : scenarios.map(sc => sc.id));
 
   const handleBatchRun = async () => {
-    if (!config.openaiKey)    { setBatchError("OpenAI key required."); return; }
     if (selected.length === 0) { setBatchError("Select at least one scenario."); return; }
     setBatchError(""); setBatchRunning(true);
     try {
@@ -334,18 +328,12 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
 
           {ContextBox}
 
-          {!config.openaiKey && (
-            <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-[12.5px] text-amber-700 mb-4">
-              ⚠ OpenAI key required in sidebar — used for AI patient responses and TTS.
-            </div>
-          )}
-
           {webCallError && (
             <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-[13px] text-red-600 mb-4">{webCallError}</div>
           )}
 
           {aiCallerKey === 0 ? (
-            <button onClick={() => startAiCallerCall()} disabled={!config.openaiKey}
+            <button onClick={() => startAiCallerCall()}
               className="flex items-center gap-2 bg-[#1A1A1A] hover:bg-[#333] text-white font-semibold text-[14px] rounded-xl px-8 py-3 transition-colors shadow-sm mb-5 disabled:opacity-60 disabled:cursor-not-allowed">
               <Phone className="w-4 h-4" />
               Start AI Caller

@@ -132,7 +132,6 @@ export function DebugSuite({ config, onResults }: Props) {
 
   /* ─────────────────────── Step 1 → 2: analyze ─────────────────────── */
   const handleAnalyze = async () => {
-    if (!config.openaiKey) { setError("OpenAI API key required in sidebar."); return; }
     setError("");
     setStep("diagnosing");
     try {

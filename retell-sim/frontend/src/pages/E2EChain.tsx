@@ -64,7 +64,6 @@ export function E2EChain({ config, onResults, chainResults }: Props) {
 
   /* ── Call chain handlers ── */
   const startCallChain = () => {
-    if (!config.openaiKey) { setCallError("OpenAI key required in sidebar for AI Caller."); return; }
     setCallError("");
     setCallResults([null, null, null]);
     setCallPhase(1);
@@ -248,11 +247,6 @@ export function E2EChain({ config, onResults, chainResults }: Props) {
       {/* ══════════ CALL CHAIN ══════════ */}
       {channel === "call" && (
         <div>
-          {!config.openaiKey && (
-            <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-[12.5px] text-amber-700 mb-4">
-              ⚠ OpenAI key required in sidebar — used for AI patient responses and TTS voice injection.
-            </div>
-          )}
           {callError && (
             <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-[13px] text-red-600 mb-4">{callError}</div>
           )}
@@ -298,7 +292,6 @@ export function E2EChain({ config, onResults, chainResults }: Props) {
           {(callPhase === 0 || callPhase === 4) && (
             <button
               onClick={startCallChain}
-              disabled={!config.openaiKey}
               className="w-full flex items-center justify-center gap-2 bg-[#1A1A1A] hover:bg-[#333] text-white font-semibold text-[14px] rounded-xl py-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed mb-6 shadow-sm"
             >
               <Phone className="w-4 h-4" />

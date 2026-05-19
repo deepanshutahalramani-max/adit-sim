@@ -46,7 +46,6 @@ export function Simulations({ config, appConfig, onResults, results }: Props) {
   const handleContextFile = async (file: File) => {
     setContextFile(file);
     setExtractError("");
-    if (!config.openaiKey) { setExtractError("OpenAI key required to extract context from image."); return; }
     setExtracting(true);
     try {
       const { context } = await extractContextFromImage(file, config.openaiKey);
