@@ -2946,20 +2946,10 @@ def get_call_events():
 
 
 # ── Serve built React frontend ─────────────────────────────────────────────────
+# Mount the entire dist directory with html=True so Starlette handles SPA routing:
+#   - Exact file matches (JS/CSS/images) are served directly
+#   - Any path with no matching file falls back to index.html
+#   - All /api/* routes above take priority (FastAPI APIRoutes are evaluated first)
 _dist = Path(__file__).parent / "frontend" / "dist"
-_index = _dist / "index.html"
-
-# Mount static assets directory (CSS/JS chunks)
-if _dist.exists() and (_dist / "assets").exists():
-    app.mount("/assets", StaticFiles(directory=str(_dist / "assets")), name="assets")
-
-# Catch-all for SPA — MUST come last and must not intercept /api/* routes
-@app.get("/{full_path:path}", include_in_schema=False)
-def serve_spa(full_path: str):
-    # Never intercept API routes — let FastAPI return its own 404
-    if full_path.startswith("api/"):
-        raise HTTPException(status_code=404, detail="API route not found")
-    if _index.exists():
-        return FileResponse(str(_index))
-    # Fallback: no React build present yet
-    return {"status": "ok", "message": "ADIT Agent QA Platform API", "version": "2.0.0"}
+if _dist.exists():
+    app.mount("/", StaticFiles(directory=str(_dist), html=True), name="spa")
