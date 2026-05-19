@@ -78,13 +78,14 @@ export interface GeneratedScenario {
 
 /** Sidebar/config state shared across the whole app */
 export interface Config {
-  environment: string; // "live" | "dev"
+  environment: string; // "live" | "beta" | "dev"
   apiBase: string;
-  bearerToken: string;
   agentPhone: string;
-  openaiKey: string;
   useLlmJudge: boolean;
   /** Optional explicit Retell agent IDs — override phone-based auto-detection */
   smsAgentId?: string;   // chat/SMS agent ID from Retell dashboard (e.g. agent_ee5d...)
   callAgentId?: string;  // voice agent ID from Retell dashboard (e.g. agent_8c7...)
+  // bearerToken and openaiKey are now managed server-side per environment
+  bearerToken?: string;  // kept for API call compatibility; resolved server-side if empty
+  openaiKey?: string;    // kept for API call compatibility; resolved server-side if empty
 }

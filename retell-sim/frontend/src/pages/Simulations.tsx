@@ -64,7 +64,6 @@ export function Simulations({ config, appConfig, onResults, results }: Props) {
     setSelected(s => s.length === scenarios.length ? [] : scenarios.map(s => s.id));
 
   const handleRun = async () => {
-    if (!config.bearerToken) { setError("Bearer token required in sidebar."); return; }
     if (selected.length === 0) { setError("Select at least one scenario."); return; }
     setError(""); setRunning(true);
     try {
@@ -255,15 +254,10 @@ export function Simulations({ config, appConfig, onResults, results }: Props) {
               Type as a patient — your messages go directly to the <strong>real SMS agent</strong> via the ADIT backend.
               Exactly what a real patient texting in would experience.
             </p>
-            {!config.bearerToken && (
-              <div className="mt-3 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2.5 text-[12.5px] text-amber-700">
-                ⚠ Bearer token required in the sidebar to connect to the real agent.
-              </div>
-            )}
           </div>
           <ManualSMS config={{
             apiBase: config.apiBase,
-            bearerToken: config.bearerToken,
+            bearerToken: "",
             agentPhone: config.agentPhone,
           }} />
           <div className="mt-4 bg-[#F8F8F6] border border-[#EAEAEA] rounded-xl px-4 py-3">

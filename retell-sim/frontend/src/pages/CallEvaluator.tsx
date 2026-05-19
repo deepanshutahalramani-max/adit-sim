@@ -64,9 +64,7 @@ export function CallEvaluator({ config, appConfig, onResults }: Props) {
   };
 
   const handleChatRun = async () => {
-    if (!config.bearerToken) { setSimError("Bearer token required in sidebar."); return; }
-    if (!config.openaiKey)   { setSimError("OpenAI key required."); return; }
-    if (!simScenario)         { setSimError("Select a scenario."); return; }
+    if (!simScenario) { setSimError("Select a scenario."); return; }
     setSimError("");
     setSimRunning(true);
     setSimResults([]);

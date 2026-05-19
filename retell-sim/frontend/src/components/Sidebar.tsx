@@ -14,11 +14,10 @@ const HOSTS: Record<string, string> = {
   dev:  "https://gjqwwdfeo35edl-8009.proxy.runpod.net",
 };
 
-/** Auto-fill credentials when switching environments. */
-const ENV_PRESETS: Record<string, { bearerToken?: string; smsAgentId?: string; callAgentId?: string }> = {
-  live: {},   // user manages their own PROD token
+/** Auto-fill Retell agent IDs when switching environments (bearer managed server-side). */
+const ENV_PRESETS: Record<string, { smsAgentId?: string; callAgentId?: string }> = {
+  live: {},
   beta: {
-    bearerToken: "e6a1967d-2121-4db7-b573-6b9a317339f7",
     smsAgentId:  "agent_b1eb03374f40eadbfa6efd0ce3",
     callAgentId: "agent_f0fbd593add84dbebe88f36638",
   },
@@ -78,20 +77,12 @@ export function Sidebar({ config, onChange, agentName = "—" }: Props) {
 
   const env = config.environment ?? "live";
 
-  // Returns true if the per-env key (or legacy flat key) has a non-empty value
-  const stored = (base: string) =>
-    !!(localStorage.getItem(`${base}_${env}`) || localStorage.getItem(base));
-
   const set = (k: keyof Config, v: unknown) => {
-    // env-namespaced keys for credentials that differ per environment
     const envMap: Partial<Record<keyof Config, string>> = {
-      bearerToken: "adit_bearer",
       smsAgentId:  "adit_sms_agent_id",
       callAgentId: "adit_call_agent_id",
     };
-    // flat (global) keys for settings shared across environments
     const flatMap: Partial<Record<keyof Config, string>> = {
-      openaiKey:  "adit_openai_key",
       agentPhone: "adit_agent_phone",
     };
     if (envMap[k])  localStorage.setItem(`${envMap[k]!}_${env}`, v as string);
@@ -99,8 +90,9 @@ export function Sidebar({ config, onChange, agentName = "—" }: Props) {
     onChange({ ...config, [k]: v });
   };
 
-  // OpenAI key is optional — the server falls back to its own env key
-  const allGood = !!config.bearerToken && !!config.smsAgentId && !!config.callAgentId;
+  const stored = (base: string) => !!localStorage.getItem(`${base}_${env}`);
+
+  const allGood = !!config.smsAgentId && !!config.callAgentId;
 
   return (
     <aside className="w-64 bg-white border-r border-[#EAEAEA] flex flex-col flex-shrink-0 overflow-y-auto">
@@ -129,24 +121,11 @@ export function Sidebar({ config, onChange, agentName = "—" }: Props) {
         {!allGood && (
           <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-4">
             <p className="text-[11px] font-semibold text-amber-700">
-              {!config.bearerToken
-                ? "Bearer token required"
-                : "Paste both Retell Agent IDs to get started"}
+              Paste both Retell Agent IDs to get started
             </p>
           </div>
         )}
 
-        {/* ── Core credentials ── */}
-        <SideInput
-          label="Bearer Token"
-          value={config.bearerToken}
-          onChange={v => set("bearerToken", v)}
-          type="password"
-          placeholder="Paste bearer token…"
-          savedFromStorage={stored("adit_bearer")}
-        />
-
-        <hr className="border-[#F0F0EE] my-3" />
         <div className="text-[10px] font-bold uppercase tracking-widest text-[#ADADAD] mb-3">
           Retell Agents
           <span className="normal-case font-normal ml-1 text-[#ADADAD]">— copy IDs from dashboard</span>
@@ -171,16 +150,6 @@ export function Sidebar({ config, onChange, agentName = "—" }: Props) {
         />
 
         <hr className="border-[#F0F0EE] my-3" />
-
-        <SideInput
-          label="OpenAI API Key"
-          value={config.openaiKey}
-          onChange={v => set("openaiKey", v)}
-          type="password"
-          placeholder="Optional — server key used by default"
-          savedFromStorage={stored("adit_openai_key")}
-          hint="Leave blank to use the shared server key"
-        />
 
         {/* LLM Judge toggle */}
         <div className="mb-4">
@@ -221,38 +190,31 @@ export function Sidebar({ config, onChange, agentName = "—" }: Props) {
                     const newEnv = e.target.value;
                     const curEnv = config.environment ?? "live";
 
-                    // Save current env's credentials before switching so they survive a round-trip
-                    localStorage.setItem(`adit_bearer_${curEnv}`,        config.bearerToken ?? "");
+                    // Save current env's agent IDs before switching
                     localStorage.setItem(`adit_sms_agent_id_${curEnv}`,  config.smsAgentId  ?? "");
                     localStorage.setItem(`adit_call_agent_id_${curEnv}`, config.callAgentId ?? "");
-
-                    // Persist env selection
                     localStorage.setItem("adit_env", newEnv);
 
-                    // Load saved creds for the new env; fall back to hardcoded presets if nothing saved
-                    const preset = ENV_PRESETS[newEnv] ?? {};
-                    const savedBearer  = localStorage.getItem(`adit_bearer_${newEnv}`)        ?? "";
-                    const savedSmsId   = localStorage.getItem(`adit_sms_agent_id_${newEnv}`)  ?? "";
-                    const savedCallId  = localStorage.getItem(`adit_call_agent_id_${newEnv}`) ?? "";
+                    // Load saved or preset agent IDs for the new env
+                    const preset     = ENV_PRESETS[newEnv] ?? {};
+                    const savedSmsId  = localStorage.getItem(`adit_sms_agent_id_${newEnv}`)  ?? "";
+                    const savedCallId = localStorage.getItem(`adit_call_agent_id_${newEnv}`) ?? "";
 
-                    const resolvedBearer  = savedBearer  || preset.bearerToken  || "";
-                    const resolvedSmsId   = savedSmsId   || preset.smsAgentId   || "";
-                    const resolvedCallId  = savedCallId  || preset.callAgentId  || "";
+                    const resolvedSmsId  = savedSmsId  || preset.smsAgentId  || "";
+                    const resolvedCallId = savedCallId || preset.callAgentId || "";
 
-                    // Persist resolved values under the new env key so future loads are instant
-                    if (resolvedBearer)  localStorage.setItem(`adit_bearer_${newEnv}`,        resolvedBearer);
-                    if (resolvedSmsId)   localStorage.setItem(`adit_sms_agent_id_${newEnv}`,  resolvedSmsId);
-                    if (resolvedCallId)  localStorage.setItem(`adit_call_agent_id_${newEnv}`, resolvedCallId);
+                    if (resolvedSmsId)  localStorage.setItem(`adit_sms_agent_id_${newEnv}`,  resolvedSmsId);
+                    if (resolvedCallId) localStorage.setItem(`adit_call_agent_id_${newEnv}`, resolvedCallId);
 
-                    const next: typeof config = {
+                    onChange({
                       ...config,
                       environment: newEnv,
-                      apiBase: HOSTS[newEnv] ?? HOSTS.live,
-                      bearerToken:  resolvedBearer,
-                      smsAgentId:   resolvedSmsId  || undefined,
-                      callAgentId:  resolvedCallId || undefined,
-                    };
-                    onChange(next);
+                      apiBase:     HOSTS[newEnv] ?? HOSTS.live,
+                      bearerToken: "",
+                      openaiKey:   "",
+                      smsAgentId:  resolvedSmsId  || undefined,
+                      callAgentId: resolvedCallId || undefined,
+                    });
                   }}
                   className="w-full bg-white border border-[#E5E5E5] rounded-lg px-3 py-2 text-[13px] text-[#111]
                              focus:outline-none focus:border-brand-500 truncate"
@@ -283,19 +245,6 @@ export function Sidebar({ config, onChange, agentName = "—" }: Props) {
         <div>
           <Label>Status</Label>
           <div className="space-y-1.5">
-            <StatusRow
-              ok={!!config.bearerToken}
-              label="Bearer token"
-              value={config.bearerToken ? "Set" : "Missing"}
-              valueClass={config.bearerToken ? "text-green-600" : "text-[#ADADAD]"}
-            />
-            <StatusRow
-              ok={true}
-              okColor="bg-green-500"
-              label="OpenAI key"
-              value={config.openaiKey ? "Custom" : "Server default"}
-              valueClass={config.openaiKey ? "text-green-600" : "text-[#888]"}
-            />
             <StatusRow
               ok={!!config.smsAgentId}
               label="SMS agent"

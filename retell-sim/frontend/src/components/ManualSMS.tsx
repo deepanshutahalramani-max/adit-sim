@@ -70,7 +70,6 @@ export function ManualSMS({ config }: Props) {
   const sendMessage = async () => {
     const text = input.trim();
     if (!text || sending) return;
-    if (!config.bearerToken) { setError("Bearer token required in sidebar."); return; }
 
     setInput("");
     setError("");
@@ -130,7 +129,7 @@ export function ManualSMS({ config }: Props) {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
   };
 
-  const canSend = input.trim().length > 0 && !sending && !!config.bearerToken;
+  const canSend = input.trim().length > 0 && !sending;
 
   return (
     <div className="bg-white border border-[#EAEAEA] rounded-2xl overflow-hidden shadow-sm">
@@ -253,8 +252,7 @@ export function ManualSMS({ config }: Props) {
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={handleKey}
-          disabled={!config.bearerToken}
-          placeholder={config.bearerToken ? "Type a message…" : "Bearer token required in sidebar"}
+          placeholder="Type a message…"
           className="flex-1 bg-white rounded-full px-4 py-2 text-[13.5px] text-[#111] border border-[#DADAD8] focus:outline-none focus:border-[#25D366] placeholder:text-[#ADADAD] disabled:opacity-50"
         />
         <button

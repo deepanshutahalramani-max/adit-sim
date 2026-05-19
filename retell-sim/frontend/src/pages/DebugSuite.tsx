@@ -172,7 +172,6 @@ export function DebugSuite({ config, onResults }: Props) {
 
   /* ─────────────────────── Step 2 → 3: start first repro run ─────────────────────── */
   const handleConfirmIssue = () => {
-    if (mode === "sms" && !config.bearerToken) { setError("Bearer token required in sidebar."); return; }
     if (!diagnosis) return;
     const updated: DebugAnalysis = { ...diagnosis, what_happened: editedWhatHappened, root_cause: editedRootCause };
     setDiagnosis(updated);
@@ -580,15 +579,11 @@ export function DebugSuite({ config, onResults }: Props) {
             </button>
             <button
               onClick={handleConfirmIssue}
-              disabled={mode === "sms" && !config.bearerToken}
               className="flex-1 flex items-center justify-center gap-2 bg-brand-500 hover:bg-brand-600 text-white font-semibold text-[14px] rounded-xl py-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed shadow-sm">
               <CheckCircle className="w-4 h-4" />
               Confirmed — {mode === "call" ? "reproduce this call issue" : "reproduce this issue"}
             </button>
           </div>
-          {mode === "sms" && !config.bearerToken && (
-            <p className="text-[12px] text-red-500 mt-2">Bearer token required in sidebar.</p>
-          )}
         </div>
       )}
 

@@ -18,9 +18,7 @@ export function TestGenerator({ config, onResults }: Props) {
   const [runningIdx, setRunningIdx] = useState(-1);
 
   const handleGenerate = async () => {
-    if (!config.openaiKey) { setError("OpenAI key required."); return; }
     if (!instruction.trim()) { setError("Enter a test description."); return; }
-    if (!config.bearerToken) { setError("Bearer token required."); return; }
     setError("");
     setGenerating(true);
     setGenerated([]);

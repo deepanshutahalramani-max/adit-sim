@@ -43,6 +43,28 @@ def _resolve_retell_key(api_base: str | None) -> str:
     return RETELL_API_KEY
 
 
+# ── Per-environment ADIT bearer tokens ───────────────────────────────────────
+# Stored server-side so the frontend never needs to handle them.
+BEARER_TOKEN_MAP: dict[str, str] = {
+    "https://frontdeskchatagent.adit.com":     os.environ.get("ADIT_BEARER_PROD", ""),
+    "https://betafrontdeskchatagent.adit.com": os.environ.get("ADIT_BEARER_BETA", "e6a1967d-2121-4db7-b573-6b9a317339f7"),
+}
+
+
+def _resolve_bearer(api_base: str | None, provided: str = "") -> str:
+    """Return the ADIT bearer token: use provided if non-empty, else resolve from api_base."""
+    if provided and provided.strip():
+        return provided.strip()
+    if api_base:
+        token = BEARER_TOKEN_MAP.get(api_base.rstrip("/"), "")
+        if token:
+            return token
+    raise HTTPException(
+        status_code=400,
+        detail="ADIT bearer token required — set ADIT_BEARER_PROD env var on the server.",
+    )
+
+
 async def _retell_get(path: str, extra_headers: dict | None = None, retell_key: str | None = None):
     """GET {_RETELL_BASE}{path} with Retell auth."""
     url = f"{_RETELL_BASE}{path}"
@@ -220,7 +242,7 @@ class SimResult:
 class SimRequest(BaseModel):
     scenario_id: str
     api_base: str = "https://frontdeskchatagent.adit.com"
-    bearer_token: str
+    bearer_token: str = ""
     agent_phone: str = DEFAULT_AGENT_PHONE
     openai_key: str = ""
     use_judge: bool = True
@@ -232,7 +254,7 @@ class ParallelSimRequest(BaseModel):
     repeats: int = 1
     max_parallel: int = 5
     api_base: str = "https://frontdeskchatagent.adit.com"
-    bearer_token: str
+    bearer_token: str = ""
     agent_phone: str = DEFAULT_AGENT_PHONE
     openai_key: str = ""
     use_judge: bool = True
@@ -240,7 +262,7 @@ class ParallelSimRequest(BaseModel):
 
 class ChainRequest(BaseModel):
     api_base: str = "https://frontdeskchatagent.adit.com"
-    bearer_token: str
+    bearer_token: str = ""
     agent_phone: str = DEFAULT_AGENT_PHONE
     openai_key: str = ""
 
@@ -258,7 +280,7 @@ class ValidationRequest(BaseModel):
     root_cause: str
     n_runs: int = 3
     api_base: str = "https://frontdeskchatagent.adit.com"
-    bearer_token: str
+    bearer_token: str = ""
     agent_phone: str = DEFAULT_AGENT_PHONE
     openai_key: str = ""
 
@@ -677,6 +699,7 @@ def get_config():
 
 @app.post("/api/simulate")
 def simulate(req: SimRequest):
+    req.bearer_token = _resolve_bearer(req.api_base, req.bearer_token)
     req.openai_key = _resolve_openai_key(req.openai_key)
     try:
         result = _run_simulation_sync(
@@ -692,6 +715,7 @@ def simulate(req: SimRequest):
 
 @app.post("/api/simulate/parallel")
 def simulate_parallel(req: ParallelSimRequest):
+    req.bearer_token = _resolve_bearer(req.api_base, req.bearer_token)
     req.openai_key = _resolve_openai_key(req.openai_key)
     tasks = [(sid, i) for sid in req.scenario_ids for i in range(req.repeats)]
     results = []
@@ -719,6 +743,7 @@ def simulate_chain(req: ChainRequest):
     Step 1 books as a new patient. Steps 2-3 reuse the SAME patient details
     (same phone + same persona marked is_new=False) so the backend can find them.
     """
+    req.bearer_token = _resolve_bearer(req.api_base, req.bearer_token)
     req.openai_key = _resolve_openai_key(req.openai_key)
     phone = _phone()
     chain = {}
@@ -850,6 +875,7 @@ Return ONLY valid JSON (no markdown, no explanation):
 
 @app.post("/api/debug/validate")
 def debug_validate(req: ValidationRequest):
+    req.bearer_token = _resolve_bearer(req.api_base, req.bearer_token)
     req.openai_key = _resolve_openai_key(req.openai_key)
     # Temporarily inject a custom repro scenario
     repro_id = "debug-repro"
@@ -940,10 +966,11 @@ def run_generated_scenario(
     goal: str = Form(...),
     opener: str = Form(...),
     api_base: str = Form("https://frontdeskchatagent.adit.com"),
-    bearer_token: str = Form(...),
+    bearer_token: str = Form(""),
     agent_phone: str = Form(DEFAULT_AGENT_PHONE),
     openai_key: str = Form(""),
 ):
+    bearer_token = _resolve_bearer(api_base, bearer_token)
     openai_key = _resolve_openai_key(openai_key)
     gen_id = "generated-" + scenario_name.lower().replace(" ", "-")[:30]
     SCENARIOS[gen_id] = {
@@ -2057,7 +2084,7 @@ def apply_fix(req: ApplyFixRequest):
 # ── Debug: full regression ────────────────────────────────────────────────────
 class RegressionRequest(BaseModel):
     api_base: str = "https://frontdeskchatagent.adit.com"
-    bearer_token: str
+    bearer_token: str = ""
     agent_phone: str = DEFAULT_AGENT_PHONE
     openai_key: str = ""
     use_judge: bool = True
@@ -2066,6 +2093,7 @@ class RegressionRequest(BaseModel):
 @app.post("/api/debug/regression")
 def run_regression(req: RegressionRequest):
     """Run all (or specified) scenarios in parallel and return pass/fail summary."""
+    req.bearer_token = _resolve_bearer(req.api_base, req.bearer_token)
     req.openai_key = _resolve_openai_key(req.openai_key)
     ids = req.scenario_ids if req.scenario_ids else list(SCENARIOS.keys())
     results = []
@@ -2101,7 +2129,7 @@ class StreamReproRequest(BaseModel):
     root_cause: str
     prescribed_followups: list[str] = []
     api_base: str = "https://frontdeskchatagent.adit.com"
-    bearer_token: str
+    bearer_token: str = ""
     agent_phone: str = DEFAULT_AGENT_PHONE
     openai_key: str = ""
     max_turns: int = 12
@@ -2109,6 +2137,7 @@ class StreamReproRequest(BaseModel):
 @app.post("/api/simulate/stream-repro")
 async def stream_repro(req: StreamReproRequest):
     """Stream a single repro simulation as Server-Sent Events."""
+    req.bearer_token = _resolve_bearer(req.api_base, req.bearer_token)
     req.openai_key = _resolve_openai_key(req.openai_key)
     from fastapi.responses import StreamingResponse as SR
 
@@ -2215,13 +2244,13 @@ async def stream_repro(req: StreamReproRequest):
 
 class SmsStartRequest(BaseModel):
     api_base: str = "https://frontdeskchatagent.adit.com"
-    bearer_token: str
+    bearer_token: str = ""
     agent_phone: str = DEFAULT_AGENT_PHONE
     message: str          # first message from user
 
 class SmsSendRequest(BaseModel):
     api_base: str = "https://frontdeskchatagent.adit.com"
-    bearer_token: str
+    bearer_token: str = ""
     agent_phone: str = DEFAULT_AGENT_PHONE
     patient_phone: str    # phone from start response
     chat_id: str          # chat_id from previous turn
@@ -2234,6 +2263,7 @@ def sms_start(req: SmsStartRequest):
     Generates a patient phone number, sends the first message, returns the
     agent reply together with chat_id and patient_phone for subsequent turns.
     """
+    req.bearer_token = _resolve_bearer(req.api_base, req.bearer_token)
     patient_phone = _phone()
     try:
         resp = _call_agent(
@@ -2263,6 +2293,7 @@ def sms_send(req: SmsSendRequest):
     Sends a subsequent message in an existing manual SMS conversation.
     Requires patient_phone and chat_id from a previous /api/sms/start call.
     """
+    req.bearer_token = _resolve_bearer(req.api_base, req.bearer_token)
     t0 = time.time()
     try:
         resp = _call_agent(

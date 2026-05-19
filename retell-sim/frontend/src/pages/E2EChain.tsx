@@ -45,8 +45,6 @@ export function E2EChain({ config, onResults, chainResults }: Props) {
 
   /* ── SMS handlers ── */
   const handleSmsRun = async () => {
-    if (!config.bearerToken) { setError("Bearer token required in sidebar."); return; }
-    if (!config.openaiKey)   { setError("OpenAI key required for smart patient responses."); return; }
     setError("");
     setRunning(true);
     try {
