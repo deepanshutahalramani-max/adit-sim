@@ -2292,9 +2292,17 @@ async def create_web_call(req: CreateWebCallRequest):
         if req.mode:
             metadata["mode"] = req.mode
 
+        # Inject dynamic variables — ADIT's inbound webhook won't fire for web calls,
+        # so the agent would have empty {{current_date}}/{{office_status}}/etc.
+        # and all EHR function calls (book_appointment etc.) would fail.
+        dynamic_vars = _build_dynamic_vars(
+            agent_phone_number=req.agent_phone or "",
+        )
+
         r = await _retell_post("/v2/create-web-call", {
-            "agent_id": agent_id,
-            "metadata": metadata,
+            "agent_id":                     agent_id,
+            "metadata":                     metadata,
+            "retell_llm_dynamic_variables": dynamic_vars,
         })
         if r.status_code not in (200, 201):
             raise HTTPException(
@@ -2321,31 +2329,35 @@ class CreatePhoneCallRequest(BaseModel):
     to_number: str     # Destination (tester / patient phone)
 
 
-def _build_phone_call_dynamic_vars(from_number: str, to_number: str) -> dict:
+def _build_dynamic_vars(agent_phone_number: str, patient_phone_number: str = "") -> dict:
     """
-    Build retell_llm_dynamic_variables for an outbound QA call.
+    Build retell_llm_dynamic_variables that ADIT normally injects via its inbound webhook
+    (voicereceiption.adit.com/api/v1/incoming_call).
 
-    For real inbound calls, ADIT's webhook (voicereceiption.adit.com/api/v1/incoming_call)
-    populates these automatically.  For our outbound test calls Retell never fires that
-    inbound webhook, so the agent would have empty {{current_date}}, {{office_status}},
-    etc. and cannot book appointments.  We inject them ourselves so the agent behaves
-    exactly as it would on a real inbound call.
+    Used for BOTH web calls and outbound phone calls from the QA platform,
+    because neither path triggers ADIT's inbound webhook.
+    Without these the agent has empty {{current_date}} / {{office_status}} / etc.
+    and cannot book appointments (EHR functions fail with missing context).
+
+    agent_phone_number  — the ADIT-registered agent phone (sidebar config value).
+                         ADIT's function endpoints use this to look up the practice.
+    patient_phone_number — caller's number; empty string is fine for web/AI calls.
     """
     from datetime import datetime
     now = datetime.now()
-    # Windows-safe date formatting — avoid %-d which crashes on Windows
-    time_str = now.strftime("%I:%M %p").lstrip("0")   # "2:30 PM"
+    # Windows-safe formatting — %-d crashes on Windows
+    time_str = now.strftime("%I:%M %p").lstrip("0")        # "2:30 PM"
     date_str = f"{now.strftime('%B')} {now.day}, {now.year}"  # "May 19, 2026"
-    day_str  = now.strftime("%A")                              # "Monday"
+    day_str  = now.strftime("%A")                            # "Monday"
 
     return {
-        "agent_phone_number":   from_number,
-        "patient_phone_number": to_number,
+        "agent_phone_number":   agent_phone_number,
+        "patient_phone_number": patient_phone_number,
         "current_day":          day_str,
         "current_date":         date_str,
         "current_year":         str(now.year),
         "current_time":         time_str,
-        # office_status: "open" ensures the agent can book; real calls get this from ADIT
+        # "open" so the agent can book during QA; real inbound calls get this from ADIT
         "office_status":        "open",
         "business_hours":       "Monday through Friday 8 AM to 5 PM, Saturday 9 AM to 2 PM",
         "transfer_call_prompt": "",
@@ -2361,7 +2373,10 @@ async def create_phone_call(req: CreatePhoneCallRequest):
     the agent has empty template variables and cannot book appointments.
     """
     try:
-        dynamic_vars = _build_phone_call_dynamic_vars(req.from_number, req.to_number)
+        dynamic_vars = _build_dynamic_vars(
+            agent_phone_number=req.from_number,
+            patient_phone_number=req.to_number,
+        )
         r = await _retell_post("/v2/create-phone-call", {
             "from_number":                 req.from_number,
             "to_number":                   req.to_number,
