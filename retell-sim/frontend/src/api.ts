@@ -139,7 +139,7 @@ export async function applyFix(params: {
   return post("/debug/apply-fix", params);
 }
 
-export async function fetchRetellPrompt(agentPhone?: string, agentId?: string): Promise<{
+export async function fetchRetellPrompt(agentPhone?: string, agentId?: string, apiBase?: string): Promise<{
   prompt: string;
   llm_id: string;
   agent_id: string;
@@ -148,6 +148,7 @@ export async function fetchRetellPrompt(agentPhone?: string, agentId?: string): 
   const params = new URLSearchParams();
   if (agentPhone) params.set("agent_phone", agentPhone);
   if (agentId)    params.set("agent_id",    agentId);
+  if (apiBase)    params.set("api_base",    apiBase);
   const qs = params.toString();
   const r = await fetch(`${BASE}/retell/fetch-prompt${qs ? `?${qs}` : ""}`);
   if (!r.ok) {
@@ -178,7 +179,7 @@ export async function runCallParallel(params: {
   return post("/simulate/call/parallel", params);
 }
 
-export async function fetchRetellCallPrompt(agentPhone?: string, agentId?: string): Promise<{
+export async function fetchRetellCallPrompt(agentPhone?: string, agentId?: string, apiBase?: string): Promise<{
   prompt: string;
   llm_id: string;
   agent_id: string;
@@ -187,6 +188,7 @@ export async function fetchRetellCallPrompt(agentPhone?: string, agentId?: strin
   const params = new URLSearchParams();
   if (agentPhone) params.set("agent_phone", agentPhone);
   if (agentId)    params.set("agent_id",    agentId);
+  if (apiBase)    params.set("api_base",    apiBase);
   const qs = params.toString();
   const r = await fetch(`${BASE}/retell/fetch-call-prompt${qs ? `?${qs}` : ""}`);
   if (!r.ok) {
@@ -244,6 +246,7 @@ export async function fetchAgentInfo(
   agentPhone?: string,
   smsAgentId?: string,
   callAgentId?: string,
+  apiBase?: string,
 ): Promise<{
   sms_agent_id: string;
   call_agent_id: string;
@@ -255,6 +258,7 @@ export async function fetchAgentInfo(
   if (agentPhone)  params.set("agent_phone",   agentPhone);
   if (smsAgentId)  params.set("sms_agent_id",  smsAgentId);
   if (callAgentId) params.set("call_agent_id", callAgentId);
+  if (apiBase)     params.set("api_base",       apiBase);
   const qs = params.toString();
   const url = `${BASE}/retell/agent-info${qs ? `?${qs}` : ""}`;
   const r = await fetch(url);

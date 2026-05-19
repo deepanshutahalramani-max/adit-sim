@@ -116,7 +116,7 @@ export function Simulations({ config, appConfig, onResults, results }: Props) {
         <>
           {/* Prompt configurator — toggles update resolved prompt live */}
           <div className="mb-4">
-            <PromptConfigurator agentPhone={config.agentPhone} agentId={config.smsAgentId} />
+            <PromptConfigurator agentPhone={config.agentPhone} agentId={config.smsAgentId} apiBase={config.apiBase} />
           </div>
 
           {/* ── Registered Patient ── */}

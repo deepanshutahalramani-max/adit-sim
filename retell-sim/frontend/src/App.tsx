@@ -57,11 +57,12 @@ export default function App() {
 
   // Fetch agent display names using explicit agent IDs (highest priority) or phone fallback
   const { data: agentInfo } = useQuery({
-    queryKey: ["agentInfo", config.smsAgentId, config.callAgentId, config.agentPhone],
+    queryKey: ["agentInfo", config.smsAgentId, config.callAgentId, config.agentPhone, config.apiBase],
     queryFn: () => fetchAgentInfo(
       config.agentPhone || undefined,
       config.smsAgentId || undefined,
       config.callAgentId || undefined,
+      config.apiBase || undefined,
     ),
     staleTime: 60_000,
     retry: false,

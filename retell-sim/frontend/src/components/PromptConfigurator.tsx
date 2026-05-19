@@ -21,6 +21,8 @@ interface Props {
   agentPhone?: string;
   /** Explicit Retell agent ID — takes priority over phone lookup when set. */
   agentId?: string;
+  /** ADIT environment base URL — used to select the correct Retell API key (PROD vs BETA). */
+  apiBase?: string;
   /** Extra class names for the outer wrapper. */
   className?: string;
 }
@@ -39,7 +41,7 @@ const TOGGLE_ROWS: { key: keyof PromptToggles; label: string; emoji: string }[] 
   { key: "cancellation",      label: "Cancellation",                emoji: "❌" },
 ];
 
-export function PromptConfigurator({ onLoad, agentType = "chat", agentPhone, agentId, className = "" }: Props) {
+export function PromptConfigurator({ onLoad, agentType = "chat", agentPhone, agentId, apiBase, className = "" }: Props) {
   const [template, setTemplate]             = useState("");
   const [resolvedPrompt, setResolvedPrompt] = useState("");
   const [toggles, setToggles]               = useState<PromptToggles>(DEFAULT_TOGGLES);
@@ -76,8 +78,8 @@ export function PromptConfigurator({ onLoad, agentType = "chat", agentPhone, age
     setError("");
     try {
       const fetcher = agentType === "call" ? fetchRetellCallPrompt : fetchRetellPrompt;
-      // Pass explicit agentId (highest priority) then phone for auto-lookup
-      const { prompt } = await fetcher(phone, agentId);
+      // Pass explicit agentId (highest priority), then phone, then env api_base
+      const { prompt } = await fetcher(phone, agentId, apiBase);
       setTemplate(prompt);
       templateRef.current = prompt;
       await resolve(prompt, togglesRef.current);

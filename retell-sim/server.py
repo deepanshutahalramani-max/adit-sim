@@ -1400,25 +1400,35 @@ async def stream_call(req: StreamCallRequest):
 
 # ── Retell: fetch call agent prompt ──────────────────────────────────────────
 
+class ListCallsBody(BaseModel):
+    api_base: Optional[str] = None
+    agent_id: Optional[str] = None
+    limit: Optional[int] = None
+    sort_order: Optional[str] = None
+
 @app.post("/api/retell/list-calls")
-async def list_calls(body: dict = None):
+async def list_calls(body: ListCallsBody = None):
     """Proxy: list recent calls from Retell (for viewing real transcripts)."""
-    payload = body or {}
+    b = body or ListCallsBody()
+    payload: dict = {}
+    if b.agent_id:   payload["agent_id"]   = b.agent_id
+    if b.limit:      payload["limit"]       = b.limit
+    if b.sort_order: payload["sort_order"]  = b.sort_order
+    rkey = _resolve_retell_key(b.api_base)
     try:
-        r = await _retell_post("/v2/list-calls", payload)
+        r = await _retell_post("/v2/list-calls", payload, retell_key=rkey)
         return r.json()
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Retell list-calls failed: {exc}")
 
 
 @app.get("/api/retell/get-call/{call_id}")
-async def get_call(call_id: str):
+async def get_call(call_id: str, api_base: Optional[str] = None):
     """Proxy: get a single call's transcript + metadata from Retell."""
-    headers = {"Authorization": f"Bearer {RETELL_API_KEY}"}
+    rkey = _resolve_retell_key(api_base)
     try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            r = await client.get(f"{_RETELL_BASE}/v2/get-call/{call_id}", headers=headers)
-            return r.json()
+        r = await _retell_get(f"/v2/get-call/{call_id}", retell_key=rkey)
+        return r.json()
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Retell get-call failed: {exc}")
 
@@ -1559,11 +1569,11 @@ def _extract_agent_prompt_from_data(agent_data: dict, agent_id: str) -> dict | N
     return llm_id  # just return the id; async fetching done by caller
 
 
-async def _fetch_llm_prompt(llm_id: str, agent_id: str, errors: list[str]) -> dict | None:
+async def _fetch_llm_prompt(llm_id: str, agent_id: str, errors: list[str], retell_key: str | None = None) -> dict | None:
     """Try fetching a Retell LLM by id; returns prompt dict or None."""
     for llm_path in [f"/get-retell-llm/{llm_id}", f"/v2/get-retell-llm/{llm_id}"]:
         try:
-            llm_resp = await _retell_get(llm_path)
+            llm_resp = await _retell_get(llm_path, retell_key=retell_key)
             if llm_resp.status_code != 200:
                 errors.append(f"{llm_path}: HTTP {llm_resp.status_code}")
                 continue
@@ -1587,7 +1597,7 @@ async def _fetch_llm_prompt(llm_id: str, agent_id: str, errors: list[str]) -> di
     return None
 
 
-async def _fetch_agent_prompt_data(agent_id: str) -> dict:
+async def _fetch_agent_prompt_data(agent_id: str, retell_key: str | None = None) -> dict:
     """
     Robustly fetch an agent's system prompt from Retell.
     Tries multiple strategies to handle different agent channel types:
@@ -1599,12 +1609,13 @@ async def _fetch_agent_prompt_data(agent_id: str) -> dict:
 
     For each successful agent fetch, tries both LLM path variants.
     Also detects Retell's pattern of HTTP 200 + JSON {"status":"error",...}.
+    Pass retell_key to use the correct Retell account (PROD vs BETA).
     """
     errors: list[str] = []
 
     # ── Strategy 1: chat agent path (SMS / chat channel) ─────────────────────
     try:
-        chat_resp = await _retell_get(f"/get-chat-agent/{agent_id}")
+        chat_resp = await _retell_get(f"/get-chat-agent/{agent_id}", retell_key=retell_key)
         if chat_resp.status_code == 200:
             chat_data = chat_resp.json()
             if isinstance(chat_data, dict) and chat_data.get("status") != "error":
@@ -1613,7 +1624,7 @@ async def _fetch_agent_prompt_data(agent_id: str) -> dict:
                     or (chat_data.get("response_engine") or {}).get("llm_id")
                 )
                 if llm_id:
-                    result = await _fetch_llm_prompt(llm_id, agent_id, errors)
+                    result = await _fetch_llm_prompt(llm_id, agent_id, errors, retell_key=retell_key)
                     if result:
                         return result
                     errors.append(f"/get-chat-agent: found llm_id={llm_id} but LLM fetch failed")
@@ -1629,7 +1640,7 @@ async def _fetch_agent_prompt_data(agent_id: str) -> dict:
     # ── Strategy 2 & 3: voice agent GET paths ────────────────────────────────
     for agent_path in [f"/get-agent/{agent_id}", f"/v2/get-agent/{agent_id}"]:
         try:
-            agent_resp = await _retell_get(agent_path)
+            agent_resp = await _retell_get(agent_path, retell_key=retell_key)
         except Exception as exc:
             errors.append(f"{agent_path}: request error — {exc}")
             continue
@@ -1657,13 +1668,13 @@ async def _fetch_agent_prompt_data(agent_id: str) -> dict:
             errors.append(f"{agent_path}: no llm_id in response")
             continue
 
-        result = await _fetch_llm_prompt(llm_id, agent_id, errors)
+        result = await _fetch_llm_prompt(llm_id, agent_id, errors, retell_key=retell_key)
         if result:
             return result
 
     # ── Strategy 3: GET /list-agents (correct Retell v1 endpoint) ────────────
     try:
-        list_resp = await _retell_get("/list-agents")
+        list_resp = await _retell_get("/list-agents", retell_key=retell_key)
         if list_resp.status_code != 200:
             errors.append(f"list-agents: HTTP {list_resp.status_code} — {list_resp.text[:120]}")
         else:
@@ -1680,7 +1691,7 @@ async def _fetch_agent_prompt_data(agent_id: str) -> dict:
                     # retell-llm → fetch the LLM object
                     llm_id = agent_data.get("llm_id") or re.get("llm_id")
                     if llm_id:
-                        result = await _fetch_llm_prompt(llm_id, agent_id, errors)
+                        result = await _fetch_llm_prompt(llm_id, agent_id, errors, retell_key=retell_key)
                         if result:
                             return result
 
@@ -1783,11 +1794,11 @@ def _phone_match(agent: dict, norm: str) -> bool:
     return False
 
 
-async def _list_agents(channel: str) -> list[dict]:
+async def _list_agents(channel: str, retell_key: str | None = None) -> list[dict]:
     """Return the raw agent list for 'chat' or 'voice' channel."""
     path = "/list-chat-agents" if channel == "chat" else "/list-agents"
     try:
-        resp = await _retell_get(path)
+        resp = await _retell_get(path, retell_key=retell_key)
         if resp.status_code != 200:
             return []
         data = resp.json()
@@ -1798,7 +1809,7 @@ async def _list_agents(channel: str) -> list[dict]:
         return []
 
 
-async def _resolve_agent_by_phone(phone: str, channel: str) -> str | None:
+async def _resolve_agent_by_phone(phone: str, channel: str, retell_key: str | None = None) -> str | None:
     """
     Look up the Retell agent ID whose associated phone number matches `phone`.
 
@@ -1813,24 +1824,25 @@ async def _resolve_agent_by_phone(phone: str, channel: str) -> str | None:
          (requires ≥ 3 words in common to avoid false positives)
 
     Returns the agent_id string, or None if not found / API error.
+    Pass retell_key to use the correct Retell account (PROD vs BETA).
     """
     norm = _norm_phone(phone)
 
     if channel == "voice":
-        for agent in await _list_agents("voice"):
+        for agent in await _list_agents("voice", retell_key=retell_key):
             if _phone_match(agent, norm):
                 return agent.get("agent_id") or agent.get("id")
         return None
 
     # ── Chat channel ─────────────────────────────────────────────────────────
     # Step 1: direct match
-    for agent in await _list_agents("chat"):
+    for agent in await _list_agents("chat", retell_key=retell_key):
         if _phone_match(agent, norm):
             return agent.get("agent_id") or agent.get("id")
 
     # Step 2: name-similarity via voice agent
     voice_agent: dict | None = None
-    for agent in await _list_agents("voice"):
+    for agent in await _list_agents("voice", retell_key=retell_key):
         if _phone_match(agent, norm):
             voice_agent = agent
             break
@@ -1845,7 +1857,7 @@ async def _resolve_agent_by_phone(phone: str, channel: str) -> str | None:
 
     best_id: str | None = None
     best_score = 0
-    for ca in await _list_agents("chat"):
+    for ca in await _list_agents("chat", retell_key=retell_key):
         chat_name = (ca.get("agent_name") or ca.get("name") or "").lower()
         chat_words = set(w for w in chat_name.split() if len(w) > 2)
         score = len(voice_words & chat_words)
@@ -1860,19 +1872,22 @@ async def _resolve_agent_by_phone(phone: str, channel: str) -> str | None:
 @app.get("/api/retell/fetch-call-prompt")
 async def fetch_call_prompt(
     agent_phone: Optional[str] = None,
-    agent_id: Optional[str] = None,   # explicit override — highest priority
+    agent_id: Optional[str] = None,    # explicit override — highest priority
+    api_base: Optional[str] = None,    # ADIT env URL → selects correct Retell key
 ):
     """
     Fetches the live system prompt for the voice call agent.
     Priority: explicit agent_id > phone lookup > hardcoded default.
+    Pass api_base to use the correct Retell account (PROD vs BETA).
     """
     try:
+        rkey = _resolve_retell_key(api_base)
         resolved_id = agent_id or RETELL_CALL_AGENT_ID
         if not agent_id and agent_phone:
-            resolved = await _resolve_agent_by_phone(agent_phone, "voice")
+            resolved = await _resolve_agent_by_phone(agent_phone, "voice", retell_key=rkey)
             if resolved:
                 resolved_id = resolved
-        return await _fetch_agent_prompt_data(resolved_id)
+        return await _fetch_agent_prompt_data(resolved_id, retell_key=rkey)
     except HTTPException:
         raise
     except Exception as exc:
@@ -1882,19 +1897,22 @@ async def fetch_call_prompt(
 @app.get("/api/retell/fetch-prompt")
 async def fetch_retell_prompt(
     agent_phone: Optional[str] = None,
-    agent_id: Optional[str] = None,   # explicit override — highest priority
+    agent_id: Optional[str] = None,    # explicit override — highest priority
+    api_base: Optional[str] = None,    # ADIT env URL → selects correct Retell key
 ):
     """
     Fetches the live system prompt from Retell for the SMS/chat agent.
     Priority: explicit agent_id > phone-based lookup (voice name similarity) > hardcoded default.
+    Pass api_base to use the correct Retell account (PROD vs BETA).
     """
     try:
+        rkey = _resolve_retell_key(api_base)
         resolved_id = agent_id or RETELL_AGENT_ID
         if not agent_id and agent_phone:
-            resolved = await _resolve_agent_by_phone(agent_phone, "chat")
+            resolved = await _resolve_agent_by_phone(agent_phone, "chat", retell_key=rkey)
             if resolved:
                 resolved_id = resolved
-        return await _fetch_agent_prompt_data(resolved_id)
+        return await _fetch_agent_prompt_data(resolved_id, retell_key=rkey)
     except HTTPException:
         raise
     except Exception as exc:
@@ -2518,26 +2536,29 @@ async def get_agent_info(
     agent_phone: Optional[str] = None,
     sms_agent_id: Optional[str] = None,
     call_agent_id: Optional[str] = None,
+    api_base: Optional[str] = None,    # ADIT env URL → selects correct Retell key
 ):
     """
     Returns display info (name, id, persona_name) for the agent.
     Priority: explicit agent IDs > phone lookup > hardcoded defaults.
     persona_name is extracted from 'You are [Name]' in the system prompt.
+    Pass api_base to use the correct Retell account (PROD vs BETA).
     """
+    rkey = _resolve_retell_key(api_base)
     sms_id  = RETELL_AGENT_ID
     call_id = RETELL_CALL_AGENT_ID
 
     if sms_agent_id:
         sms_id = sms_agent_id
     elif agent_phone:
-        resolved_chat = await _resolve_agent_by_phone(agent_phone, "chat")
+        resolved_chat = await _resolve_agent_by_phone(agent_phone, "chat", retell_key=rkey)
         if resolved_chat:
             sms_id = resolved_chat
 
     if call_agent_id:
         call_id = call_agent_id
     elif agent_phone:
-        resolved_voice = await _resolve_agent_by_phone(agent_phone, "voice")
+        resolved_voice = await _resolve_agent_by_phone(agent_phone, "voice", retell_key=rkey)
         if resolved_voice:
             call_id = resolved_voice
 
@@ -2545,7 +2566,7 @@ async def get_agent_info(
     async def _get_dashboard_name(aid: str, channel: str) -> str:
         try:
             path = f"/get-chat-agent/{aid}" if channel == "chat" else f"/get-agent/{aid}"
-            r = await _retell_get(path)
+            r = await _retell_get(path, retell_key=rkey)
             if r.status_code == 200:
                 data = r.json()
                 if isinstance(data, dict) and data.get("status") != "error":
@@ -2558,7 +2579,7 @@ async def get_agent_info(
     async def _get_persona_name(aid: str, channel: str) -> str:
         try:
             path = f"/get-chat-agent/{aid}" if channel == "chat" else f"/get-agent/{aid}"
-            r = await _retell_get(path)
+            r = await _retell_get(path, retell_key=rkey)
             if r.status_code != 200:
                 return ""
             agent_data = r.json()
@@ -2569,7 +2590,7 @@ async def get_agent_info(
             if not llm_id:
                 return ""
             errors: list[str] = []
-            llm_result = await _fetch_llm_prompt(llm_id, aid, errors)
+            llm_result = await _fetch_llm_prompt(llm_id, aid, errors, retell_key=rkey)
             if llm_result:
                 return _extract_persona_name(llm_result.get("prompt", ""))
         except Exception:

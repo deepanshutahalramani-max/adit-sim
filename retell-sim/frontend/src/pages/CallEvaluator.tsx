@@ -146,7 +146,7 @@ export function CallEvaluator({ config, appConfig, onResults }: Props) {
               className="w-full border border-[#E5E5E5] rounded-xl px-4 py-3 text-[13px] text-[#111] resize-none focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10"
             />
             <div>
-              <PromptConfigurator onLoad={setSysPrompt} className="mb-2" />
+              <PromptConfigurator onLoad={setSysPrompt} className="mb-2" apiBase={config.apiBase} />
               <textarea
                 value={sysPrompt}
                 onChange={e => setSysPrompt(e.target.value)}

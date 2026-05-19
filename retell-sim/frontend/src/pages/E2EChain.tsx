@@ -192,6 +192,7 @@ export function E2EChain({ config, onResults, chainResults }: Props) {
           agentType={channel === "call" ? "call" : undefined}
           agentPhone={config.agentPhone}
           agentId={channel === "call" ? config.callAgentId : config.smsAgentId}
+          apiBase={config.apiBase}
         />
       </div>
 

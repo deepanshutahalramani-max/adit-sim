@@ -206,7 +206,7 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
     <div>
       {/* ── Prompt configurator — always visible, shared across all sub-tabs ── */}
       <div className="mb-5">
-        <PromptConfigurator agentType="call" onLoad={handlePromptLoad} agentPhone={config.agentPhone} agentId={config.callAgentId} />
+        <PromptConfigurator agentType="call" onLoad={handlePromptLoad} agentPhone={config.agentPhone} agentId={config.callAgentId} apiBase={config.apiBase} />
       </div>
 
       {/* ── Sub-tab bar ── */}
