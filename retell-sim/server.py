@@ -2321,17 +2321,51 @@ class CreatePhoneCallRequest(BaseModel):
     to_number: str     # Destination (tester / patient phone)
 
 
+def _build_phone_call_dynamic_vars(from_number: str, to_number: str) -> dict:
+    """
+    Build retell_llm_dynamic_variables for an outbound QA call.
+
+    For real inbound calls, ADIT's webhook (voicereceiption.adit.com/api/v1/incoming_call)
+    populates these automatically.  For our outbound test calls Retell never fires that
+    inbound webhook, so the agent would have empty {{current_date}}, {{office_status}},
+    etc. and cannot book appointments.  We inject them ourselves so the agent behaves
+    exactly as it would on a real inbound call.
+    """
+    from datetime import datetime
+    now = datetime.now()
+    # Windows-safe date formatting — avoid %-d which crashes on Windows
+    time_str = now.strftime("%I:%M %p").lstrip("0")   # "2:30 PM"
+    date_str = f"{now.strftime('%B')} {now.day}, {now.year}"  # "May 19, 2026"
+    day_str  = now.strftime("%A")                              # "Monday"
+
+    return {
+        "agent_phone_number":   from_number,
+        "patient_phone_number": to_number,
+        "current_day":          day_str,
+        "current_date":         date_str,
+        "current_year":         str(now.year),
+        "current_time":         time_str,
+        # office_status: "open" ensures the agent can book; real calls get this from ADIT
+        "office_status":        "open",
+        "business_hours":       "Monday through Friday 8 AM to 5 PM, Saturday 9 AM to 2 PM",
+        "transfer_call_prompt": "",
+    }
+
+
 @app.post("/api/retell/create-phone-call")
 async def create_phone_call(req: CreatePhoneCallRequest):
     """
-    Outbound phone call: POST /v2/create-phone-call with from_number + to_number only.
-    Retell fires its webhook to ADIT on call_started — ADIT injects
-    retell_llm_dynamic_variables the same way it does for real inbound calls.
+    Outbound phone call: POST /v2/create-phone-call.
+    Injects retell_llm_dynamic_variables (date/time/office_status etc.) because
+    the ADIT inbound webhook won't fire for outbound test calls — without these
+    the agent has empty template variables and cannot book appointments.
     """
     try:
+        dynamic_vars = _build_phone_call_dynamic_vars(req.from_number, req.to_number)
         r = await _retell_post("/v2/create-phone-call", {
-            "from_number": req.from_number,
-            "to_number":   req.to_number,
+            "from_number":                 req.from_number,
+            "to_number":                   req.to_number,
+            "retell_llm_dynamic_variables": dynamic_vars,
         })
         if r.status_code not in (200, 201):
             raise HTTPException(
