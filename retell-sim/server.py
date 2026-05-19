@@ -50,13 +50,13 @@ ENV_CONFIG_MAP: dict[str, dict] = {
         "bearer_token": os.environ.get("ADIT_BEARER_PROD", "e6a1967d-2121-4db7-b573-6b9a317339f7"),
         "sms_agent_id":  os.environ.get("PROD_SMS_AGENT_ID",  "agent_421e2794bf57a6553c08d4e351"),
         "call_agent_id": os.environ.get("PROD_CALL_AGENT_ID", "agent_421e2794bf57a6553c08d4e351"),
-        "agent_phone":   os.environ.get("PROD_AGENT_PHONE",   DEFAULT_AGENT_PHONE),
+        "agent_phone":   os.environ.get("PROD_AGENT_PHONE",   "+12673565689"),
     },
     "https://betafrontdeskchatagent.adit.com": {
         "bearer_token": os.environ.get("ADIT_BEARER_BETA", "2f81fe52-7a0e-4b29-b7bb-6944d0d97125"),
         "sms_agent_id":  "agent_b1eb03374f40eadbfa6efd0ce3",
         "call_agent_id": "agent_f0fbd593add84dbebe88f36638",
-        "agent_phone":   DEFAULT_AGENT_PHONE,
+        "agent_phone":   "+12673565689",
     },
 }
 
