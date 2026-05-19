@@ -76,17 +76,26 @@ function SideInput({
 export function Sidebar({ config, onChange, agentName = "—" }: Props) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
-  const stored = (key: string) => !!(localStorage.getItem(key));
+  const env = config.environment ?? "live";
+
+  // Returns true if the per-env key (or legacy flat key) has a non-empty value
+  const stored = (base: string) =>
+    !!(localStorage.getItem(`${base}_${env}`) || localStorage.getItem(base));
 
   const set = (k: keyof Config, v: unknown) => {
-    const map: Partial<Record<keyof Config, string>> = {
-      openaiKey:    "adit_openai_key",
-      bearerToken:  "adit_bearer",
-      agentPhone:   "adit_agent_phone",
-      smsAgentId:   "adit_sms_agent_id",
-      callAgentId:  "adit_call_agent_id",
+    // env-namespaced keys for credentials that differ per environment
+    const envMap: Partial<Record<keyof Config, string>> = {
+      bearerToken: "adit_bearer",
+      smsAgentId:  "adit_sms_agent_id",
+      callAgentId: "adit_call_agent_id",
     };
-    if (map[k]) localStorage.setItem(map[k]!, v as string);
+    // flat (global) keys for settings shared across environments
+    const flatMap: Partial<Record<keyof Config, string>> = {
+      openaiKey:  "adit_openai_key",
+      agentPhone: "adit_agent_phone",
+    };
+    if (envMap[k])  localStorage.setItem(`${envMap[k]!}_${env}`, v as string);
+    if (flatMap[k]) localStorage.setItem(flatMap[k]!, v as string);
     onChange({ ...config, [k]: v });
   };
 
@@ -209,20 +218,40 @@ export function Sidebar({ config, onChange, agentName = "—" }: Props) {
                 <select
                   value={config.environment}
                   onChange={e => {
-                    const env = e.target.value;
-                    const preset = ENV_PRESETS[env] ?? {};
+                    const newEnv = e.target.value;
+                    const curEnv = config.environment ?? "live";
+
+                    // Save current env's credentials before switching so they survive a round-trip
+                    localStorage.setItem(`adit_bearer_${curEnv}`,        config.bearerToken ?? "");
+                    localStorage.setItem(`adit_sms_agent_id_${curEnv}`,  config.smsAgentId  ?? "");
+                    localStorage.setItem(`adit_call_agent_id_${curEnv}`, config.callAgentId ?? "");
+
+                    // Persist env selection
+                    localStorage.setItem("adit_env", newEnv);
+
+                    // Load saved creds for the new env; fall back to hardcoded presets if nothing saved
+                    const preset = ENV_PRESETS[newEnv] ?? {};
+                    const savedBearer  = localStorage.getItem(`adit_bearer_${newEnv}`)        ?? "";
+                    const savedSmsId   = localStorage.getItem(`adit_sms_agent_id_${newEnv}`)  ?? "";
+                    const savedCallId  = localStorage.getItem(`adit_call_agent_id_${newEnv}`) ?? "";
+
+                    const resolvedBearer  = savedBearer  || preset.bearerToken  || "";
+                    const resolvedSmsId   = savedSmsId   || preset.smsAgentId   || "";
+                    const resolvedCallId  = savedCallId  || preset.callAgentId  || "";
+
+                    // Persist resolved values under the new env key so future loads are instant
+                    if (resolvedBearer)  localStorage.setItem(`adit_bearer_${newEnv}`,        resolvedBearer);
+                    if (resolvedSmsId)   localStorage.setItem(`adit_sms_agent_id_${newEnv}`,  resolvedSmsId);
+                    if (resolvedCallId)  localStorage.setItem(`adit_call_agent_id_${newEnv}`, resolvedCallId);
+
                     const next: typeof config = {
                       ...config,
-                      environment: env,
-                      apiBase: HOSTS[env] ?? HOSTS.live,
-                      ...(preset.bearerToken  ? { bearerToken:  preset.bearerToken  } : {}),
-                      ...(preset.smsAgentId   ? { smsAgentId:   preset.smsAgentId   } : {}),
-                      ...(preset.callAgentId  ? { callAgentId:  preset.callAgentId  } : {}),
+                      environment: newEnv,
+                      apiBase: HOSTS[newEnv] ?? HOSTS.live,
+                      bearerToken:  resolvedBearer,
+                      smsAgentId:   resolvedSmsId  || undefined,
+                      callAgentId:  resolvedCallId || undefined,
                     };
-                    // persist to localStorage so they survive a refresh
-                    if (preset.bearerToken)  localStorage.setItem("adit_bearer",        preset.bearerToken);
-                    if (preset.smsAgentId)   localStorage.setItem("adit_sms_agent_id",  preset.smsAgentId);
-                    if (preset.callAgentId)  localStorage.setItem("adit_call_agent_id", preset.callAgentId);
                     onChange(next);
                   }}
                   className="w-full bg-white border border-[#E5E5E5] rounded-lg px-3 py-2 text-[13px] text-[#111]

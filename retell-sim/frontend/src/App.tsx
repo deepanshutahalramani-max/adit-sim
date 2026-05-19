@@ -22,23 +22,36 @@ type TabId = typeof TABS[number]["id"];
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabId>("debug");
   const [config, setConfig] = useState<Config>(() => {
-    let bearer = localStorage.getItem("adit_bearer") ?? "";
+    const HOSTS: Record<string, string> = {
+      live: "https://frontdeskchatagent.adit.com",
+      beta: "https://betafrontdeskchatagent.adit.com",
+      dev:  "https://gjqwwdfeo35edl-8009.proxy.runpod.net",
+    };
+
+    // Restore last-used environment (default live)
+    const env = localStorage.getItem("adit_env") ?? "live";
+
+    // Per-env keys with legacy flat-key fallback (migration path for existing PROD users)
+    const readEnvKey = (base: string) =>
+      localStorage.getItem(`${base}_${env}`) ?? localStorage.getItem(base) ?? "";
+
+    let bearer = readEnvKey("adit_bearer");
     let openai = localStorage.getItem("adit_openai_key") ?? "";
-    const phone       = localStorage.getItem("adit_agent_phone")   ?? "+12673565689";
-    const smsAgentId  = localStorage.getItem("adit_sms_agent_id")  ?? "";
-    const callAgentId = localStorage.getItem("adit_call_agent_id") ?? "";
+    const phone       = localStorage.getItem("adit_agent_phone") ?? "+12673565689";
+    const smsAgentId  = readEnvKey("adit_sms_agent_id");
+    const callAgentId = readEnvKey("adit_call_agent_id");
 
     // Auto-fix: if OpenAI key was accidentally saved in bearer token field, swap them
     if (bearer.startsWith("sk-") && !openai) {
       openai = bearer;
       bearer = "";
       localStorage.setItem("adit_openai_key", openai);
-      localStorage.setItem("adit_bearer", bearer);
+      localStorage.setItem(`adit_bearer_${env}`, "");
     }
 
     return {
-      environment: "live",
-      apiBase: "https://frontdeskchatagent.adit.com",
+      environment: env,
+      apiBase: HOSTS[env] ?? HOSTS.live,
       bearerToken: bearer,
       agentPhone: phone,
       openaiKey: openai,
