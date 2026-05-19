@@ -97,14 +97,14 @@ export function PromptConfigurator({ onLoad, agentType = "chat", agentPhone, age
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentType]);
 
-  /* ─── Re-fetch when agentPhone or agentId changes, debounced 800ms ─── */
+  /* ─── Re-fetch when agentPhone, agentId, or apiBase (env switch) changes, debounced 800ms ─── */
   const isFirstRender = useRef(true);
   useEffect(() => {
     if (isFirstRender.current) { isFirstRender.current = false; return; }
     const timer = setTimeout(() => { doFetch(agentPhone); }, 800);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agentPhone, agentId]);
+  }, [agentPhone, agentId, apiBase]);
 
   /* ─── Toggle handler ─── */
   const handleToggle = (key: keyof PromptToggles) => {

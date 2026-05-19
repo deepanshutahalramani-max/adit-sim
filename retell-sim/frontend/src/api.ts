@@ -238,6 +238,7 @@ export async function createWebCall(params?: {
   agent_phone?: string;
   scenario_id?: string;
   mode?: string;
+  api_base?: string;   // ADIT env URL → selects correct Retell key server-side
 }): Promise<{ call_id: string; access_token: string; agent_id: string }> {
   return post("/retell/create-web-call", params ?? {});
 }
@@ -301,6 +302,7 @@ export async function listRetellCalls(params?: {
   agent_id?: string;
   limit?: number;
   sort_order?: string;
+  api_base?: string;   // ADIT env URL → selects correct Retell key server-side
 }): Promise<{ calls: unknown[] }> {
   return post("/retell/list-calls", params ?? {});
 }

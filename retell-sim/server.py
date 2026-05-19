@@ -1727,18 +1727,20 @@ async def _fetch_agent_prompt_data(agent_id: str, retell_key: str | None = None)
 
 
 @app.get("/api/retell/debug-agent-raw")
-async def debug_agent_raw(agent_id: str | None = None):
+async def debug_agent_raw(agent_id: str | None = None, api_base: Optional[str] = None):
     """
     Diagnostic: returns the raw Retell API responses for an agent ID.
     Tries every known path and returns all raw response bodies so we can
     see exactly what fields Retell is returning.
+    Pass api_base to use the correct Retell account (PROD vs BETA).
     """
+    rkey = _resolve_retell_key(api_base)
     target_id = agent_id or RETELL_AGENT_ID
     report: dict = {"agent_id": target_id, "strategies": {}}
 
     for path in [f"/get-chat-agent/{target_id}", f"/get-agent/{target_id}", f"/v2/get-agent/{target_id}"]:
         try:
-            r = await _retell_get(path)
+            r = await _retell_get(path, retell_key=rkey)
             try:
                 body = r.json()
             except Exception:
@@ -1748,7 +1750,7 @@ async def debug_agent_raw(agent_id: str | None = None):
             report["strategies"][f"GET {path}"] = {"error": str(exc)}
 
     for method, fn in [
-        ("GET /list-agents", lambda: _retell_get("/list-agents")),
+        ("GET /list-agents", lambda: _retell_get("/list-agents", retell_key=rkey)),
     ]:
         try:
             r = await fn()
