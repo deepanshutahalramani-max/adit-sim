@@ -10,7 +10,19 @@ interface Props {
 
 const HOSTS: Record<string, string> = {
   live: "https://frontdeskchatagent.adit.com",
+  beta: "https://betafrontdeskchatagent.adit.com",
   dev:  "https://gjqwwdfeo35edl-8009.proxy.runpod.net",
+};
+
+/** Auto-fill credentials when switching environments. */
+const ENV_PRESETS: Record<string, { bearerToken?: string; smsAgentId?: string; callAgentId?: string }> = {
+  live: {},   // user manages their own PROD token
+  beta: {
+    bearerToken: "e6a1967d-2121-4db7-b573-6b9a317339f7",
+    smsAgentId:  "agent_b1eb03374f40eadbfa6efd0ce3",
+    callAgentId: "agent_f0fbd593add84dbebe88f36638",
+  },
+  dev:  {},
 };
 
 function Label({ children }: { children: React.ReactNode }) {
@@ -198,13 +210,26 @@ export function Sidebar({ config, onChange, agentName = "—" }: Props) {
                   value={config.environment}
                   onChange={e => {
                     const env = e.target.value;
-                    set("environment", env);
-                    set("apiBase", HOSTS[env] ?? HOSTS.live);
+                    const preset = ENV_PRESETS[env] ?? {};
+                    const next: typeof config = {
+                      ...config,
+                      environment: env,
+                      apiBase: HOSTS[env] ?? HOSTS.live,
+                      ...(preset.bearerToken  ? { bearerToken:  preset.bearerToken  } : {}),
+                      ...(preset.smsAgentId   ? { smsAgentId:   preset.smsAgentId   } : {}),
+                      ...(preset.callAgentId  ? { callAgentId:  preset.callAgentId  } : {}),
+                    };
+                    // persist to localStorage so they survive a refresh
+                    if (preset.bearerToken)  localStorage.setItem("adit_bearer",        preset.bearerToken);
+                    if (preset.smsAgentId)   localStorage.setItem("adit_sms_agent_id",  preset.smsAgentId);
+                    if (preset.callAgentId)  localStorage.setItem("adit_call_agent_id", preset.callAgentId);
+                    onChange(next);
                   }}
                   className="w-full bg-white border border-[#E5E5E5] rounded-lg px-3 py-2 text-[13px] text-[#111]
                              focus:outline-none focus:border-brand-500 truncate"
                 >
-                  <option value="live">🟢 Live</option>
+                  <option value="live">🟢 Live (PROD)</option>
+                  <option value="beta">🟡 Beta</option>
                   <option value="dev">🔵 Dev (RunPod)</option>
                 </select>
                 <p className="text-[10.5px] text-[#ADADAD] mt-1 truncate">{config.apiBase}</p>
@@ -260,10 +285,10 @@ export function Sidebar({ config, onChange, agentName = "—" }: Props) {
               <StatusRow ok label="Name" value={agentName} valueClass="text-[#555]" />
             )}
             <StatusRow
-              ok={config.environment === "live"}
-              okColor={config.environment === "live" ? "bg-green-500" : "bg-blue-400"}
+              ok={config.environment !== "dev"}
+              okColor={config.environment === "live" ? "bg-green-500" : config.environment === "beta" ? "bg-yellow-400" : "bg-blue-400"}
               label="Env"
-              value={config.environment === "live" ? "Production" : "Dev"}
+              value={config.environment === "live" ? "Production" : config.environment === "beta" ? "Beta" : "Dev"}
               valueClass="text-[#555]"
             />
           </div>

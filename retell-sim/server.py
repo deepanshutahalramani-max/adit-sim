@@ -27,20 +27,37 @@ from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
 _RETELL_BASE  = "https://api.retellai.com"
 RETELL_API_KEY = os.environ.get("RETELL_API_KEY", "key_fb275adbb9a079ffa32be77492db")
 
+# ── Per-environment Retell API keys ───────────────────────────────────────────
+# PROD and BETA use separate Retell accounts, each with its own API key.
+# The correct key is resolved from the ADIT api_base passed in each request.
+RETELL_KEY_MAP: dict[str, str] = {
+    "https://frontdeskchatagent.adit.com":     os.environ.get("RETELL_API_KEY",      "key_fb275adbb9a079ffa32be77492db"),
+    "https://betafrontdeskchatagent.adit.com": os.environ.get("RETELL_API_KEY_BETA", "key_2d9ddb93bc92bce0f6eac178a9df"),
+}
 
-async def _retell_get(path: str, extra_headers: dict | None = None):
+
+def _resolve_retell_key(api_base: str | None) -> str:
+    """Return the Retell API key for the given ADIT api_base, falling back to the default."""
+    if api_base:
+        return RETELL_KEY_MAP.get(api_base.rstrip("/"), RETELL_API_KEY)
+    return RETELL_API_KEY
+
+
+async def _retell_get(path: str, extra_headers: dict | None = None, retell_key: str | None = None):
     """GET {_RETELL_BASE}{path} with Retell auth."""
     url = f"{_RETELL_BASE}{path}"
-    hdrs = {"Authorization": f"Bearer {RETELL_API_KEY}", **(extra_headers or {})}
+    key  = retell_key or RETELL_API_KEY
+    hdrs = {"Authorization": f"Bearer {key}", **(extra_headers or {})}
     async with httpx.AsyncClient(timeout=15) as client:
         return await client.get(url, headers=hdrs)
 
 
-async def _retell_post(path: str, body: dict, extra_headers: dict | None = None):
+async def _retell_post(path: str, body: dict, extra_headers: dict | None = None, retell_key: str | None = None):
     """POST {_RETELL_BASE}{path} with Retell auth."""
-    url = f"{_RETELL_BASE}{path}"
+    url  = f"{_RETELL_BASE}{path}"
+    key  = retell_key or RETELL_API_KEY
     hdrs = {
-        "Authorization": f"Bearer {RETELL_API_KEY}",
+        "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
         **(extra_headers or {}),
     }
@@ -56,6 +73,7 @@ from pydantic import BaseModel
 # ── Constants ─────────────────────────────────────────────────────────────────
 HOSTS = {
     "live": "https://frontdeskchatagent.adit.com",
+    "beta": "https://betafrontdeskchatagent.adit.com",
     "dev":  "https://gjqwwdfeo35edl-8009.proxy.runpod.net",
 }
 DEFAULT_AGENT_PHONE = "+12673565689"
@@ -2257,6 +2275,7 @@ class CreateWebCallRequest(BaseModel):
     agent_phone: Optional[str] = None   # resolves agent_id dynamically when supplied
     scenario_id: Optional[str] = None   # passed through to Retell metadata
     mode: Optional[str] = None          # "manual" | "ai" — for metadata
+    api_base: Optional[str] = None      # ADIT env URL — used to select correct Retell key
 
 @app.post("/api/retell/create-web-call")
 async def create_web_call(req: CreateWebCallRequest):
@@ -2299,11 +2318,14 @@ async def create_web_call(req: CreateWebCallRequest):
             agent_phone_number=req.agent_phone or "",
         )
 
+        # Use the Retell key that matches the ADIT environment (PROD vs BETA)
+        rkey = _resolve_retell_key(req.api_base)
+
         r = await _retell_post("/v2/create-web-call", {
             "agent_id":                     agent_id,
             "metadata":                     metadata,
             "retell_llm_dynamic_variables": dynamic_vars,
-        })
+        }, retell_key=rkey)
         if r.status_code not in (200, 201):
             raise HTTPException(
                 status_code=502,
@@ -2325,8 +2347,9 @@ async def create_web_call(req: CreateWebCallRequest):
 # ── Phone call (outbound) ─────────────────────────────────────────────────────
 
 class CreatePhoneCallRequest(BaseModel):
-    from_number: str   # Retell-owned number (agent phone)
-    to_number: str     # Destination (tester / patient phone)
+    from_number: str              # Retell-owned number (agent phone)
+    to_number: str                # Destination (tester / patient phone)
+    api_base: Optional[str] = None  # ADIT env URL — used to select correct Retell key
 
 
 def _build_dynamic_vars(agent_phone_number: str, patient_phone_number: str = "") -> dict:
@@ -2377,11 +2400,12 @@ async def create_phone_call(req: CreatePhoneCallRequest):
             agent_phone_number=req.from_number,
             patient_phone_number=req.to_number,
         )
+        rkey = _resolve_retell_key(req.api_base)
         r = await _retell_post("/v2/create-phone-call", {
-            "from_number":                 req.from_number,
-            "to_number":                   req.to_number,
+            "from_number":                  req.from_number,
+            "to_number":                    req.to_number,
             "retell_llm_dynamic_variables": dynamic_vars,
-        })
+        }, retell_key=rkey)
         if r.status_code not in (200, 201):
             raise HTTPException(
                 status_code=502,
@@ -2399,13 +2423,15 @@ async def create_phone_call(req: CreatePhoneCallRequest):
 
 
 @app.get("/api/retell/call-status/{call_id}")
-async def get_call_status(call_id: str):
+async def get_call_status(call_id: str, api_base: Optional[str] = None):
     """
     Poll Retell for live call status + transcript.
     Frontend polls this every few seconds while a phone call is in progress.
+    Pass ?api_base=<env_url> so the correct Retell key is used for BETA vs PROD.
     """
     try:
-        r = await _retell_get(f"/v2/get-call/{call_id}")
+        rkey = _resolve_retell_key(api_base)
+        r = await _retell_get(f"/v2/get-call/{call_id}", retell_key=rkey)
         if r.status_code == 404:
             raise HTTPException(status_code=404, detail="Call not found")
         if r.status_code != 200:

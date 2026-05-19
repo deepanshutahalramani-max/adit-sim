@@ -25,6 +25,7 @@ export interface LiveWebCallParams {
   openai_key: string;           // needed for AI caller TTS + GPT responses
   agent_id?: string;            // explicit agent ID (overrides phone lookup)
   agent_phone?: string;         // sidebar phone → used as from_number for phone calls
+  api_base?: string;            // ADIT env URL → selects correct Retell key server-side
   scenario_id?: string;         // used to pick the AI caller's opening line
   autoStart?: boolean;          // if true, call starts automatically on mount
   extra_context?: string;       // optional tester-provided context for AI patient behaviour
@@ -255,6 +256,7 @@ export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWeb
         body: JSON.stringify({
           from_number: params.agent_phone,
           to_number:   cleaned,
+          api_base:    params.api_base,
         }),
       });
       if (!resp.ok) {
@@ -268,7 +270,8 @@ export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWeb
       // Poll every 3s — flip to "active" on first "ongoing", stop on "ended"/"error"
       pollRef.current = setInterval(async () => {
         try {
-          const pr = await fetch(`/api/retell/call-status/${call_id}`);
+          const qs = params.api_base ? `?api_base=${encodeURIComponent(params.api_base)}` : "";
+          const pr = await fetch(`/api/retell/call-status/${call_id}${qs}`);
           if (!pr.ok) return;
           const data = await pr.json();
 
@@ -336,6 +339,7 @@ export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWeb
           agent_phone: params.agent_phone,
           scenario_id: params.scenario_id,
           mode:        params.mode,
+          api_base:    params.api_base,
         }),
       });
       if (!tokenResp.ok) {
