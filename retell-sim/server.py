@@ -23,8 +23,9 @@ from typing import Any, Optional
 import httpx
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
 
-# ── Retell API base URL ───────────────────────────────────────────────────────
-_RETELL_BASE = "https://api.retellai.com"
+# ── Retell API base URL + key ────────────────────────────────────────────────
+_RETELL_BASE  = "https://api.retellai.com"
+RETELL_API_KEY = os.environ.get("RETELL_API_KEY", "key_fb275adbb9a079ffa32be77492db")
 
 
 async def _retell_get(path: str, extra_headers: dict | None = None):
@@ -944,8 +945,7 @@ class ApplyFixRequest(BaseModel):
     section_at_fault: str
     suggested_fix: str
 
-# ── Retell: fetch live agent prompt ──────────────────────────────────────────
-RETELL_API_KEY       = "key_fb275adbb9a079ffa32be77492db"
+# ── Retell: agent ID constants ───────────────────────────────────────────────
 RETELL_AGENT_ID      = "agent_ee5d7e7f782caa9f1789765182"   # chat / SMS agent
 RETELL_CALL_AGENT_ID = "agent_8c769ad3395e9b058984c07628"   # voice call agent
 

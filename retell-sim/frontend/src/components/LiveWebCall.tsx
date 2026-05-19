@@ -108,6 +108,8 @@ export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWeb
   const callIdRef      = useRef("");
   const bottomRef      = useRef<HTMLDivElement>(null);
   const transcriptRef  = useRef<TranscriptEntry[]>([]);
+  const callEndedRef   = useRef(false);   // prevents double onDone from poll race
+  const statusRef      = useRef<"idle" | "connecting" | "active" | "done" | "error">("idle");
 
   // AI caller state
   const audioCtxRef      = useRef<AudioContext | null>(null);
@@ -121,11 +123,13 @@ export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWeb
   }, [transcript, apiEvents]);
 
   useEffect(() => {
-    if (params.autoStart) startCall();
+    // M1: autoStart only makes sense for AI mode — manual mode needs a phone number first
+    if (params.autoStart && params.mode !== "manual") startCall();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
+    statusRef.current = status;
     if (status === "active") {
       startRef.current = Date.now();
       timerRef.current = setInterval(() =>
@@ -218,15 +222,31 @@ export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWeb
 
   // ── MANUAL MODE: phone call flow ──────────────────────────────────────────
   const startPhoneCall = async () => {
-    const phone = toNumber.trim();
-    if (!phone) { setErrorMsg("Enter your phone number — the agent will call you on it."); return; }
+    // C3: guard — agent phone must be configured
+    if (!params.agent_phone) {
+      setErrorMsg("Agent phone number is not configured in the sidebar.");
+      return;
+    }
+
+    // H1: sanitize + validate E.164
+    const cleaned = toNumber.trim().replace(/[\s\-().]/g, "");
+    if (!cleaned) {
+      setErrorMsg("Enter your phone number — the agent will call you on it.");
+      return;
+    }
+    if (!/^\+[1-9]\d{7,14}$/.test(cleaned)) {
+      setErrorMsg("Phone number must be in E.164 format, e.g. +14155550100");
+      return;
+    }
 
     setStatus("connecting");
+    callEndedRef.current = false;
+    transcriptRef.current = [];
     setTranscript([]);
     setApiEvents([]);
     setOutcome(null);
     setErrorMsg("");
-    transcriptRef.current = [];
+    setElapsed(0);
 
     try {
       const resp = await fetch("/api/retell/create-phone-call", {
@@ -234,7 +254,7 @@ export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWeb
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           from_number: params.agent_phone,
-          to_number:   phone,
+          to_number:   cleaned,
         }),
       });
       if (!resp.ok) {
@@ -243,34 +263,49 @@ export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWeb
       }
       const { call_id } = await resp.json();
       callIdRef.current = call_id;
-      setStatus("active");
 
-      // Poll Retell every 3s for live transcript + call status
+      // H2: stay in "connecting" until Retell confirms the call is ongoing
+      // Poll every 3s — flip to "active" on first "ongoing", stop on "ended"/"error"
       pollRef.current = setInterval(async () => {
         try {
           const pr = await fetch(`/api/retell/call-status/${call_id}`);
           if (!pr.ok) return;
           const data = await pr.json();
 
-          // Sync transcript
-          const raw: Array<{ role: string; content: string }> = data.transcript ?? [];
+          // H2: flip to active once Retell says the call is live
+          if (statusRef.current === "connecting" && data.call_status === "ongoing") {
+            setStatus("active");
+          }
+
+          // Sync transcript (handles both "transcript" and "transcript_object" field names)
+          const rawArr = data.transcript ?? data.transcript_object ?? [];
+          const raw: Array<{ role: string; content: string }> = Array.isArray(rawArr) ? rawArr : [];
           if (raw.length) {
             const entries: TranscriptEntry[] = raw.map(t => ({
               role:    t.role === "agent" ? "agent" : "user",
-              content: t.content,
+              content: t.content ?? "",
             }));
             transcriptRef.current = entries;
             setTranscript(entries);
           }
 
-          // Call ended
-          if (data.call_status === "ended" || data.call_status === "error") {
+          // H3 + C4: handle ended vs error, guard against double-fire
+          if ((data.call_status === "ended" || data.call_status === "error") && !callEndedRef.current) {
+            callEndedRef.current = true;
             if (pollRef.current) clearInterval(pollRef.current);
-            const snap   = transcriptRef.current;
-            const passed = snap.some(t => DONE_KWS.some(kw => t.content.toLowerCase().includes(kw)));
-            setOutcome({ passed, label: passed ? "Goal reached ✓" : "Call ended — goal not reached" });
-            setStatus("done");
-            onDone({ passed, outcome: passed ? "completed" : "incomplete", transcript: snap, call_id });
+
+            if (data.call_status === "error") {
+              const errMsg = data.call_analysis?.call_summary ?? "Retell reported a call error.";
+              setErrorMsg(errMsg);
+              setStatus("error");
+              onError?.(errMsg);
+            } else {
+              const snap   = transcriptRef.current;
+              const passed = snap.some(t => DONE_KWS.some(kw => t.content.toLowerCase().includes(kw)));
+              setOutcome({ passed, label: passed ? "Goal reached ✓" : "Call ended — goal not reached" });
+              setStatus("done");
+              onDone({ passed, outcome: passed ? "completed" : "incomplete", transcript: snap, call_id });
+            }
           }
         } catch { /* ignore transient poll errors */ }
       }, 3000);
@@ -411,12 +446,14 @@ export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWeb
   // ── End call ──────────────────────────────────────────────────────────────
   const endCall = useCallback(() => {
     if (params.mode === "manual") {
-      // Phone call: stop the polling; the actual call will run to completion on Retell's side
-      if (pollRef.current) clearInterval(pollRef.current);
-      setStatus("done");
+      if (callEndedRef.current) return;  // already handled by poll
+      callEndedRef.current = true;
+      if (pollRef.current)  clearInterval(pollRef.current);
+      if (timerRef.current) clearInterval(timerRef.current);
       const snap = transcriptRef.current;
       const passed = snap.some(t => DONE_KWS.some(kw => t.content.toLowerCase().includes(kw)));
       setOutcome({ passed, label: "Call ended by tester" });
+      setStatus("done");
       onDone({ passed, outcome: "incomplete", transcript: snap, call_id: callIdRef.current });
     } else {
       clientRef.current?.stopCall();
@@ -432,10 +469,11 @@ export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWeb
     }
   }, [params.mode, onDone]);
 
-  // Cleanup polling on unmount
+  // H5: cleanup both intervals on unmount — prevents ghost setElapsed on unmounted component
   useEffect(() => {
     return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
+      if (pollRef.current)  clearInterval(pollRef.current);
+      if (timerRef.current) clearInterval(timerRef.current);
     };
   }, []);
 
@@ -479,15 +517,17 @@ export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWeb
         <div className="flex-1 min-w-0">
           <div className="text-[13px] font-bold text-white leading-tight">
             {status === "idle"      ? (params.mode === "manual" ? "Manual Call — Ready" : "AI Caller — Ready") :
-             isConnecting           ? (params.mode === "manual" ? `Dialing ${toNumber}…` : "Connecting to Retell…") :
-             isActive               ? (params.mode === "manual" ? `Live call → ${toNumber}` : "AI Caller active") :
+             status === "connecting" ? (params.mode === "manual" ? `Dialing ${toNumber}…` : "Connecting to Retell…") :
+             isActive               ? (params.mode === "manual" ? `Connected → ${toNumber}` : "AI Caller active") :
              status === "done"      ? "Call ended" : "Call failed"}
           </div>
           <div className="text-[11px] text-white/50 mt-0.5">
-            {isActive || status === "done"
+            {isActive
               ? params.mode === "manual"
                 ? `Outbound phone call · ${formatTime(elapsed)}`
                 : `Real Retell agent · AI Caller · ${formatTime(elapsed)}`
+              : status === "done"
+              ? params.mode === "manual" ? `Outbound call ended · ${formatTime(elapsed)}` : `AI Caller ended · ${formatTime(elapsed)}`
               : params.mode === "manual"
               ? "Agent calls your phone number"
               : "GPT-4o-mini + TTS → Retell call agent"}
@@ -548,27 +588,33 @@ export const LiveWebCall = forwardRef<LiveWebCallHandle, Props>(function LiveWeb
           </div>
         )}
 
-        {/* Connecting */}
-        {isConnecting && (
+        {/* Connecting — AI mode only (manual mode has its own connecting block below) */}
+        {isConnecting && params.mode === "ai" && (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
               <div className="w-10 h-10 border-[3px] border-green-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-              <div className="text-[13px] text-[#888]">
-                {params.mode === "manual" ? `Calling ${toNumber}…` : "Connecting to Retell…"}
-              </div>
-              {params.mode === "manual" && (
-                <div className="text-[11px] text-[#ADADAD] mt-1">Pick up when your phone rings</div>
-              )}
+              <div className="text-[13px] text-[#888]">Connecting to Retell…</div>
             </div>
           </div>
         )}
 
         {/* Active — phone call with no transcript yet */}
+        {/* Connecting — waiting for Retell to dial */}
+        {status === "connecting" && params.mode === "manual" && (
+          <div className="flex items-center justify-center h-full">
+            <div className="text-center">
+              <div className="w-10 h-10 border-[3px] border-amber-400 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+              <div className="text-[13px] text-[#888]">Dialing {toNumber}…</div>
+              <div className="text-[11px] text-[#ADADAD] mt-1">Pick up when your phone rings</div>
+            </div>
+          </div>
+        )}
+
         {isActive && transcript.length === 0 && params.mode === "manual" && (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
               <div className="w-10 h-10 border-[3px] border-green-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-              <div className="text-[13px] text-[#888]">Waiting for transcript…</div>
+              <div className="text-[13px] text-[#888]">Call connected — waiting for transcript…</div>
               <div className="text-[11px] text-[#ADADAD] mt-1">Updates every 3 seconds</div>
             </div>
           </div>

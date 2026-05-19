@@ -111,13 +111,12 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
   };
 
   /* ── Handlers ── */
-  const startWebCall = (mode: "manual" | "ai") => {
-    if (mode === "ai" && !config.openaiKey) {
+  const startAiCallerCall = () => {
+    if (!config.openaiKey) {
       setWebCallError("OpenAI key required in sidebar for AI Caller mode."); return;
     }
     setWebCallError(""); setWebCallDone(null); setWebCallRunning(true);
-    if (mode === "manual") setManualCallKey(k => k + 1);
-    else                   setAiCallerKey(k => k + 1);
+    setAiCallerKey(k => k + 1);
   };
 
   const handleLiveRun = () => {
@@ -346,7 +345,7 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
           )}
 
           {aiCallerKey === 0 ? (
-            <button onClick={() => startWebCall("ai")} disabled={!config.openaiKey}
+            <button onClick={() => startAiCallerCall()} disabled={!config.openaiKey}
               className="flex items-center gap-2 bg-[#1A1A1A] hover:bg-[#333] text-white font-semibold text-[14px] rounded-xl px-8 py-3 transition-colors shadow-sm mb-5 disabled:opacity-60 disabled:cursor-not-allowed">
               <Phone className="w-4 h-4" />
               Start AI Caller
@@ -373,7 +372,7 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
                 </div>
                 <div className="text-[12px] text-[#888] mt-0.5">{webCallDone.transcript.length} transcript turns · real Retell agent</div>
               </div>
-              <button onClick={() => startWebCall("ai")}
+              <button onClick={() => startAiCallerCall()}
                 className="ml-auto flex items-center gap-1.5 text-[12px] font-semibold text-[#888] border border-[#E5E5E5] bg-white rounded-lg px-3 py-2 hover:border-[#ADADAD]">
                 <RefreshCw className="w-3 h-3" /> Run again
               </button>
