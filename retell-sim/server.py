@@ -48,8 +48,8 @@ def _resolve_retell_key(api_base: str | None) -> str:
 ENV_CONFIG_MAP: dict[str, dict] = {
     "https://frontdeskchatagent.adit.com": {
         "bearer_token": os.environ.get("ADIT_BEARER_PROD", "e6a1967d-2121-4db7-b573-6b9a317339f7"),
-        "sms_agent_id":  os.environ.get("PROD_SMS_AGENT_ID",  ""),
-        "call_agent_id": os.environ.get("PROD_CALL_AGENT_ID", ""),
+        "sms_agent_id":  os.environ.get("PROD_SMS_AGENT_ID",  "agent_421e2794bf57a6553c08d4e351"),
+        "call_agent_id": os.environ.get("PROD_CALL_AGENT_ID", "agent_421e2794bf57a6553c08d4e351"),
         "agent_phone":   os.environ.get("PROD_AGENT_PHONE",   DEFAULT_AGENT_PHONE),
     },
     "https://betafrontdeskchatagent.adit.com": {
