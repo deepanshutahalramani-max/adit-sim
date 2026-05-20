@@ -551,20 +551,24 @@ def _run_simulation_sync(
             resp = _call_agent(api_base, token, current_msg, patient_phone, agent_phone, chat_id)
             api_calls.append({"endpoint": "/engage/forward-to-agent", "status": 200, "latency_ms": int((time.time()-t_api)*1000)})
         except httpx.HTTPStatusError as e:
-            api_calls.append({"endpoint": "/engage/forward-to-agent", "status": e.response.status_code, "latency_ms": int((time.time()-t_api)*1000)})
-            # Retry once on 400 (Retell transient LLM failures)
-            if e.response.status_code == 400 and turn_num > 0:
-                time.sleep(1.5)
+            status_code = e.response.status_code
+            api_calls.append({"endpoint": "/engage/forward-to-agent", "status": status_code, "latency_ms": int((time.time()-t_api)*1000)})
+            # Retry once on transient errors:
+            #   400 after first turn (Retell transient LLM failures)
+            #   502/503/504 on any turn (ADIT/Cloudflare gateway errors)
+            should_retry = (status_code == 400 and turn_num > 0) or status_code in (502, 503, 504)
+            if should_retry:
+                time.sleep(2.0)
                 try:
                     t_api2 = time.time()
                     resp = _call_agent(api_base, token, current_msg, patient_phone, agent_phone, chat_id)
                     api_calls.append({"endpoint": "/engage/forward-to-agent (retry)", "status": 200, "latency_ms": int((time.time()-t_api2)*1000)})
                 except Exception as e2:
-                    failure_reason = f"HTTP 400: {e.response.text[:200]}"
+                    failure_reason = f"HTTP {status_code}: {e.response.text[:200]}"
                     outcome_type = "error"
                     break
             else:
-                failure_reason = f"HTTP {e.response.status_code}: {e.response.text[:200]}"
+                failure_reason = f"HTTP {status_code}: {e.response.text[:200]}"
                 outcome_type = "error"
                 break
         except Exception as e:
@@ -689,8 +693,8 @@ app = FastAPI(title="ADIT Agent QA Platform", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000", "http://localhost:4173"],
-    allow_credentials=True,
+    allow_origins=["*"],   # internal QA tool — no sensitive cross-origin data
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -2194,9 +2198,12 @@ async def stream_repro(req: StreamReproRequest):
                 api_calls.append({"endpoint": "/engage/forward-to-agent", "status": 200, "latency_ms": api_ms})
             except httpx.HTTPStatusError as e:
                 api_ms = int((time.time() - t_api) * 1000)
-                api_calls.append({"endpoint": "/engage/forward-to-agent", "status": e.response.status_code, "latency_ms": api_ms})
-                if e.response.status_code == 400 and turn_num > 0:
-                    await asyncio.sleep(1.5)
+                status_code = e.response.status_code
+                api_calls.append({"endpoint": "/engage/forward-to-agent", "status": status_code, "latency_ms": api_ms})
+                # Retry once on transient errors (400 after first turn, 502/503/504 any turn)
+                should_retry = (status_code == 400 and turn_num > 0) or status_code in (502, 503, 504)
+                if should_retry:
+                    await asyncio.sleep(2.0)
                     try:
                         resp = await loop.run_in_executor(
                             None,
