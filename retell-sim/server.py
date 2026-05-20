@@ -553,19 +553,29 @@ def _run_simulation_sync(
         except httpx.HTTPStatusError as e:
             status_code = e.response.status_code
             api_calls.append({"endpoint": "/engage/forward-to-agent", "status": status_code, "latency_ms": int((time.time()-t_api)*1000)})
-            # Retry once on transient errors:
+            # Retry up to 3 times on transient errors with increasing backoff:
             #   400 after first turn (Retell transient LLM failures)
             #   502/503/504 on any turn (ADIT/Cloudflare gateway errors)
             should_retry = (status_code == 400 and turn_num > 0) or status_code in (502, 503, 504)
             if should_retry:
-                time.sleep(2.0)
-                try:
-                    t_api2 = time.time()
-                    resp = _call_agent(api_base, token, current_msg, patient_phone, agent_phone, chat_id)
-                    api_calls.append({"endpoint": "/engage/forward-to-agent (retry)", "status": 200, "latency_ms": int((time.time()-t_api2)*1000)})
-                except Exception as e2:
-                    failure_reason = f"HTTP {status_code}: {e.response.text[:200]}"
-                    outcome_type = "error"
+                resp = None
+                for attempt, delay in enumerate([3.0, 5.0, 8.0], start=1):
+                    time.sleep(delay)
+                    try:
+                        t_api2 = time.time()
+                        resp = _call_agent(api_base, token, current_msg, patient_phone, agent_phone, chat_id)
+                        api_calls.append({"endpoint": f"/engage/forward-to-agent (retry {attempt})", "status": 200, "latency_ms": int((time.time()-t_api2)*1000)})
+                        break  # success — exit retry loop
+                    except httpx.HTTPStatusError as e2:
+                        api_calls.append({"endpoint": f"/engage/forward-to-agent (retry {attempt})", "status": e2.response.status_code, "latency_ms": int((time.time()-t_api2)*1000)})
+                        if attempt == 3:
+                            failure_reason = f"HTTP {e2.response.status_code}: {e2.response.text[:200]}"
+                            outcome_type = "error"
+                    except Exception as e2:
+                        if attempt == 3:
+                            failure_reason = f"API error: {str(e2)[:120]}"
+                            outcome_type = "error"
+                if outcome_type == "error":
                     break
             else:
                 failure_reason = f"HTTP {status_code}: {e.response.text[:200]}"
@@ -2200,20 +2210,29 @@ async def stream_repro(req: StreamReproRequest):
                 api_ms = int((time.time() - t_api) * 1000)
                 status_code = e.response.status_code
                 api_calls.append({"endpoint": "/engage/forward-to-agent", "status": status_code, "latency_ms": api_ms})
-                # Retry once on transient errors (400 after first turn, 502/503/504 any turn)
+                # Retry up to 3 times on transient errors (400 after first turn, 502/503/504 any turn)
                 should_retry = (status_code == 400 and turn_num > 0) or status_code in (502, 503, 504)
                 if should_retry:
-                    await asyncio.sleep(2.0)
-                    try:
-                        resp = await loop.run_in_executor(
-                            None,
-                            lambda m=current_msg, c=chat_id: _call_agent(
-                                req.api_base, req.bearer_token, m, patient_phone, req.agent_phone, c
-                            ),
-                        )
-                        api_calls.append({"endpoint": "/engage/forward-to-agent (retry)", "status": 200, "latency_ms": 0})
-                    except Exception:
-                        yield f"data: {json.dumps({'type': 'error', 'message': _fmt_error(e.response.text[:200]), 'api_calls': api_calls})}\n\n"
+                    resp = None
+                    last_err_text = e.response.text[:200]
+                    for attempt, delay in enumerate([3.0, 5.0, 8.0], start=1):
+                        await asyncio.sleep(delay)
+                        try:
+                            resp = await loop.run_in_executor(
+                                None,
+                                lambda m=current_msg, c=chat_id: _call_agent(
+                                    req.api_base, req.bearer_token, m, patient_phone, req.agent_phone, c
+                                ),
+                            )
+                            api_calls.append({"endpoint": f"/engage/forward-to-agent (retry {attempt})", "status": 200, "latency_ms": 0})
+                            break  # success
+                        except httpx.HTTPStatusError as e2:
+                            last_err_text = e2.response.text[:200]
+                            api_calls.append({"endpoint": f"/engage/forward-to-agent (retry {attempt})", "status": e2.response.status_code, "latency_ms": 0})
+                        except Exception as e2:
+                            last_err_text = str(e2)[:200]
+                    if resp is None:
+                        yield f"data: {json.dumps({'type': 'error', 'message': _fmt_error(last_err_text), 'api_calls': api_calls})}\n\n"
                         return
                 else:
                     yield f"data: {json.dumps({'type': 'error', 'message': _fmt_error(e.response.text[:200]), 'api_calls': api_calls})}\n\n"
