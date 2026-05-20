@@ -54,8 +54,8 @@ ENV_CONFIG_MAP: dict[str, dict] = {
     },
     "https://betafrontdeskchatagent.adit.com": {
         "bearer_token": os.environ.get("ADIT_BEARER_BETA", "2f81fe52-7a0e-4b29-b7bb-6944d0d97125"),
-        "sms_agent_id":  "agent_b1eb03374f40eadbfa6efd0ce3",
-        "call_agent_id": "agent_f0fbd593add84dbebe88f36638",
+        "sms_agent_id":  "agent_421e2794bf57a6553c08d4e351",
+        "call_agent_id": "agent_492017a5735f178f18d217f432",
         "agent_phone":   "+12673565689",
     },
 }
