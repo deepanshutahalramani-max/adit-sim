@@ -1030,8 +1030,9 @@ class ApplyFixRequest(BaseModel):
     suggested_fix: str
 
 # ── Retell: agent ID constants ───────────────────────────────────────────────
-RETELL_AGENT_ID      = "agent_ee5d7e7f782caa9f1789765182"   # chat / SMS agent
-RETELL_CALL_AGENT_ID = "agent_8c769ad3395e9b058984c07628"   # voice call agent
+# Must match ENV_CONFIG_MAP above.  Override via env var if needed.
+RETELL_AGENT_ID      = os.environ.get("PROD_SMS_AGENT_ID",  "agent_421e2794bf57a6553c08d4e351")  # chat / SMS agent
+RETELL_CALL_AGENT_ID = os.environ.get("PROD_CALL_AGENT_ID", "agent_492017a5735f178f18d217f432")  # voice call agent
 
 # ── OpenAI default key ────────────────────────────────────────────────────────
 # Loaded from environment so it is never sent to the browser.
