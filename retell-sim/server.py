@@ -28,11 +28,12 @@ _RETELL_BASE  = "https://api.retellai.com"
 RETELL_API_KEY = os.environ.get("RETELL_API_KEY", "key_fb275adbb9a079ffa32be77492db")
 
 # ── Per-environment Retell API keys ───────────────────────────────────────────
-# PROD and BETA use separate Retell accounts, each with its own API key.
-# The correct key is resolved from the ADIT api_base passed in each request.
+# PROD and BETA share the same Retell workspace/agents (agent_421... chat, agent_492... voice).
+# The ADIT api_base distinguishes which ADIT backend to call, but Retell agents are identical.
+# RETELL_API_KEY_BETA can override for BETA if a truly separate Retell workspace is ever needed.
 RETELL_KEY_MAP: dict[str, str] = {
     "https://frontdeskchatagent.adit.com":     os.environ.get("RETELL_API_KEY",      "key_fb275adbb9a079ffa32be77492db"),
-    "https://betafrontdeskchatagent.adit.com": os.environ.get("RETELL_API_KEY_BETA", "key_2d9ddb93bc92bce0f6eac178a9df"),
+    "https://betafrontdeskchatagent.adit.com": os.environ.get("RETELL_API_KEY_BETA", "key_fb275adbb9a079ffa32be77492db"),
 }
 
 
