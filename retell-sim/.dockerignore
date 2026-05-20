@@ -1,0 +1,29 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info
+.eggs
+dist
+build
+*.env
+.venv
+venv
+
+# Node / frontend build artifacts
+frontend/node_modules
+frontend/dist
+frontend/.vite
+
+# Misc
+.DS_Store
+*.log
+.env
+.env.*
+README.md
