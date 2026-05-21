@@ -1981,7 +1981,10 @@ async def _resolve_agent_by_phone(phone: str, channel: str, retell_key: str | No
         return None
 
     voice_name = (voice_agent.get("agent_name") or voice_agent.get("name") or "").lower()
-    voice_words = set(w for w in voice_name.split() if len(w) > 2)  # ignore short words
+    # Include tokens ≥ 2 chars so short-but-distinctive labels like "qa", "ai", "kp" are
+    # counted. This prevents a tie between agents that share generic words (e.g. "test",
+    # "dental", "agent") when one also shares a unique short token ("qa").
+    voice_words = set(w for w in voice_name.replace("-", " ").split() if len(w) >= 2)
     if not voice_words:
         return None
 
@@ -1989,13 +1992,13 @@ async def _resolve_agent_by_phone(phone: str, channel: str, retell_key: str | No
     best_score = 0
     for ca in await _list_agents("chat", retell_key=retell_key):
         chat_name = (ca.get("agent_name") or ca.get("name") or "").lower()
-        chat_words = set(w for w in chat_name.split() if len(w) > 2)
+        chat_words = set(w for w in chat_name.replace("-", " ").split() if len(w) >= 2)
         score = len(voice_words & chat_words)
         if score > best_score:
             best_score = score
             best_id = ca.get("agent_id") or ca.get("id")
 
-    # Require at least 3 meaningful words in common to avoid false positives
+    # Require at least 3 tokens in common to avoid false positives
     return best_id if best_score >= 3 else None
 
 
