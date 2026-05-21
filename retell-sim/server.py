@@ -28,12 +28,12 @@ _RETELL_BASE  = "https://api.retellai.com"
 RETELL_API_KEY = os.environ.get("RETELL_API_KEY", "key_fb275adbb9a079ffa32be77492db")
 
 # ── Per-environment Retell API keys ───────────────────────────────────────────
-# PROD and BETA share the same Retell workspace/agents (agent_421... chat, agent_492... voice).
-# The ADIT api_base distinguishes which ADIT backend to call, but Retell agents are identical.
-# RETELL_API_KEY_BETA can override for BETA if a truly separate Retell workspace is ever needed.
+# PROD uses key_fb275... workspace; BETA uses a completely separate Retell workspace key_2d9ddb...
+# Each workspace has its own agents — PROD: agent_421... (chat), agent_492... (voice);
+# BETA: agent_c66c0b... (chat "Dev AI"), agent_ddf0fd... (voice "Dev AI").
 RETELL_KEY_MAP: dict[str, str] = {
     "https://frontdeskchatagent.adit.com":     os.environ.get("RETELL_API_KEY",      "key_fb275adbb9a079ffa32be77492db"),
-    "https://betafrontdeskchatagent.adit.com": os.environ.get("RETELL_API_KEY_BETA", "key_fb275adbb9a079ffa32be77492db"),
+    "https://betafrontdeskchatagent.adit.com": os.environ.get("RETELL_API_KEY_BETA", "key_2d9ddb93bc92bce0f6eac178a9df"),
 }
 
 
@@ -54,10 +54,10 @@ ENV_CONFIG_MAP: dict[str, dict] = {
         "agent_phone":   os.environ.get("PROD_AGENT_PHONE",   "+12673565689"),
     },
     "https://betafrontdeskchatagent.adit.com": {
-        "bearer_token": os.environ.get("ADIT_BEARER_BETA", "2f81fe52-7a0e-4b29-b7bb-6944d0d97125"),
-        "sms_agent_id":  "agent_421e2794bf57a6553c08d4e351",
-        "call_agent_id": "agent_492017a5735f178f18d217f432",
-        "agent_phone":   "+12673565689",
+        "bearer_token": os.environ.get("ADIT_BEARER_BETA",   "2f81fe52-7a0e-4b29-b7bb-6944d0d97125"),
+        "sms_agent_id":  os.environ.get("BETA_SMS_AGENT_ID",  "agent_c66c0b4a8a450d27d87bbc00f2"),
+        "call_agent_id": os.environ.get("BETA_CALL_AGENT_ID", "agent_ddf0fd309c169f458daa576aaf"),
+        "agent_phone":   os.environ.get("BETA_AGENT_PHONE",   "+12673565689"),
     },
 }
 
