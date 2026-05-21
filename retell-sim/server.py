@@ -307,7 +307,16 @@ def _phone() -> str:
 def _headers(token: str) -> dict:
     return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
-def _call_agent(api_base, token, message, patient_phone, agent_phone, chat_id=None, timeout=45) -> dict:
+def _resolve_sms_agent_id(api_base: str | None) -> str:
+    """Return the correct sms_agent_id for the given ADIT api_base from ENV_CONFIG_MAP."""
+    if api_base:
+        cfg = ENV_CONFIG_MAP.get(api_base.rstrip("/"))
+        if cfg:
+            return cfg.get("sms_agent_id", "")
+    return ""
+
+
+def _call_agent(api_base, token, message, patient_phone, agent_phone, chat_id=None, timeout=45, sms_agent_id: str = "") -> dict:
     payload: dict[str, Any] = {
         "message": message,
         "patient_phone_number": patient_phone,
@@ -316,6 +325,11 @@ def _call_agent(api_base, token, message, patient_phone, agent_phone, chat_id=No
     }
     if chat_id:
         payload["chat_id"] = chat_id
+    # Pass the explicit Retell chat-agent ID so ADIT uses the correct agent
+    # regardless of what's configured in its phone-number lookup table.
+    resolved_sms_id = sms_agent_id or _resolve_sms_agent_id(api_base)
+    if resolved_sms_id:
+        payload["chat_agent_id"] = resolved_sms_id
     r = httpx.post(
         f"{api_base}/engage/forward-to-agent",
         headers=_headers(token), json=payload, timeout=timeout,
@@ -2300,6 +2314,7 @@ class SmsStartRequest(BaseModel):
     bearer_token: str = ""
     agent_phone: str = DEFAULT_AGENT_PHONE
     message: str          # first message from user
+    sms_agent_id: str = ""  # explicit Retell chat-agent override (auto-resolved from ENV_CONFIG_MAP if empty)
 
 class SmsSendRequest(BaseModel):
     api_base: str = "https://frontdeskchatagent.adit.com"
@@ -2308,6 +2323,7 @@ class SmsSendRequest(BaseModel):
     patient_phone: str    # phone from start response
     chat_id: str          # chat_id from previous turn
     message: str
+    sms_agent_id: str = ""  # explicit Retell chat-agent override (auto-resolved from ENV_CONFIG_MAP if empty)
 
 @app.post("/api/sms/start")
 def sms_start(req: SmsStartRequest):
@@ -2323,6 +2339,7 @@ def sms_start(req: SmsStartRequest):
             req.api_base, req.bearer_token,
             req.message, patient_phone, req.agent_phone,
             chat_id=None,
+            sms_agent_id=req.sms_agent_id,
         )
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=e.response.status_code,
@@ -2353,6 +2370,7 @@ def sms_send(req: SmsSendRequest):
             req.api_base, req.bearer_token,
             req.message, req.patient_phone, req.agent_phone,
             chat_id=req.chat_id,
+            sms_agent_id=req.sms_agent_id,
         )
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=e.response.status_code,
@@ -2392,9 +2410,11 @@ async def create_web_call(req: CreateWebCallRequest):
     and is included in the inbound + post-call webhook payloads sent to ADIT.
     """
     try:
+        # Resolve the Retell key first so phone lookup uses the correct workspace
+        rkey_early = _resolve_retell_key(req.api_base)
         agent_id = req.agent_id or RETELL_CALL_AGENT_ID
         if req.agent_phone and not req.agent_id:
-            resolved = await _resolve_agent_by_phone(req.agent_phone, "voice")
+            resolved = await _resolve_agent_by_phone(req.agent_phone, "voice", retell_key=rkey_early)
             if resolved:
                 agent_id = resolved
 
@@ -2423,7 +2443,7 @@ async def create_web_call(req: CreateWebCallRequest):
         )
 
         # Use the Retell key that matches the ADIT environment (PROD vs BETA)
-        rkey = _resolve_retell_key(req.api_base)
+        rkey = rkey_early  # already resolved above
 
         r = await _retell_post("/v2/create-web-call", {
             "agent_id":                     agent_id,
