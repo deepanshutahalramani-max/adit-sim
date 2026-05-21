@@ -1894,18 +1894,50 @@ async def _list_agents(channel: str, retell_key: str | None = None) -> list[dict
         return []
 
 
+async def _get_voice_agent_id_by_phone_number(phone: str, retell_key: str | None = None) -> str | None:
+    """
+    Look up the inbound_agent_id for a phone number via GET /v2/list-phone-numbers
+    (paginated).  Retell's /list-agents does NOT include phone fields on agent
+    records, so this is the only reliable way to find a voice agent by phone.
+    """
+    norm = _norm_phone(phone)
+    pagination_key: str | None = None
+    while True:
+        try:
+            path = "/v2/list-phone-numbers"
+            if pagination_key:
+                path += f"?pagination_key={pagination_key}"
+            resp = await _retell_get(path, retell_key=retell_key)
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+        except Exception:
+            return None
+
+        items = data.get("items", []) if isinstance(data, dict) else []
+        for item in items:
+            if _norm_phone(item.get("phone_number", "")) == norm:
+                return item.get("inbound_agent_id")
+
+        if not data.get("has_more"):
+            return None
+        pagination_key = data.get("pagination_key")
+        if not pagination_key:
+            return None
+
+
 async def _resolve_agent_by_phone(phone: str, channel: str, retell_key: str | None = None) -> str | None:
     """
     Look up the Retell agent ID whose associated phone number matches `phone`.
 
     Strategy for voice agents:
-      1. Direct phone-field match in GET /list-agents
+      1. Direct phone-field match in GET /list-agents (legacy — phone field rarely present)
+      2. Fallback: look up inbound_agent_id via GET /v2/list-phone-numbers (paginated)
 
     Strategy for chat agents (no phone field in Retell):
-      1. Try direct phone-field match in GET /list-chat-agents (in case a future
-         API version exposes it)
-      2. Fallback: find the voice agent for this phone → compare its name with
-         all chat agents → return the chat agent with the most name-word overlap
+      1. Try direct phone-field match in GET /list-chat-agents (future API)
+      2. Fallback: find the voice agent for this phone (via either method above)
+         → compare its name with all chat agents → best name-word overlap
          (requires ≥ 3 words in common to avoid false positives)
 
     Returns the agent_id string, or None if not found / API error.
@@ -1914,23 +1946,36 @@ async def _resolve_agent_by_phone(phone: str, channel: str, retell_key: str | No
     norm = _norm_phone(phone)
 
     if channel == "voice":
+        # Strategy 1: direct phone field on agent record
         for agent in await _list_agents("voice", retell_key=retell_key):
             if _phone_match(agent, norm):
                 return agent.get("agent_id") or agent.get("id")
-        return None
+        # Strategy 2: phone-numbers endpoint (more reliable)
+        return await _get_voice_agent_id_by_phone_number(phone, retell_key=retell_key)
 
     # ── Chat channel ─────────────────────────────────────────────────────────
-    # Step 1: direct match
+    # Step 1: direct match on chat agent records
     for agent in await _list_agents("chat", retell_key=retell_key):
         if _phone_match(agent, norm):
             return agent.get("agent_id") or agent.get("id")
 
-    # Step 2: name-similarity via voice agent
+    # Step 2: name-similarity via voice agent (try both phone-field and phone-numbers endpoint)
     voice_agent: dict | None = None
     for agent in await _list_agents("voice", retell_key=retell_key):
         if _phone_match(agent, norm):
             voice_agent = agent
             break
+
+    if not voice_agent:
+        # Try phone-numbers endpoint to get voice agent_id, then fetch full agent record
+        v_id = await _get_voice_agent_id_by_phone_number(phone, retell_key=retell_key)
+        if v_id:
+            try:
+                resp = await _retell_get(f"/get-agent/{v_id}", retell_key=retell_key)
+                if resp.status_code == 200:
+                    voice_agent = resp.json()
+            except Exception:
+                pass
 
     if not voice_agent:
         return None
