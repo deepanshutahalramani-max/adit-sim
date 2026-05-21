@@ -317,26 +317,64 @@ def _resolve_sms_agent_id(api_base: str | None) -> str:
     return ""
 
 
-def _call_agent(api_base, token, message, patient_phone, agent_phone, chat_id=None, timeout=45, sms_agent_id: str = "") -> dict:
-    payload: dict[str, Any] = {
-        "message": message,
-        "patient_phone_number": patient_phone,
-        "agent_phone_number": agent_phone,
-        "end_conversation": False,
-    }
-    if chat_id:
-        payload["chat_id"] = chat_id
-    # Pass the explicit Retell chat-agent ID so ADIT uses the correct agent
-    # regardless of what's configured in its phone-number lookup table.
-    resolved_sms_id = sms_agent_id or _resolve_sms_agent_id(api_base)
-    if resolved_sms_id:
-        payload["chat_agent_id"] = resolved_sms_id
+def _retell_chat_send(agent_id: str, retell_key: str, message: str, chat_id: str | None = None, timeout: int = 45) -> dict:
+    """
+    Send a message directly to a Retell chat agent via Retell's API.
+    Uses POST /create-chat (to start) and POST /create-chat-completion (to reply).
+    Returns a normalised dict: {chat_id, agent_response, latency_ms}.
+    """
+    key = retell_key or RETELL_API_KEY
+    hdrs = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+
+    if not chat_id:
+        # Start a new chat session
+        r = httpx.post(
+            f"{_RETELL_BASE}/create-chat",
+            headers=hdrs,
+            json={"agent_id": agent_id},
+            timeout=timeout,
+        )
+        r.raise_for_status()
+        data = r.json()
+        chat_id = data.get("chat_id", "")
+
+    t0 = time.time()
     r = httpx.post(
-        f"{api_base}/engage/forward-to-agent",
-        headers=_headers(token), json=payload, timeout=timeout,
+        f"{_RETELL_BASE}/create-chat-completion",
+        headers=hdrs,
+        json={"chat_id": chat_id, "content": message},
+        timeout=timeout,
     )
     r.raise_for_status()
-    return r.json()
+    latency_ms = int((time.time() - t0) * 1000)
+
+    messages = r.json().get("messages", [])
+    agent_text = " ".join(
+        m.get("content", "") for m in messages if m.get("role") == "agent"
+    ).strip()
+
+    return {"chat_id": chat_id, "agent_response": agent_text, "latency_ms": latency_ms}
+
+
+def _call_agent(api_base, token, message, patient_phone, agent_phone, chat_id=None, timeout=45, sms_agent_id: str = "") -> dict:
+    """
+    Route an SMS message to the correct Retell chat agent — directly via Retell API
+    (bypassing ADIT's forward-to-agent).  Retell key and agent ID are resolved from
+    ENV_CONFIG_MAP using api_base so PROD and BETA use their respective workspaces.
+    """
+    resolved_sms_id = sms_agent_id or _resolve_sms_agent_id(api_base)
+    retell_key = _resolve_retell_key(api_base)
+
+    result = _retell_chat_send(
+        agent_id=resolved_sms_id,
+        retell_key=retell_key,
+        message=message,
+        chat_id=chat_id,
+        timeout=timeout,
+    )
+    # Wrap in the same shape the rest of the code expects:
+    # {"data": {"agent_response": "...", "chat_id": "..."}}
+    return {"data": {"agent_response": result["agent_response"], "chat_id": result["chat_id"]}}
 
 def smart_patient_reply(agent_msg, persona, history, goal, oai_key, patient_phone="", extra_context=""):
     if not oai_key:
@@ -2377,7 +2415,7 @@ class SmsSendRequest(BaseModel):
 @app.post("/api/sms/start")
 def sms_start(req: SmsStartRequest):
     """
-    Opens a new manual SMS conversation with the real ADIT/Retell SMS agent.
+    Opens a new manual SMS conversation with the Retell chat agent directly.
     Generates a patient phone number, sends the first message, returns the
     agent reply together with chat_id and patient_phone for subsequent turns.
     """
@@ -2392,9 +2430,9 @@ def sms_start(req: SmsStartRequest):
         )
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=e.response.status_code,
-                            detail=f"ADIT API error: {e.response.text[:300]}")
+                            detail=f"Retell API error: {e.response.text[:300]}")
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"ADIT API unreachable: {e}")
+        raise HTTPException(status_code=502, detail=f"Retell API unreachable: {e}")
     data = resp.get("data", {})
     agent_response = data.get("agent_response", "")
     chat_id = data.get("chat_id", "")
@@ -2423,9 +2461,9 @@ def sms_send(req: SmsSendRequest):
         )
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=e.response.status_code,
-                            detail=f"ADIT API error: {e.response.text[:300]}")
+                            detail=f"Retell API error: {e.response.text[:300]}")
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"ADIT API unreachable: {e}")
+        raise HTTPException(status_code=502, detail=f"Retell API unreachable: {e}")
     latency_ms = int((time.time() - t0) * 1000)
     data = resp.get("data", {})
     agent_response = data.get("agent_response", "")
