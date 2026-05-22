@@ -358,23 +358,50 @@ def _retell_chat_send(agent_id: str, retell_key: str, message: str, chat_id: str
 
 def _call_agent(api_base, token, message, patient_phone, agent_phone, chat_id=None, timeout=45, sms_agent_id: str = "") -> dict:
     """
-    Route an SMS message to the correct Retell chat agent — directly via Retell API
-    (bypassing ADIT's forward-to-agent).  Retell key and agent ID are resolved from
-    ENV_CONFIG_MAP using api_base so PROD and BETA use their respective workspaces.
-    """
-    resolved_sms_id = sms_agent_id or _resolve_sms_agent_id(api_base)
-    retell_key = _resolve_retell_key(api_base)
+    Route an SMS message through ADIT's forward-to-agent (primary path).
+    ADIT injects dynamic variables into the Retell session (business_hours,
+    continuity_memory, current_date, patient_phone_number, etc.) — calling
+    Retell directly would lose all of that context.
 
-    result = _retell_chat_send(
-        agent_id=resolved_sms_id,
-        retell_key=retell_key,
-        message=message,
-        chat_id=chat_id,
-        timeout=timeout,
-    )
-    # Wrap in the same shape the rest of the code expects:
-    # {"data": {"agent_response": "...", "chat_id": "..."}}
-    return {"data": {"agent_response": result["agent_response"], "chat_id": result["chat_id"]}}
+    Falls back to Retell direct API only if ADIT returns a non-2xx response
+    or is unreachable (e.g. BETA environment when ADIT-BETA is down).
+    """
+    payload: dict[str, Any] = {
+        "message": message,
+        "patient_phone_number": patient_phone,
+        "agent_phone_number": agent_phone,
+        "end_conversation": False,
+    }
+    if chat_id:
+        payload["chat_id"] = chat_id
+    resolved_sms_id = sms_agent_id or _resolve_sms_agent_id(api_base)
+    if resolved_sms_id:
+        payload["chat_agent_id"] = resolved_sms_id
+
+    try:
+        r = httpx.post(
+            f"{api_base}/engage/forward-to-agent",
+            headers=_headers(token), json=payload, timeout=timeout,
+        )
+        r.raise_for_status()
+        return r.json()
+    except Exception as adit_err:
+        # ADIT unavailable (e.g. BETA environment) — fall back to Retell direct.
+        # NOTE: dynamic variables will NOT be injected in this path.
+        retell_key = _resolve_retell_key(api_base)
+        if not resolved_sms_id:
+            raise  # no agent ID to fall back to — re-raise original error
+        try:
+            result = _retell_chat_send(
+                agent_id=resolved_sms_id,
+                retell_key=retell_key,
+                message=message,
+                chat_id=chat_id,
+                timeout=timeout,
+            )
+            return {"data": {"agent_response": result["agent_response"], "chat_id": result["chat_id"]}}
+        except Exception:
+            raise adit_err  # surface the original ADIT error if Retell also fails
 
 def smart_patient_reply(agent_msg, persona, history, goal, oai_key, patient_phone="", extra_context=""):
     if not oai_key:
