@@ -56,9 +56,10 @@ ENV_CONFIG_MAP: dict[str, dict] = {
     },
     "https://betafrontdeskchatagent.adit.com": {
         "bearer_token": os.environ.get("ADIT_BEARER_BETA",   "2f81fe52-7a0e-4b29-b7bb-6944d0d97125"),
-        "sms_agent_id":  os.environ.get("BETA_SMS_AGENT_ID",  "agent_c66c0b4a8a450d27d87bbc00f2"),
-        "call_agent_id": os.environ.get("BETA_CALL_AGENT_ID", "agent_ddf0fd309c169f458daa576aaf"),
-        "agent_phone":   os.environ.get("BETA_AGENT_PHONE",   "+12673565689"),
+        # phone +19123485618 ("New Fresh Locations") maps in ADIT → agent_b1eb03... (chat), Retell voice → agent_f0fbd5...
+        "sms_agent_id":  os.environ.get("BETA_SMS_AGENT_ID",  "agent_b1eb03374f40eadbfa6efd0ce3"),
+        "call_agent_id": os.environ.get("BETA_CALL_AGENT_ID", "agent_f0fbd593add84dbebe88f36638"),
+        "agent_phone":   os.environ.get("BETA_AGENT_PHONE",   "+19123485618"),
     },
 }
 
