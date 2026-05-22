@@ -392,15 +392,47 @@ def _retell_chat_send(agent_id: str, retell_key: str, message: str, chat_id: str
 def _call_agent(api_base, token, message, patient_phone, agent_phone, chat_id=None, timeout=45, sms_agent_id: str = "") -> dict:
     """
     Route an SMS message through ADIT's forward-to-agent.
-    Same code path for both PROD and BETA — only the credentials differ
-    (api_base, bearer token, agent_phone, sms_agent_id). ADIT injects
-    dynamic variables (business_hours, continuity_memory, current_date,
-    patient_phone_number) automatically on both environments.
+    Same code path for PROD and BETA — only credentials differ.
 
-    Falls back to Retell direct API only if ADIT returns a non-2xx response
-    or is unreachable.
+    ADIT-PROD injects dynamic variables automatically when creating the Retell
+    session. ADIT-BETA does not (location not configured with business data).
+    For BETA first messages (no chat_id yet) we pre-create the Retell session
+    with dynamic variables ourselves, then pass the chat_id to ADIT so ADIT
+    routes into the already-initialised session — dynamic vars preserved.
+
+    Falls back to Retell direct API only if ADIT returns a non-2xx response.
     """
     resolved_sms_id = sms_agent_id or _resolve_sms_agent_id(api_base)
+
+    # ── BETA: pre-create Retell session with dynamic variables ──────────────
+    # Same pattern already used for web/voice calls (see _build_dynamic_vars):
+    # ADIT's inbound webhook (betavoicereceiption.adit.com/api/v1/incoming_call)
+    # does not fire when the session is initiated via forward-to-agent on BETA,
+    # so the agent would have empty {{current_date}}/{{office_status}}/etc.
+    # We pre-create the Retell session with the same vars _build_dynamic_vars()
+    # provides, then pass the chat_id to ADIT so all message turns go through
+    # ADIT normally. Confirmed: ADIT BETA accepts a pre-existing chat_id.
+    if "beta" in api_base.lower() and not chat_id and resolved_sms_id:
+        retell_key = _resolve_retell_key(api_base)
+        try:
+            key = retell_key or RETELL_API_KEY
+            hdrs = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+            r_create = httpx.post(
+                f"{_RETELL_BASE}/create-chat",
+                headers=hdrs,
+                json={
+                    "agent_id": resolved_sms_id,
+                    "dynamic_variables": _build_dynamic_vars(
+                        agent_phone_number=agent_phone,
+                        patient_phone_number=patient_phone,
+                    ),
+                },
+                timeout=timeout,
+            )
+            r_create.raise_for_status()
+            chat_id = r_create.json().get("chat_id") or chat_id
+        except Exception:
+            pass  # fall through; ADIT will create the session without vars
 
     payload: dict[str, Any] = {
         "message": message,
