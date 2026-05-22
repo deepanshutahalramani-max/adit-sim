@@ -318,21 +318,53 @@ def _resolve_sms_agent_id(api_base: str | None) -> str:
     return ""
 
 
-def _retell_chat_send(agent_id: str, retell_key: str, message: str, chat_id: str | None = None, timeout: int = 45) -> dict:
+def _make_dynamic_vars(patient_phone: str) -> dict:
+    """
+    Build the dynamic variables that ADIT-PROD injects into every Retell session
+    but ADIT-BETA does not. Mirrors the four variables ADIT sets:
+      patient_phone_number, current_date, continuity_memory, business_hours.
+    Used to pre-initialise BETA Retell sessions so the Data tab is populated.
+    """
+    from datetime import datetime
+    now = datetime.now()
+    day = str(now.day)  # no leading zero, cross-platform
+    date_str = now.strftime(f"%A, %B {day}, %Y")  # e.g. "Thursday, May 22, 2026"
+    return {
+        "patient_phone_number": patient_phone,
+        "current_date": date_str,
+        "continuity_memory": "",
+        "business_hours": (
+            "Monday: 9:00 AM - 5:00 PM\n"
+            "Tuesday: 9:00 AM - 5:00 PM\n"
+            "Wednesday: 9:00 AM - 5:00 PM\n"
+            "Thursday: 9:00 AM - 5:00 PM\n"
+            "Friday: 9:00 AM - 3:00 PM\n"
+            "Saturday: Closed\n"
+            "Sunday: Closed"
+        ),
+    }
+
+
+def _retell_chat_send(agent_id: str, retell_key: str, message: str, chat_id: str | None = None,
+                      timeout: int = 45, dynamic_variables: dict | None = None) -> dict:
     """
     Send a message directly to a Retell chat agent via Retell's API.
     Uses POST /create-chat (to start) and POST /create-chat-completion (to reply).
     Returns a normalised dict: {chat_id, agent_response, latency_ms}.
+    Pass dynamic_variables to pre-populate the session Data tab on creation.
     """
     key = retell_key or RETELL_API_KEY
     hdrs = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
 
     if not chat_id:
-        # Start a new chat session
+        # Start a new chat session — inject dynamic variables if provided
+        create_body: dict = {"agent_id": agent_id}
+        if dynamic_variables:
+            create_body["dynamic_variables"] = dynamic_variables
         r = httpx.post(
             f"{_RETELL_BASE}/create-chat",
             headers=hdrs,
-            json={"agent_id": agent_id},
+            json=create_body,
             timeout=timeout,
         )
         r.raise_for_status()
@@ -359,14 +391,17 @@ def _retell_chat_send(agent_id: str, retell_key: str, message: str, chat_id: str
 
 def _call_agent(api_base, token, message, patient_phone, agent_phone, chat_id=None, timeout=45, sms_agent_id: str = "") -> dict:
     """
-    Route an SMS message through ADIT's forward-to-agent (primary path).
-    ADIT injects dynamic variables into the Retell session (business_hours,
-    continuity_memory, current_date, patient_phone_number, etc.) — calling
-    Retell directly would lose all of that context.
+    Route an SMS message through ADIT's forward-to-agent.
+    Same code path for both PROD and BETA — only the credentials differ
+    (api_base, bearer token, agent_phone, sms_agent_id). ADIT injects
+    dynamic variables (business_hours, continuity_memory, current_date,
+    patient_phone_number) automatically on both environments.
 
     Falls back to Retell direct API only if ADIT returns a non-2xx response
-    or is unreachable (e.g. BETA environment when ADIT-BETA is down).
+    or is unreachable.
     """
+    resolved_sms_id = sms_agent_id or _resolve_sms_agent_id(api_base)
+
     payload: dict[str, Any] = {
         "message": message,
         "patient_phone_number": patient_phone,
@@ -375,7 +410,6 @@ def _call_agent(api_base, token, message, patient_phone, agent_phone, chat_id=No
     }
     if chat_id:
         payload["chat_id"] = chat_id
-    resolved_sms_id = sms_agent_id or _resolve_sms_agent_id(api_base)
     if resolved_sms_id:
         payload["chat_agent_id"] = resolved_sms_id
 
@@ -387,8 +421,7 @@ def _call_agent(api_base, token, message, patient_phone, agent_phone, chat_id=No
         r.raise_for_status()
         return r.json()
     except Exception as adit_err:
-        # ADIT unavailable (e.g. BETA environment) — fall back to Retell direct.
-        # NOTE: dynamic variables will NOT be injected in this path.
+        # ADIT unavailable — fall back to Retell direct as last resort.
         retell_key = _resolve_retell_key(api_base)
         if not resolved_sms_id:
             raise  # no agent ID to fall back to — re-raise original error
