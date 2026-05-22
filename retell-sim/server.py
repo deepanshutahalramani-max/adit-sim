@@ -49,10 +49,10 @@ def _resolve_retell_key(api_base: str | None) -> str:
 ENV_CONFIG_MAP: dict[str, dict] = {
     "https://frontdeskchatagent.adit.com": {
         "bearer_token": os.environ.get("ADIT_BEARER_PROD",   "e6a1967d-2121-4db7-b573-6b9a317339f7"),
-        # phone +12673565689 ("Test QA - AI Agent") maps in ADIT → agent_ee5d7... (chat) and in Retell → agent_8c769... (voice)
-        "sms_agent_id":  os.environ.get("PROD_SMS_AGENT_ID",  "agent_ee5d7e7f782caa9f1789765182"),
-        "call_agent_id": os.environ.get("PROD_CALL_AGENT_ID", "agent_8c769ad3395e9b058984c07628"),
-        "agent_phone":   os.environ.get("PROD_AGENT_PHONE",   "+12673565689"),
+        # phone +18382850329 ("Test Agent - Pranav") maps in ADIT → agent_421... (chat), Retell voice → agent_492...
+        "sms_agent_id":  os.environ.get("PROD_SMS_AGENT_ID",  "agent_421e2794bf57a6553c08d4e351"),
+        "call_agent_id": os.environ.get("PROD_CALL_AGENT_ID", "agent_492017a5735f178f18d217f432"),
+        "agent_phone":   os.environ.get("PROD_AGENT_PHONE",   "+18382850329"),
     },
     "https://betafrontdeskchatagent.adit.com": {
         "bearer_token": os.environ.get("ADIT_BEARER_BETA",   "2f81fe52-7a0e-4b29-b7bb-6944d0d97125"),
@@ -115,7 +115,7 @@ HOSTS = {
     "beta": "https://betafrontdeskchatagent.adit.com",
     "dev":  "https://gjqwwdfeo35edl-8009.proxy.runpod.net",
 }
-DEFAULT_AGENT_PHONE = "+12673565689"
+DEFAULT_AGENT_PHONE = "+18382850329"
 MAX_PARALLEL = 10
 MAX_TURNS = 14
 
@@ -1112,8 +1112,8 @@ class ApplyFixRequest(BaseModel):
 
 # ── Retell: agent ID constants ───────────────────────────────────────────────
 # Must match ENV_CONFIG_MAP above.  Override via env var if needed.
-RETELL_AGENT_ID      = os.environ.get("PROD_SMS_AGENT_ID",  "agent_ee5d7e7f782caa9f1789765182")  # chat / SMS agent for +12673565689
-RETELL_CALL_AGENT_ID = os.environ.get("PROD_CALL_AGENT_ID", "agent_8c769ad3395e9b058984c07628")  # voice agent for +12673565689
+RETELL_AGENT_ID      = os.environ.get("PROD_SMS_AGENT_ID",  "agent_421e2794bf57a6553c08d4e351")  # chat agent for +18382850329
+RETELL_CALL_AGENT_ID = os.environ.get("PROD_CALL_AGENT_ID", "agent_492017a5735f178f18d217f432")  # voice agent for +18382850329
 
 # ── OpenAI default key ────────────────────────────────────────────────────────
 # Loaded from environment so it is never sent to the browser.
