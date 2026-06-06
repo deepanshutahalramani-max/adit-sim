@@ -360,7 +360,7 @@ def _retell_chat_send(agent_id: str, retell_key: str, message: str, chat_id: str
         # Start a new chat session — inject dynamic variables if provided
         create_body: dict = {"agent_id": agent_id}
         if dynamic_variables:
-            create_body["dynamic_variables"] = dynamic_variables
+            create_body["retell_llm_dynamic_variables"] = dynamic_variables
         r = httpx.post(
             f"{_RETELL_BASE}/create-chat",
             headers=hdrs,
@@ -422,7 +422,7 @@ def _call_agent(api_base, token, message, patient_phone, agent_phone, chat_id=No
                 headers=hdrs,
                 json={
                     "agent_id": resolved_sms_id,
-                    "dynamic_variables": _build_dynamic_vars(
+                    "retell_llm_dynamic_variables": _build_dynamic_vars(
                         agent_phone_number=agent_phone,
                         patient_phone_number=patient_phone,
                     ),
@@ -468,6 +468,24 @@ def _call_agent(api_base, token, message, patient_phone, agent_phone, chat_id=No
             return {"data": {"agent_response": result["agent_response"], "chat_id": result["chat_id"]}}
         except Exception:
             raise adit_err  # surface the original ADIT error if Retell also fails
+
+
+def _end_retell_chat(chat_id: str, api_base: str = "", timeout: int = 10) -> None:
+    """
+    Close a Retell chat session via POST /end-chat so it doesn't stay "ongoing"
+    after a simulation finishes (Issue 4 fix).
+    Without this call, a completed chat waits for the agent's silence timeout
+    (currently 24 hrs on the BETA/PROD agents) before auto-closing.
+    """
+    retell_key = _resolve_retell_key(api_base) if api_base else RETELL_API_KEY
+    hdrs = {"Authorization": f"Bearer {retell_key}", "Content-Type": "application/json"}
+    httpx.post(
+        f"{_RETELL_BASE}/end-chat",
+        headers=hdrs,
+        json={"chat_id": chat_id},
+        timeout=timeout,
+    )
+
 
 def smart_patient_reply(agent_msg, persona, history, goal, oai_key, patient_phone="", extra_context=""):
     if not oai_key:
@@ -821,6 +839,16 @@ def _run_simulation_sync(
     # the same details and the backend will actually find them.
     if passed and persona.is_new and outcome_type in ("booking_confirmed", "task_created"):
         _register_patient(persona, patient_phone)
+
+    # ── Issue 4 fix: end the Retell chat session so it doesn't stay "ongoing" ──
+    # After a simulation completes (booking, task, or max-turns exhausted), the
+    # Retell chat stays in "ongoing" state indefinitely (silence timeout = 24 hrs).
+    # We explicitly close it so Retell shows the correct terminal state.
+    if chat_id:
+        try:
+            _end_retell_chat(chat_id, api_base or "")
+        except Exception:
+            pass  # best-effort; don't fail the sim result if end-chat errors
 
     return SimResult(
         scenario=scenario_id,
@@ -2455,9 +2483,13 @@ async def stream_repro(req: StreamReproRequest):
 
             agent_lower = agent_msg.lower()
             if any(kw in agent_lower for kw in BOOKING_CONFIRMED_KWS):
+                if chat_id:
+                    await loop.run_in_executor(None, lambda: _end_retell_chat(chat_id, req.api_base))
                 yield f"data: {json.dumps({'type': 'done', 'outcome': 'booking_confirmed', 'passed': True, 'api_calls': api_calls})}\n\n"
                 return
             if any(kw in agent_lower for kw in TASK_CREATED_KWS):
+                if chat_id:
+                    await loop.run_in_executor(None, lambda: _end_retell_chat(chat_id, req.api_base))
                 yield f"data: {json.dumps({'type': 'done', 'outcome': 'task_created', 'passed': True, 'api_calls': api_calls})}\n\n"
                 return
 
@@ -2482,6 +2514,8 @@ async def stream_repro(req: StreamReproRequest):
             else:
                 break
 
+        if chat_id:
+            await loop.run_in_executor(None, lambda: _end_retell_chat(chat_id, req.api_base))
         yield f"data: {json.dumps({'type': 'done', 'outcome': 'incomplete', 'passed': False, 'api_calls': api_calls})}\n\n"
 
     return SR(gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
