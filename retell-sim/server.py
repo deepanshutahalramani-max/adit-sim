@@ -129,6 +129,11 @@ BOOKING_CONFIRMED_KWS = [
     "successfully rescheduled", "updated your appointment",
     "appointment has been cancelled", "successfully cancelled",
     "appointment has been canceled",
+    # Additional patterns the agent commonly uses
+    "is booked for", "appointment for", "booked for",
+    "you're booked", "you are booked", "got you booked",
+    "appointment is set", "see you on", "see you then",
+    "appointment is scheduled", "we have you scheduled",
 ]
 TASK_CREATED_KWS = [
     "i've created a note", "i have created a note", "created a note for the team",
@@ -721,6 +726,20 @@ def _run_simulation_sync(
             #   400 after first turn (Retell transient LLM failures)
             #   502/503/504 on any turn (ADIT/Cloudflare gateway errors)
             should_retry = (status_code == 400 and turn_num > 0) or status_code in (502, 503, 504)
+            # If ADIT returns 400 "Chat already ended" it means the Retell agent
+            # called its end_chat tool (e.g., after saying goodbye post-booking).
+            # Check the last agent turn — if it shows booking/task success, treat
+            # this as a clean completion rather than an error.
+            if status_code == 400 and "chat already ended" in e.response.text.lower():
+                last_agent = next((t.message for t in reversed(turns) if t.role == "agent"), "").lower()
+                if any(kw in last_agent for kw in BOOKING_CONFIRMED_KWS):
+                    passed = True
+                    outcome_type = "booking_confirmed"
+                    break
+                if any(kw in last_agent for kw in TASK_CREATED_KWS):
+                    passed = True
+                    outcome_type = "task_created"
+                    break
             if should_retry:
                 resp = None
                 for attempt, delay in enumerate([3.0, 5.0, 8.0], start=1):
