@@ -472,17 +472,16 @@ def _call_agent(api_base, token, message, patient_phone, agent_phone, chat_id=No
 
 def _end_retell_chat(chat_id: str, api_base: str = "", timeout: int = 10) -> None:
     """
-    Close a Retell chat session via POST /end-chat so it doesn't stay "ongoing"
-    after a simulation finishes (Issue 4 fix).
+    Close a Retell chat session via PATCH /end-chat/{chat_id} so it doesn't stay
+    "ongoing" after a simulation finishes (Issue 4 fix).
     Without this call, a completed chat waits for the agent's silence timeout
     (currently 24 hrs on the BETA/PROD agents) before auto-closing.
     """
     retell_key = _resolve_retell_key(api_base) if api_base else RETELL_API_KEY
     hdrs = {"Authorization": f"Bearer {retell_key}", "Content-Type": "application/json"}
-    httpx.post(
-        f"{_RETELL_BASE}/end-chat",
+    httpx.patch(
+        f"{_RETELL_BASE}/end-chat/{chat_id}",
         headers=hdrs,
-        json={"chat_id": chat_id},
         timeout=timeout,
     )
 
