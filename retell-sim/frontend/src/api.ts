@@ -397,3 +397,67 @@ export async function runRegression(params: {
 }> {
   return post("/debug/regression", params);
 }
+
+/* ── Real Phone mode (Twilio) ── */
+export interface RealTurn {
+  role: string;
+  message: string;
+  channel: string;
+  ts: number;
+}
+
+export interface RealSession {
+  session_id: string;
+  trigger_type: string;
+  patient_number: string;
+  practice_number: string;
+  scenario_id: string;
+  goal: string;
+  status: string;
+  outcome: string;
+  call_sid: string;
+  call_status: string;
+  turns: RealTurn[];
+  events: { ts: number; msg: string }[];
+  error: string;
+  created_at: number;
+  updated_at: number;
+  cooldown_remaining_s: number;
+}
+
+export interface RealConfig {
+  configured: boolean;
+  patient_numbers: { number: string; cooldowns: Record<string, number> }[];
+  practice_numbers: Record<string, string>;
+  webhook_base: string;
+  trigger_types: string[];
+}
+
+export async function fetchRealConfig(): Promise<RealConfig> {
+  const r = await fetch(`${BASE}/real/config`);
+  return r.json();
+}
+
+export async function triggerReal(params: {
+  trigger_type: string;
+  practice_number?: string;
+  env?: string;
+  scenario_id?: string;
+  patient_number?: string;
+  opener?: string;
+}): Promise<{ session: RealSession; cooldown_warning_s: number }> {
+  return post("/real/trigger", params);
+}
+
+export async function fetchRealSessions(): Promise<{ sessions: RealSession[] }> {
+  const r = await fetch(`${BASE}/real/sessions`);
+  return r.json();
+}
+
+export async function stopRealSession(sessionId: string): Promise<RealSession> {
+  return post(`/real/session/${sessionId}/stop`, {});
+}
+
+export async function setupRealWebhooks(): Promise<{ configured: { number: string; sms_webhook: string }[] }> {
+  return post("/real/setup", {});
+}

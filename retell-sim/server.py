@@ -3225,6 +3225,11 @@ def get_call_events():
     return {"events": list(reversed(_call_events))}
 
 
+# ── Real Phone mode (Twilio-driven real calls/SMS to the practice number) ─────
+from real_phone import router as real_phone_router
+app.include_router(real_phone_router)
+
+
 # ── Serve built React frontend ─────────────────────────────────────────────────
 # Mount the entire dist directory with html=True so Starlette handles SPA routing:
 #   - Exact file matches (JS/CSS/images) are served directly

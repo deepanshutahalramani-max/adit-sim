@@ -8,11 +8,13 @@ import { SimulationsHub } from "./pages/SimulationsHub";
 import { E2EChain } from "./pages/E2EChain";
 import { DebugSuite } from "./pages/DebugSuite";
 import { Dashboard } from "./pages/Dashboard";
+import { RealPhone } from "./pages/RealPhone";
 import type { SimResult } from "./types";
 
 const TABS = [
   { id: "debug",       label: "🔍 Debug Suite" },
   { id: "simulations", label: "💬 Simulations" },
+  { id: "realphone",   label: "📱 Real Phone" },
   { id: "chain",       label: "E2E Chain" },
   { id: "dashboard",   label: "Dashboard" },
 ] as const;
@@ -170,6 +172,9 @@ export default function App() {
                 onCallResults={handleCallResults}
                 callResults={callResults}
               />
+            )}
+            {activeTab === "realphone" && (
+              <RealPhone />
             )}
             {activeTab === "chain" && (
               <E2EChain
