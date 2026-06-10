@@ -412,6 +412,7 @@ export interface RealSession {
   patient_number: string;
   practice_number: string;
   scenario_id: string;
+  scenario_label: string;
   goal: string;
   status: string;
   outcome: string;
@@ -419,10 +420,29 @@ export interface RealSession {
   call_status: string;
   turns: RealTurn[];
   events: { ts: number; msg: string }[];
+  score: number;
+  judge_reason: string;
+  suite_id: string;
   error: string;
   created_at: number;
   updated_at: number;
   cooldown_remaining_s: number;
+}
+
+export interface SuiteRun {
+  suite_id: string;
+  scenario_ids: string[];
+  trigger_type: string;
+  practice_number: string;
+  env: string;
+  status: string;
+  current_idx: number;
+  session_ids: string[];
+  started_at: number;
+  finished_at: number;
+  passed?: number;
+  failed?: number;
+  total?: number;
 }
 
 export interface RealConfig {
@@ -460,4 +480,18 @@ export async function stopRealSession(sessionId: string): Promise<RealSession> {
 
 export async function setupRealWebhooks(): Promise<{ configured: { number: string; sms_webhook: string }[] }> {
   return post("/real/setup", {});
+}
+
+export async function runRealSuite(params: {
+  scenario_ids?: string[];
+  trigger_type?: string;
+  env?: string;
+  practice_number?: string;
+}): Promise<SuiteRun> {
+  return post("/real/run-suite", params);
+}
+
+export async function fetchRealSuites(): Promise<{ suites: SuiteRun[] }> {
+  const r = await fetch(`${BASE}/real/suites`);
+  return r.json();
 }

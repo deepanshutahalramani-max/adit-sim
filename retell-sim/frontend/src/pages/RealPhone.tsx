@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   fetchRealConfig, fetchRealSessions, triggerReal, stopRealSession, setupRealWebhooks,
+  runRealSuite, fetchRealSuites,
 } from "../api";
 import type { RealSession } from "../api";
 
@@ -76,7 +77,7 @@ function SessionCard({ s }: { s: RealSession }) {
           <div>
             <div className="text-[14.5px] font-bold text-[#111]">
               {trig?.label ?? s.trigger_type}
-              <span className="text-[#ADADAD] font-normal"> · {s.scenario_id}</span>
+              <span className="text-[#ADADAD] font-normal"> · {s.scenario_label || s.scenario_id}</span>
             </div>
             <div className="text-[12px] text-[#888] mt-0.5">
               {s.patient_number} → {s.practice_number}
@@ -85,6 +86,15 @@ function SessionCard({ s }: { s: RealSession }) {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {s.score > 0 && (
+            <span className={`text-[11.5px] font-bold px-2.5 py-1 rounded-full border ${
+              s.score >= 80 ? "bg-[#F2FDF4] text-[#166534] border-[#B8EFC8]"
+              : s.score >= 60 ? "bg-[#FFF7E6] text-[#92600A] border-[#F5D998]"
+              : "bg-[#FEF2F2] text-[#991B1B] border-[#FECACA]"
+            }`} title={s.judge_reason}>
+              {s.score}/100
+            </span>
+          )}
           {s.outcome && (
             <span className={`text-[11.5px] font-semibold px-2.5 py-1 rounded-full border ${
               ["booking_confirmed", "task_created"].includes(s.outcome)
@@ -176,6 +186,27 @@ export function RealPhone() {
     queryFn: fetchRealSessions,
     refetchInterval: 2_500,
   });
+  const { data: suites } = useQuery({
+    queryKey: ["realSuites"],
+    queryFn: fetchRealSuites,
+    refetchInterval: 5_000,
+  });
+
+  const suite = useMutation({
+    mutationFn: () =>
+      runRealSuite({
+        trigger_type: trigger,
+        env,
+        practice_number: practiceOverride || undefined,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["realSuites"] });
+      setLaunchMsg("✅ Suite started — all 8 scenarios will run sequentially over real phone");
+      setTimeout(() => setLaunchMsg(""), 8000);
+    },
+    onError: (e: Error) => setLaunchMsg(`❌ ${e.message}`),
+  });
+  const activeSuite = suites?.suites?.find(s => s.status === "running");
 
   const launch = useMutation({
     mutationFn: () =>
@@ -290,6 +321,14 @@ export function RealPhone() {
           {launch.isPending ? "Launching…" : "🚀 Launch"}
         </button>
         <button
+          onClick={() => suite.mutate()}
+          disabled={suite.isPending || !!activeSuite || !cfg?.configured}
+          className="bg-white border-2 border-brand-500 text-brand-600 hover:bg-brand-50 disabled:opacity-40 font-bold text-[13.5px] px-5 py-2 rounded-xl transition-colors"
+          title="Run all 8 scenarios sequentially over the real phone path with the selected trigger"
+        >
+          {activeSuite ? `Suite running (${(activeSuite.current_idx ?? 0) + 1}/${activeSuite.total ?? activeSuite.scenario_ids.length})…` : "🧪 Run Full Suite"}
+        </button>
+        <button
           onClick={() => setup.mutate()}
           disabled={setup.isPending || !cfg?.configured}
           className="text-[12.5px] text-[#888] hover:text-[#333] underline disabled:opacity-40"
@@ -299,6 +338,32 @@ export function RealPhone() {
         </button>
         {launchMsg && <div className="text-[12.5px] font-medium text-[#555] w-full">{launchMsg}</div>}
       </div>
+
+      {/* Suite summaries */}
+      {(suites?.suites?.length ?? 0) > 0 && (
+        <div className="space-y-2">
+          {suites!.suites.map(su => (
+            <div key={su.suite_id} className="bg-white border border-[#EAEAEA] rounded-xl px-4 py-2.5 flex items-center gap-4 text-[12.5px]">
+              <span className="font-bold text-[#333]">🧪 Suite {su.suite_id}</span>
+              <span className="text-[#888]">{su.env.toUpperCase()} · {su.trigger_type.replace(/_/g, " ")}</span>
+              {su.status === "running" ? (
+                <span className="text-[#1456A0] font-semibold">
+                  <span className="inline-block w-[6px] h-[6px] bg-current rounded-full mr-1.5 animate-pulse" />
+                  scenario {(su.current_idx ?? 0) + 1} of {su.total ?? su.scenario_ids.length}
+                </span>
+              ) : (
+                <span className="font-semibold">
+                  <span className="text-[#166534]">{su.passed ?? 0} passed</span>
+                  {" · "}
+                  <span className="text-[#991B1B]">{su.failed ?? 0} failed</span>
+                  {" · "}
+                  <span className="text-[#888]">{su.total ?? su.scenario_ids.length} total</span>
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Patient numbers / cooldowns */}
       {cfg?.configured && (

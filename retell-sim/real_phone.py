@@ -43,9 +43,13 @@ from pydantic import BaseModel
 router = APIRouter()
 
 # ── Configuration ─────────────────────────────────────────────────────────────
+# Secrets come from Railway env vars only (GitHub push protection rejects them in code).
 TWILIO_SID    = os.environ.get("TWILIO_ACCOUNT_SID", "")
 TWILIO_TOKEN  = os.environ.get("TWILIO_AUTH_TOKEN", "")
-TWILIO_NUMBERS = [n.strip() for n in os.environ.get("TWILIO_NUMBERS", "").split(",") if n.strip()]
+TWILIO_NUMBERS = [n.strip() for n in os.environ.get(
+    "TWILIO_NUMBERS",
+    "+18326886475,+18327725892,+18392743350,+19314652485",
+).split(",") if n.strip()]
 PUBLIC_BASE   = os.environ.get("PUBLIC_BASE_URL", "https://adit-sim-production-1b80.up.railway.app").rstrip("/")
 PRACTICE_NUMBERS = {
     "beta": os.environ.get("PRACTICE_NUMBER_BETA", "+18324768799"),
@@ -53,10 +57,12 @@ PRACTICE_NUMBERS = {
 }
 _TW_BASE = "https://api.twilio.com/2010-04-01"
 
-MAX_SMS_TURNS    = 16     # safety cap on auto-replies per session
+MAX_SMS_TURNS     = 16    # safety cap on auto-replies per session
 INCOMPLETE_HOLD_S = 12    # seconds of silence before hanging up an incomplete call
 MISSED_CANCEL_S   = 4     # seconds of ringing before cancelling a missed call
 COOLDOWN_S        = 24 * 3600
+FOLLOWUP_SMS_TIMEOUT_S = 4 * 60   # fail if AI never texts back after a call trigger
+CONVO_IDLE_TIMEOUT_S   = 6 * 60   # fail if mid-conversation goes silent this long
 
 
 def _twilio_configured() -> bool:
@@ -111,12 +117,16 @@ class RealSession:
     scenario_id: str
     goal: str
     persona_idx: int
+    scenario_label: str = ""
     status: str = "starting"     # starting | calling | waiting_for_sms | in_conversation | completed | failed
     outcome: str = ""            # booking_confirmed | task_created | incomplete | error
     call_sid: str = ""
     call_status: str = ""        # Twilio call status as observed
     turns: list = field(default_factory=list)
     events: list = field(default_factory=list)   # timeline of system events
+    score: int = 0               # LLM judge score (0-100), filled on completion
+    judge_reason: str = ""
+    suite_id: str = ""           # set when launched as part of a suite run
     error: str = ""
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
@@ -199,19 +209,70 @@ def _patient_reply(session: RealSession, agent_msg: str) -> tuple[str, bool]:
     )
 
 
+def _judge_session(session: RealSession) -> None:
+    """Score the finished conversation with the same LLM judge as API simulations."""
+    try:
+        srv = _sim()
+        turns = [srv.Turn(t.role, t.message) for t in session.turns if t.role in ("patient", "agent")]
+        if not turns:
+            return
+        oai_key = srv._resolve_openai_key("")
+        score, reason = srv._llm_judge(session.scenario_label or session.scenario_id, turns, oai_key)
+        session.score, session.judge_reason = score, reason
+        session.log(f"Judge score: {score}")
+    except Exception as exc:
+        session.log(f"Judge failed: {exc}")
+
+
+def _finish(session: RealSession, status: str, outcome: str, note: str = "") -> None:
+    """Terminal-state transition: mark cooldown and kick off async judging."""
+    session.status, session.outcome = status, outcome
+    if note:
+        session.log(note)
+    _mark_cooldown(session.patient_number, session.practice_number)
+    threading.Thread(target=_judge_session, args=(session,), daemon=True).start()
+
+
 def _check_completion(session: RealSession, agent_msg: str) -> bool:
     """Detect terminal success in the agent's message; mark the session if found."""
     srv = _sim()
     low = agent_msg.lower()
     if any(kw in low for kw in srv.BOOKING_CONFIRMED_KWS):
-        session.status, session.outcome = "completed", "booking_confirmed"
+        _finish(session, "completed", "booking_confirmed", "Goal reached: booking_confirmed")
     elif any(kw in low for kw in srv.TASK_CREATED_KWS):
-        session.status, session.outcome = "completed", "task_created"
+        _finish(session, "completed", "task_created", "Goal reached: task_created")
     else:
         return False
-    session.log(f"Goal reached: {session.outcome}")
-    _mark_cooldown(session.patient_number, session.practice_number)
     return True
+
+
+# ── Watchdog: timeout detection (no follow-up SMS / dead conversation) ───────
+
+def _watchdog_loop() -> None:
+    while True:
+        time.sleep(20)
+        now = time.time()
+        for s in list(REAL_SESSIONS.values()):
+            try:
+                if s.status == "waiting_for_sms" and now - s.updated_at > FOLLOWUP_SMS_TIMEOUT_S:
+                    _finish(s, "failed", "error",
+                            f"No AI follow-up SMS within {FOLLOWUP_SMS_TIMEOUT_S // 60} min of the "
+                            f"{s.trigger_type.replace('_', ' ')} — agent did not engage")
+                elif s.status == "in_conversation" and now - s.updated_at > CONVO_IDLE_TIMEOUT_S:
+                    _finish(s, "failed", "incomplete",
+                            f"Conversation went silent for {CONVO_IDLE_TIMEOUT_S // 60} min — timing out")
+            except Exception:
+                pass
+
+
+_watchdog_started = False
+
+
+def _ensure_watchdog() -> None:
+    global _watchdog_started
+    if not _watchdog_started:
+        _watchdog_started = True
+        threading.Thread(target=_watchdog_loop, daemon=True).start()
 
 
 # ── Call orchestration (background threads) ───────────────────────────────────
@@ -336,6 +397,53 @@ class RealTriggerRequest(BaseModel):
     opener: str = ""                      # optional custom first SMS (inbound_sms only)
 
 
+def _start_session(trigger_type: str, practice: str, scenario_id: str,
+                   patient_number: str = "", opener: str = "", suite_id: str = "") -> RealSession:
+    """Create and launch a real-phone session. Shared by the trigger endpoint and the suite runner."""
+    _ensure_watchdog()
+    cfg = _resolve_scenario(scenario_id)
+    patient = _pick_patient_number(practice, patient_number)
+    if not patient:
+        raise HTTPException(status_code=503, detail="No Twilio patient numbers available.")
+
+    session = RealSession(
+        session_id=uuid.uuid4().hex[:12],
+        trigger_type=trigger_type,
+        patient_number=patient,
+        practice_number=practice,
+        scenario_id=scenario_id,
+        goal=cfg["goal"],
+        persona_idx=cfg.get("persona_idx", 0),
+        scenario_label=cfg.get("label", scenario_id),
+        suite_id=suite_id,
+    )
+    with _SESSIONS_LOCK:
+        REAL_SESSIONS[session.session_id] = session
+
+    if trigger_type == "inbound_sms":
+        cooldown = _cooldown_remaining(patient, practice)
+        if cooldown > 0:
+            session.log(f"WARNING: {patient} is in 24h cooldown with {practice} "
+                        f"for another {cooldown}s — AI may not reply")
+        msg = opener or cfg["opener"]
+        try:
+            _tw_send_sms(patient, practice, msg)
+            session.turns.append(RealTurn("patient", msg, "sms"))
+            session.status = "in_conversation"
+            session.log(f"Opener SMS sent from {patient}")
+        except Exception as exc:
+            session.status, session.error = "failed", f"SMS send error: {exc}"
+            session.log(session.error)
+    elif trigger_type == "missed_call":
+        threading.Thread(target=_run_missed_call, args=(session,), daemon=True).start()
+    elif trigger_type == "incomplete_call":
+        threading.Thread(target=_run_incomplete_call, args=(session,), daemon=True).start()
+    elif trigger_type == "inbound_call":
+        threading.Thread(target=_run_inbound_call, args=(session,), daemon=True).start()
+
+    return session
+
+
 @router.post("/api/real/trigger")
 def real_trigger(req: RealTriggerRequest):
     _require_twilio()
@@ -346,48 +454,98 @@ def real_trigger(req: RealTriggerRequest):
     if not practice:
         raise HTTPException(status_code=400, detail=f"No practice number configured for env '{req.env}'.")
 
-    cfg = _resolve_scenario(req.scenario_id)
-    patient = _pick_patient_number(practice, req.patient_number)
-    if not patient:
-        raise HTTPException(status_code=503, detail="No Twilio patient numbers available.")
+    patient_preview = _pick_patient_number(practice, req.patient_number)
+    cooldown = _cooldown_remaining(patient_preview, practice) if req.trigger_type == "inbound_sms" else 0
+    session = _start_session(req.trigger_type, practice, req.scenario_id,
+                             req.patient_number, req.opener)
+    return {"session": _session_dict(session), "cooldown_warning_s": cooldown}
 
-    session = RealSession(
-        session_id=uuid.uuid4().hex[:12],
-        trigger_type=req.trigger_type,
-        patient_number=patient,
-        practice_number=practice,
-        scenario_id=req.scenario_id,
-        goal=cfg["goal"],
-        persona_idx=cfg.get("persona_idx", 0),
-    )
-    with _SESSIONS_LOCK:
-        REAL_SESSIONS[session.session_id] = session
 
-    cooldown = _cooldown_remaining(patient, practice)
-    if req.trigger_type == "inbound_sms":
-        if cooldown > 0:
-            session.log(f"WARNING: {patient} had a conversation with {practice} "
-                        f"{COOLDOWN_S - cooldown}s ago — AI may not reply for another {cooldown}s")
-        opener = req.opener or cfg["opener"]
+# ── Suite runner: full scenario regression over the REAL phone path ──────────
+
+@dataclass
+class SuiteRun:
+    suite_id: str
+    scenario_ids: list
+    trigger_type: str
+    practice_number: str
+    env: str
+    status: str = "running"        # running | completed
+    current_idx: int = 0
+    session_ids: list = field(default_factory=list)
+    started_at: float = field(default_factory=time.time)
+    finished_at: float = 0.0
+
+
+SUITES: dict[str, SuiteRun] = {}
+SESSION_TERMINAL_TIMEOUT_S = 12 * 60   # hard cap per scenario in a suite
+
+
+def _run_suite(suite: SuiteRun) -> None:
+    for idx, sid in enumerate(suite.scenario_ids):
+        suite.current_idx = idx
         try:
-            _tw_send_sms(patient, practice, opener)
-            session.turns.append(RealTurn("patient", opener, "sms"))
-            session.status = "in_conversation"
-            session.log(f"Opener SMS sent from {patient}")
-        except Exception as exc:
-            session.status, session.error = "failed", f"SMS send error: {exc}"
-            session.log(session.error)
+            session = _start_session(suite.trigger_type, suite.practice_number, sid,
+                                     suite_id=suite.suite_id)
+        except Exception:
+            continue
+        suite.session_ids.append(session.session_id)
+        deadline = time.time() + SESSION_TERMINAL_TIMEOUT_S
+        while time.time() < deadline:
+            time.sleep(5)
+            if session.status in ("completed", "failed"):
+                break
+        else:
+            if session.status not in ("completed", "failed"):
+                _finish(session, "failed", "incomplete", "Suite watchdog: scenario hard timeout")
+        time.sleep(10)  # brief gap between real conversations
+    suite.status = "completed"
+    suite.finished_at = time.time()
 
-    elif req.trigger_type == "missed_call":
-        threading.Thread(target=_run_missed_call, args=(session,), daemon=True).start()
 
-    elif req.trigger_type == "incomplete_call":
-        threading.Thread(target=_run_incomplete_call, args=(session,), daemon=True).start()
+class SuiteRequest(BaseModel):
+    scenario_ids: list[str] = []
+    trigger_type: str = "incomplete_call"   # call triggers dodge the 24h inbound-SMS cooldown
+    env: str = "beta"
+    practice_number: str = ""
 
-    elif req.trigger_type == "inbound_call":
-        threading.Thread(target=_run_inbound_call, args=(session,), daemon=True).start()
 
-    return {"session": _session_dict(session), "cooldown_warning_s": cooldown if req.trigger_type == "inbound_sms" else 0}
+@router.post("/api/real/run-suite")
+def real_run_suite(req: SuiteRequest):
+    _require_twilio()
+    practice = (req.practice_number or PRACTICE_NUMBERS.get(req.env, "")).strip()
+    if not practice:
+        raise HTTPException(status_code=400, detail=f"No practice number configured for env '{req.env}'.")
+    srv = _sim()
+    ids = req.scenario_ids or list(srv.SCENARIOS.keys())
+    bad = [i for i in ids if i not in srv.SCENARIOS]
+    if bad:
+        raise HTTPException(status_code=400, detail=f"Unknown scenarios: {bad}")
+
+    suite = SuiteRun(
+        suite_id=uuid.uuid4().hex[:10],
+        scenario_ids=ids,
+        trigger_type=req.trigger_type,
+        practice_number=practice,
+        env=req.env,
+    )
+    SUITES[suite.suite_id] = suite
+    threading.Thread(target=_run_suite, args=(suite,), daemon=True).start()
+    return asdict(suite)
+
+
+@router.get("/api/real/suites")
+def real_suites():
+    out = []
+    for s in sorted(SUITES.values(), key=lambda x: x.started_at, reverse=True)[:10]:
+        d = asdict(s)
+        sessions = [REAL_SESSIONS.get(i) for i in s.session_ids]
+        sessions = [x for x in sessions if x]
+        d["passed"] = sum(1 for x in sessions if x.status == "completed" and x.outcome in ("booking_confirmed", "task_created"))
+        d["failed"] = sum(1 for x in sessions if x.status == "failed")
+        d["total"] = len(s.scenario_ids)
+        out.append(d)
+    return {"suites": out}
 
 
 @router.get("/api/real/sessions")
@@ -473,9 +631,7 @@ async def twilio_sms_webhook(request: Request):
 
     n_patient_turns = sum(1 for t in session.turns if t.role == "patient")
     if n_patient_turns >= MAX_SMS_TURNS:
-        session.status, session.outcome = "completed", "incomplete"
-        session.log(f"Max turns ({MAX_SMS_TURNS}) reached — stopping auto-replies")
-        _mark_cooldown(session.patient_number, session.practice_number)
+        _finish(session, "completed", "incomplete", f"Max turns ({MAX_SMS_TURNS}) reached — stopping auto-replies")
         return _twiml("")
 
     try:
@@ -484,10 +640,8 @@ async def twilio_sms_webhook(request: Request):
         _tw_send_sms(session.patient_number, session.practice_number, reply)
         session.turns.append(RealTurn("patient", reply, "sms"))
         if should_end:
-            session.status = "completed"
-            session.outcome = session.outcome or "booking_confirmed"
-            session.log("Patient brain signalled goal reached")
-            _mark_cooldown(session.patient_number, session.practice_number)
+            _finish(session, "completed", session.outcome or "booking_confirmed",
+                    "Patient brain signalled goal reached")
     except Exception as exc:
         session.log(f"Reply generation/send failed: {exc}")
 
@@ -509,12 +663,15 @@ async def twilio_call_status(request: Request, session_id: str = ""):
         s.log(f"Call status: {status}")
         if s.trigger_type == "inbound_call" and status in ("completed", "failed", "busy", "no-answer"):
             if s.status not in ("completed", "failed"):
-                s.status = "completed"
-                s.outcome = s.outcome or ("incomplete" if status != "completed" else
-                                          ("booking_confirmed" if any(
-                                              kw in " ".join(t.message.lower() for t in s.turns if t.role == "agent")
-                                              for kw in _sim().BOOKING_CONFIRMED_KWS) else "incomplete"))
-                _mark_cooldown(s.patient_number, s.practice_number)
+                agent_text = " ".join(t.message.lower() for t in s.turns if t.role == "agent")
+                srv = _sim()
+                if any(kw in agent_text for kw in srv.BOOKING_CONFIRMED_KWS):
+                    outcome = "booking_confirmed"
+                elif any(kw in agent_text for kw in srv.TASK_CREATED_KWS):
+                    outcome = "task_created"
+                else:
+                    outcome = "incomplete"
+                _finish(s, "completed", s.outcome or outcome, "Voice call ended")
     return _twiml("")
 
 
@@ -568,9 +725,7 @@ async def twilio_voice_turn(request: Request, session_id: str = ""):
         s.turns.append(RealTurn("patient", reply, "voice"))
         n_patient_turns = sum(1 for t in s.turns if t.role == "patient")
         if should_end or n_patient_turns >= MAX_SMS_TURNS:
-            s.status = "completed"
-            s.outcome = s.outcome or "booking_confirmed"
-            _mark_cooldown(s.patient_number, s.practice_number)
+            _finish(s, "completed", s.outcome or "booking_confirmed", "Voice goal reached")
             return _twiml(f'<Say voice="Polly.Joanna">{xml_escape(reply)}</Say><Hangup/>')
         return _twiml(_gather(session_id, say=reply))
 
