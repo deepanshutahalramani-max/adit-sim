@@ -28,6 +28,7 @@ Configuration (Railway env vars):
 from __future__ import annotations
 
 import os
+import random
 import threading
 import time
 import uuid
@@ -636,7 +637,11 @@ async def twilio_sms_webhook(request: Request):
 
     try:
         reply, should_end = _patient_reply(session, body)
-        time.sleep(1.5)  # human-ish pause
+        # Human-like typing delay. Replying within ~2s creates a race in ADIT's
+        # SMS pipeline: our answer can arrive while the agent's own message is
+        # still in flight, and ADIT silently drops it (observed live — the SMS
+        # is carrier-delivered but never forwarded into the Retell chat).
+        time.sleep(random.uniform(8, 12))
         _tw_send_sms(session.patient_number, session.practice_number, reply)
         session.turns.append(RealTurn("patient", reply, "sms"))
         if should_end:
