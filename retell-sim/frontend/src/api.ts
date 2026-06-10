@@ -404,6 +404,7 @@ export interface RealTurn {
   message: string;
   channel: string;
   ts: number;
+  latency_s: number;
 }
 
 export interface RealSession {
@@ -411,18 +412,27 @@ export interface RealSession {
   trigger_type: string;
   patient_number: string;
   practice_number: string;
+  env: string;
   scenario_id: string;
   scenario_label: string;
   goal: string;
+  mode: string;
+  patient_name: string;
   status: string;
   outcome: string;
+  failure_type: string;
   call_sid: string;
   call_status: string;
+  recording_sid: string;
+  recording_url: string;
+  recording_duration_s: number;
   turns: RealTurn[];
   events: { ts: number; msg: string }[];
   score: number;
   judge_reason: string;
   suite_id: string;
+  first_sms_latency_s: number;
+  avg_reply_latency_s: number;
   error: string;
   created_at: number;
   updated_at: number;
@@ -431,6 +441,7 @@ export interface RealSession {
 
 export interface SuiteRun {
   suite_id: string;
+  kind: string;
   scenario_ids: string[];
   trigger_type: string;
   practice_number: string;
@@ -447,10 +458,30 @@ export interface SuiteRun {
 
 export interface RealConfig {
   configured: boolean;
-  patient_numbers: { number: string; cooldowns: Record<string, number> }[];
+  patient_numbers: {
+    number: string;
+    identity: { first?: string; last?: string; dob?: string; insurance?: string };
+    busy: boolean;
+    cooldowns: Record<string, number>;
+    booked: Record<string, boolean>;
+  }[];
   practice_numbers: Record<string, string>;
   webhook_base: string;
   trigger_types: string[];
+  reply_timeout_s: number;
+  followup_timeout_s: number;
+}
+
+export interface RealInsights {
+  total: number;
+  passed?: number;
+  failed?: number;
+  pass_rate?: number;
+  agent_reply_latency?: { avg_s: number; p95_s: number; max_s: number; samples: number };
+  by_trigger?: Record<string, { total: number; passed: number; avg_first_sms_latency_s: number; p95_first_sms_latency_s: number }>;
+  by_scenario?: Record<string, { total: number; passed: number; avg_score: number }>;
+  failure_taxonomy?: Record<string, number>;
+  envs?: Record<string, { total: number; passed: number }>;
 }
 
 export async function fetchRealConfig(): Promise<RealConfig> {
@@ -487,6 +518,7 @@ export async function runRealSuite(params: {
   trigger_type?: string;
   env?: string;
   practice_number?: string;
+  kind?: string;
 }): Promise<SuiteRun> {
   return post("/real/run-suite", params);
 }
@@ -494,4 +526,30 @@ export async function runRealSuite(params: {
 export async function fetchRealSuites(): Promise<{ suites: SuiteRun[] }> {
   const r = await fetch(`${BASE}/real/suites`);
   return r.json();
+}
+
+export async function fetchRealInsights(): Promise<RealInsights> {
+  const r = await fetch(`${BASE}/real/insights`);
+  return r.json();
+}
+
+export async function manualStart(params: {
+  env?: string;
+  practice_number?: string;
+  patient_number?: string;
+  message?: string;
+  trigger_type?: string;
+}): Promise<{ session: RealSession }> {
+  return post("/real/manual/start", params);
+}
+
+export async function manualSend(params: {
+  session_id: string;
+  message: string;
+}): Promise<RealSession> {
+  return post("/real/manual/send", params);
+}
+
+export async function manualEnd(sessionId: string): Promise<RealSession> {
+  return post(`/real/manual/${sessionId}/end`, {});
 }
