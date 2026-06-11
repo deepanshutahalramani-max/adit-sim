@@ -8,6 +8,8 @@
 import { useState, useRef } from "react";
 import { Phone, Play, Trash2, RefreshCw, Paperclip, X } from "lucide-react";
 import { runCallParallel, extractContextFromImage } from "../api";
+import { RealRunPanel } from "../components/RealRunPanel";
+import { realEnv } from "./Simulations";
 import { useQueryClient } from "@tanstack/react-query";
 import type { Config, AppConfig, SimResult } from "../types";
 import { SimResultCard } from "../components/SimResultCard";
@@ -466,7 +468,28 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
               ))}
             </div>
 
-            <div className="flex gap-3 mb-4">
+            {/* REAL PHONE transport: actual voice calls to the practice number */}
+            {config.transport === "real" && (
+              <div className="mb-6">
+                {realEnv(config.environment) ? (
+                  <RealRunPanel
+                    env={realEnv(config.environment)!}
+                    kind="suite"
+                    scenarioIds={selected}
+                    allowedTriggers={["inbound_call"]}
+                    buttonLabel={`🎙️ Run ${selected.length} scenario${selected.length === 1 ? "" : "s"} as REAL voice calls`}
+                    disabled={selected.length === 0}
+                    disabledReason={selected.length === 0 ? "Select at least one scenario above." : undefined}
+                  />
+                ) : (
+                  <div className="text-[12.5px] text-[#92600A] bg-[#FFF7E6] border border-[#F5D998] rounded-lg px-3 py-2">
+                    Real Phone transport supports Live (PROD) and Beta only — switch environment or use API Direct.
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="flex gap-3 mb-4" style={config.transport === "real" ? { display: "none" } : undefined}>
               <div className="bg-white border border-[#EAEAEA] rounded-xl p-4">
                 <label className="text-[10.5px] font-bold uppercase tracking-widest text-[#ADADAD] block mb-1.5">Runs / scenario</label>
                 <input type="number" min={1} max={3} value={repeats} onChange={e => setRepeats(+e.target.value)}
@@ -489,11 +512,13 @@ export function CallSimulations({ config, appConfig, onResults, results }: Props
               </button>
             </div>
 
-            <button onClick={handleBatchRun} disabled={batchRunning || selected.length === 0 || !config.openaiKey}
-              className="w-full flex items-center justify-center gap-2 bg-[#1A1A1A] hover:bg-[#333] text-white font-semibold text-[14px] rounded-xl py-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed mb-6 shadow-sm">
-              <Play className="w-4 h-4" />
-              {batchRunning ? "Running call simulations…" : "Run Batch"}
-            </button>
+            {config.transport !== "real" && (
+              <button onClick={handleBatchRun} disabled={batchRunning || selected.length === 0 || !config.openaiKey}
+                className="w-full flex items-center justify-center gap-2 bg-[#1A1A1A] hover:bg-[#333] text-white font-semibold text-[14px] rounded-xl py-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed mb-6 shadow-sm">
+                <Play className="w-4 h-4" />
+                {batchRunning ? "Running call simulations…" : "⚡ Run Batch (LLM-to-LLM, API)"}
+              </button>
+            )}
 
             {results.length > 0 && (
               <>

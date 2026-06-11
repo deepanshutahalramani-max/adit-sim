@@ -13,6 +13,8 @@ import { SimResultCard } from "../components/SimResultCard";
 import { LiveWebCall, type LiveWebCallDoneResult } from "../components/LiveWebCall";
 import { PromptConfigurator } from "../components/PromptConfigurator";
 import { useAgentName } from "../context/AgentNameContext";
+import { RealRunPanel } from "../components/RealRunPanel";
+import { realEnv } from "./Simulations";
 
 interface Props {
   config: Config;
@@ -194,7 +196,28 @@ export function E2EChain({ config, onResults, chainResults }: Props) {
       </div>
 
       {/* ══════════ SMS CHAIN ══════════ */}
-      {channel === "sms" && (
+      {channel === "sms" && config.transport === "real" && (
+        <div className="bg-white border border-[#EAEAEA] rounded-xl p-5 mb-8">
+          <div className="text-[13px] font-bold text-[#111] mb-1">🧭 Patient Journey over Real Phone</div>
+          <div className="text-[12px] text-[#888] mb-4">
+            One patient identity, one real number: Book → Reschedule → Cancel as actual conversations
+            with the practice number. Everything registers in the ADIT app.
+          </div>
+          {realEnv(config.environment) ? (
+            <RealRunPanel
+              env={realEnv(config.environment)!}
+              kind="journey"
+              allowedTriggers={["incomplete_call", "missed_call", "inbound_sms"]}
+              buttonLabel="🧭 Run Patient Journey (3 phases)"
+            />
+          ) : (
+            <div className="text-[12.5px] text-[#92600A] bg-[#FFF7E6] border border-[#F5D998] rounded-lg px-3 py-2">
+              Real Phone transport supports Live (PROD) and Beta only — switch environment or use API Direct.
+            </div>
+          )}
+        </div>
+      )}
+      {channel === "sms" && config.transport !== "real" && (
         <>
           {error && (
             <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-[13px] text-red-600 mb-4">{error}</div>
@@ -205,7 +228,7 @@ export function E2EChain({ config, onResults, chainResults }: Props) {
             className="w-full flex items-center justify-center gap-2 bg-brand-500 hover:bg-brand-600 text-white font-semibold text-[14px] rounded-xl py-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed mb-8 shadow-sm"
           >
             <Play className="w-4 h-4" />
-            {running ? "Running Book → Reschedule → Cancel…" : "Run SMS Chain"}
+            {running ? "Running Book → Reschedule → Cancel…" : "⚡ Run SMS Chain (API direct)"}
           </button>
 
           {chainResults && (

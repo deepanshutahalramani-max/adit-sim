@@ -7,6 +7,14 @@ import { SimResultCard } from "../components/SimResultCard";
 import { ManualSMS } from "../components/ManualSMS";
 import { PromptConfigurator } from "../components/PromptConfigurator";
 import { RegisteredPatientCard } from "../components/RegisteredPatientCard";
+import { RealRunPanel } from "../components/RealRunPanel";
+
+/** Map sidebar environment to real-phone env ("dev" unsupported on real transport) */
+export function realEnv(environment: string): "beta" | "prod" | null {
+  if (environment === "live") return "prod";
+  if (environment === "beta") return "beta";
+  return null;
+}
 
 interface Props {
   config: Config;
@@ -144,8 +152,34 @@ export function Simulations({ config, appConfig, onResults, results }: Props) {
             </div>
           </div>
 
+          {/* ── REAL PHONE transport: shared run panel ── */}
+          {config.transport === "real" && (
+            <div className="bg-white border border-[#EAEAEA] rounded-xl p-5 mb-8">
+              <div className="text-[13px] font-bold text-[#111] mb-1">📱 Run over Real Phone</div>
+              <div className="text-[12px] text-[#888] mb-4">
+                Each selected scenario runs as a real call/SMS conversation with the practice number —
+                results register in the ADIT app. Existing-patient scenarios auto-book first.
+              </div>
+              {realEnv(config.environment) ? (
+                <RealRunPanel
+                  env={realEnv(config.environment)!}
+                  kind="suite"
+                  scenarioIds={selected}
+                  allowedTriggers={["incomplete_call", "missed_call", "inbound_sms"]}
+                  buttonLabel={`📱 Run ${selected.length} scenario${selected.length === 1 ? "" : "s"} over Real Phone`}
+                  disabled={selected.length === 0}
+                  disabledReason={selected.length === 0 ? "Select at least one scenario above." : undefined}
+                />
+              ) : (
+                <div className="text-[12.5px] text-[#92600A] bg-[#FFF7E6] border border-[#F5D998] rounded-lg px-3 py-2">
+                  Real Phone transport supports Live (PROD) and Beta only — switch environment or use API Direct.
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Options */}
-          <div className="flex gap-3 mb-4">
+          <div className="flex gap-3 mb-4" style={config.transport === "real" ? { display: "none" } : undefined}>
             <div className="bg-white border border-[#EAEAEA] rounded-xl p-4 flex-1">
               <label className="text-[10.5px] font-bold uppercase tracking-widest text-[#ADADAD] block mb-1.5">
                 Runs per scenario
@@ -164,8 +198,8 @@ export function Simulations({ config, appConfig, onResults, results }: Props) {
             </div>
           </div>
 
-          {/* ── Scenario Context (optional) ── */}
-          <div className="bg-white border border-[#EAEAEA] rounded-xl p-4 mb-4">
+          {/* ── Scenario Context (optional) — API transport only ── */}
+          <div className="bg-white border border-[#EAEAEA] rounded-xl p-4 mb-4" style={config.transport === "real" ? { display: "none" } : undefined}>
             <div className="flex items-center justify-between mb-2">
               <span className="text-[10.5px] font-bold uppercase tracking-widest text-[#ADADAD]">
                 Scenario Context <span className="normal-case font-normal text-[#ADADAD]">(optional)</span>
@@ -213,11 +247,13 @@ export function Simulations({ config, appConfig, onResults, results }: Props) {
             <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-[13px] text-red-600 mb-4">{error}</div>
           )}
 
-          <button onClick={handleRun} disabled={running}
-            className="w-full flex items-center justify-center gap-2 bg-brand-500 hover:bg-brand-600 text-white font-semibold text-[14px] rounded-xl py-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed mb-8 shadow-sm">
-            <Play className="w-4 h-4" />
-            {running ? "Running simulations…" : "Run Simulations"}
-          </button>
+          {config.transport !== "real" && (
+            <button onClick={handleRun} disabled={running}
+              className="w-full flex items-center justify-center gap-2 bg-brand-500 hover:bg-brand-600 text-white font-semibold text-[14px] rounded-xl py-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed mb-8 shadow-sm">
+              <Play className="w-4 h-4" />
+              {running ? "Running simulations…" : "⚡ Run Simulations (API direct)"}
+            </button>
+          )}
 
           {/* Stats + results */}
           {results.length > 0 && (

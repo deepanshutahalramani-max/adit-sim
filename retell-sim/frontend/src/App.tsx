@@ -39,6 +39,7 @@ export default function App() {
 
     return {
       environment: env,
+      transport: localStorage.getItem("adit_transport") ?? "real",
       apiBase: HOSTS[env] ?? HOSTS.live,
       agentPhone: phone,
       useLlmJudge: true,

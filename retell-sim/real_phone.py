@@ -469,7 +469,8 @@ VALID_TRIGGERS = ("missed_call", "incomplete_call", "inbound_sms", "inbound_call
 
 def _start_session(trigger_type: str, practice: str, scenario_id: str, env: str,
                    patient_number: str = "", opener: str = "", suite_id: str = "",
-                   mode: str = "auto") -> RealSession:
+                   mode: str = "auto", goal_override: str = "",
+                   label_override: str = "") -> RealSession:
     _ensure_watchdog()
     cfg = _resolve_scenario(scenario_id)
     srv = _sim()
@@ -489,9 +490,9 @@ def _start_session(trigger_type: str, practice: str, scenario_id: str, env: str,
         practice_number=practice,
         env=env,
         scenario_id=scenario_id,
-        goal=cfg["goal"],
+        goal=goal_override or cfg["goal"],
         persona_idx=cfg.get("persona_idx", 0),
-        scenario_label=cfg.get("label", scenario_id),
+        scenario_label=label_override or cfg.get("label", scenario_id),
         patient_name=f"{ident.get('first', '')} {ident.get('last', '')}".strip(),
         suite_id=suite_id,
         mode=mode,
@@ -671,7 +672,7 @@ def manual_end(session_id: str):
 @dataclass
 class SuiteRun:
     suite_id: str
-    kind: str                      # "suite" | "journey"
+    kind: str                      # "suite" | "journey" | "repro"
     scenario_ids: list
     trigger_type: str
     practice_number: str
@@ -680,6 +681,9 @@ class SuiteRun:
     current_idx: int = 0
     session_ids: list = field(default_factory=list)
     pinned_number: str = ""        # journeys pin one number for identity continuity
+    opener: str = ""               # repro override
+    goal: str = ""                 # repro override
+    label: str = ""                # repro override
     started_at: float = field(default_factory=time.time)
     finished_at: float = 0.0
 
@@ -709,8 +713,6 @@ def _run_suite(suite: SuiteRun) -> None:
 
         # Existing-patient scenarios: make sure this number has a booking first
         if sid in _NEEDS_BOOKING:
-            srv = _sim()
-            base = srv.PERSONAS[srv.SCENARIOS[sid].get("persona_idx", 0)]
             probe = pinned or _pick_patient_number(suite.practice_number, needs_existing=True)
             if probe and not _is_booked(probe, suite.practice_number):
                 try:
@@ -727,7 +729,9 @@ def _run_suite(suite: SuiteRun) -> None:
 
         try:
             session = _start_session(suite.trigger_type, suite.practice_number, sid, suite.env,
-                                     patient_number=pinned, suite_id=suite.suite_id)
+                                     patient_number=pinned, suite_id=suite.suite_id,
+                                     opener=suite.opener, goal_override=suite.goal,
+                                     label_override=suite.label)
         except Exception:
             continue
         suite.session_ids.append(session.session_id)
@@ -745,7 +749,11 @@ class SuiteRequest(BaseModel):
     trigger_type: str = "incomplete_call"
     env: str = "beta"
     practice_number: str = ""
-    kind: str = "suite"            # "suite" | "journey" (book → reschedule → cancel, one identity)
+    kind: str = "suite"     # "suite" | "journey" (book→reschedule→cancel) | "repro" (custom opener/goal × repeat)
+    opener: str = ""        # repro: custom first patient message
+    goal: str = ""          # repro: custom patient goal (e.g. "Reproduce: <root cause>")
+    label: str = ""         # repro: display label
+    repeat: int = 1         # repro: how many runs
 
 
 @router.post("/api/real/run-suite")
@@ -758,6 +766,8 @@ def real_run_suite(req: SuiteRequest):
 
     if req.kind == "journey":
         ids = ["new-patient-cleaning", "reschedule", "cancel"]
+    elif req.kind == "repro":
+        ids = ["new-patient-cleaning"] * max(1, min(req.repeat, 5))
     else:
         ids = req.scenario_ids or list(srv.SCENARIOS.keys())
         bad = [i for i in ids if i not in srv.SCENARIOS]
@@ -771,6 +781,9 @@ def real_run_suite(req: SuiteRequest):
         trigger_type=req.trigger_type,
         practice_number=practice,
         env=req.env,
+        opener=req.opener if req.kind == "repro" else "",
+        goal=req.goal if req.kind == "repro" else "",
+        label=req.label if req.kind == "repro" else "",
     )
     SUITES[suite.suite_id] = suite
     threading.Thread(target=_run_suite, args=(suite,), daemon=True).start()

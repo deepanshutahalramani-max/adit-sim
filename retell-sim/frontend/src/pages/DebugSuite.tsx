@@ -13,6 +13,8 @@ import { SimResultCard } from "../components/SimResultCard";
 import { LiveChat, type LiveChatDoneResult } from "../components/LiveChat";
 import { LiveWebCall, type LiveWebCallHandle } from "../components/LiveWebCall";
 import { PromptConfigurator } from "../components/PromptConfigurator";
+import { RealRunPanel } from "../components/RealRunPanel";
+import { realEnv } from "./Simulations";
 
 interface Props {
   config: Config;
@@ -624,6 +626,33 @@ export function DebugSuite({ config, onResults }: Props) {
               <div key={i} className="text-[13px] text-[#555] ml-4">↳ {f}</div>
             ))}
           </div>
+
+          {/* REAL PHONE transport: reproduce over an actual call/SMS conversation */}
+          {config.transport === "real" && mode === "sms" && (
+            <div className="bg-white border border-[#EAEAEA] rounded-xl p-4 mb-4">
+              <div className="text-[12.5px] font-bold text-[#111] mb-1">📱 Reproduce over Real Phone</div>
+              <div className="text-[11.5px] text-[#888] mb-3">
+                Runs the repro as a real SMS conversation with the practice number — the truest reproduction,
+                visible in the ADIT app. Run it up to 3× to confirm consistency.
+              </div>
+              {realEnv(config.environment) ? (
+                <RealRunPanel
+                  env={realEnv(config.environment)!}
+                  kind="repro"
+                  opener={diagnosis.repro_opener}
+                  goal={`Reproduce this bug: ${editedRootCause || diagnosis.root_cause}. Follow the scenario faithfully and observe whether the agent misbehaves.`}
+                  label={`🐛 Repro: ${(editedRootCause || diagnosis.root_cause).slice(0, 60)}`}
+                  repeat={2}
+                  allowedTriggers={["inbound_sms", "incomplete_call"]}
+                  buttonLabel="📱 Reproduce over Real Phone (2 runs)"
+                />
+              ) : (
+                <div className="text-[12.5px] text-[#92600A] bg-[#FFF7E6] border border-[#F5D998] rounded-lg px-3 py-2">
+                  Real Phone transport supports Live (PROD) and Beta only.
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Past runs badges */}
           {reproRuns.length > 0 && (

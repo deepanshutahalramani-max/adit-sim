@@ -79,6 +79,9 @@ export interface GeneratedScenario {
 /** Sidebar/config state shared across the whole app */
 export interface Config {
   environment: string; // "live" | "beta" | "dev"
+  /** How simulations run: "real" = actual Twilio calls/SMS to the practice number
+   *  (registers in the ADIT app); "api" = direct forward-to-agent API (fast, no app visibility) */
+  transport: string;   // "real" | "api"
   apiBase: string;
   agentPhone: string;
   useLlmJudge: boolean;
