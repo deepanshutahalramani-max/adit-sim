@@ -171,6 +171,39 @@ _SESSIONS_LOCK = threading.Lock()
 _COOLDOWNS: dict[str, float] = {}        # "patient|practice" → last conversation ts
 _BOOKED: dict[str, float] = {}           # "patient|practice" → ts of successful booking
 
+_SESSIONS_FILE = "/tmp/real_sessions.json"
+
+
+def _save_sessions() -> None:
+    """Persist finished sessions so QA history survives app restarts."""
+    try:
+        terminal = [asdict(s) for s in REAL_SESSIONS.values()
+                    if s.status in ("completed", "failed")]
+        terminal.sort(key=lambda d: d["created_at"], reverse=True)
+        with open(_SESSIONS_FILE, "w") as f:
+            json.dump(terminal[:200], f)
+    except Exception:
+        pass
+
+
+def _load_sessions() -> None:
+    try:
+        with open(_SESSIONS_FILE) as f:
+            items = json.load(f)
+        for d in items:
+            turns = [RealTurn(**t) for t in d.pop("turns", [])]
+            d.pop("avg_reply_latency_s", None)
+            d.pop("cooldown_remaining_s", None)
+            d.pop("recording_url", None)
+            s = RealSession(**{k: v for k, v in d.items() if k != "turns"})
+            s.turns = turns
+            REAL_SESSIONS[s.session_id] = s
+    except Exception:
+        pass
+
+
+_load_sessions()
+
 
 def _load_state() -> None:
     try:
@@ -327,7 +360,12 @@ def _finish(session: RealSession, status: str, outcome: str, note: str = "",
     _mark_cooldown(session.patient_number, session.practice_number)
     if status == "completed" and outcome == "booking_confirmed":
         _mark_booked(session.patient_number, session.practice_number)
-    threading.Thread(target=_judge_session, args=(session,), daemon=True).start()
+
+    def _judge_and_save():
+        _judge_session(session)
+        _save_sessions()
+
+    threading.Thread(target=_judge_and_save, daemon=True).start()
 
 
 def _check_completion(session: RealSession, agent_msg: str) -> bool:
@@ -1001,11 +1039,15 @@ async def twilio_sms_status(request: Request):
 # ── Voice conversation loop (inbound_call) ───────────────────────────────────
 
 def _gather(session_id: str, say: str = "") -> str:
+    # speechTimeout=3 (not "auto"): the AI Front Desk speaks long sentences with
+    # natural pauses — "auto" chopped its speech mid-sentence and we replied to
+    # fragments, talking over the agent (observed live). 3s of silence = real
+    # end of the agent's turn. timeout=18 covers PBX forwarding + greeting delay.
     say_xml = f'<Say voice="Polly.Joanna">{xml_escape(say)}</Say>' if say else ""
     return (
         f"{say_xml}"
         f'<Gather input="speech" action="{PUBLIC_BASE}/api/twilio/voice-turn?session_id={session_id}" '
-        f'method="POST" speechTimeout="auto" timeout="12" actionOnEmptyResult="true" language="en-US"/>'
+        f'method="POST" speechTimeout="3" timeout="18" actionOnEmptyResult="true" language="en-US"/>'
         f"<Hangup/>"
     )
 
@@ -1028,15 +1070,19 @@ async def twilio_voice_turn(request: Request, session_id: str = ""):
 
     form = await request.form()
     agent_speech = str(form.get("SpeechResult", "")).strip()
+    n_patient_turns = sum(1 for t in s.turns if t.role == "patient")
 
     if agent_speech:
+        s._empty_gathers = 0  # reset dead-air counter on real speech
         now = time.time()
         latency = round(now - s.awaiting_reply_since, 1) if s.awaiting_reply_since else 0.0
         s.turns.append(RealTurn("agent", agent_speech, "voice", latency_s=latency))
         s.awaiting_reply_since = 0.0
         s.log("Agent voice turn captured")
 
-        if _check_completion(s, agent_speech):
+        # Completion only after a genuine exchange — keyword hits inside the
+        # agent's greeting/questions caused premature hangups (observed live).
+        if n_patient_turns >= 3 and _check_completion(s, agent_speech):
             return _twiml('<Say voice="Polly.Joanna">Great, thank you so much. Bye!</Say><Hangup/>')
 
         try:
@@ -1047,10 +1093,17 @@ async def twilio_voice_turn(request: Request, session_id: str = ""):
 
         s.turns.append(RealTurn("patient", reply, "voice"))
         s.awaiting_reply_since = time.time()
-        n_patient_turns = sum(1 for t in s.turns if t.role == "patient")
-        if should_end or n_patient_turns >= MAX_SMS_TURNS:
+        if (should_end and n_patient_turns >= 3) or n_patient_turns + 1 >= MAX_SMS_TURNS:
             _finish(s, "completed", s.outcome or "booking_confirmed", "Voice goal reached")
             return _twiml(f'<Say voice="Polly.Joanna">{xml_escape(reply)}</Say><Hangup/>')
         return _twiml(_gather(session_id, say=reply))
 
+    # Empty gather — agent silent or still connecting. Allow a few, then end
+    # the call cleanly instead of looping forever on dead air.
+    s._empty_gathers = getattr(s, "_empty_gathers", 0) + 1
+    s.log(f"empty gather #{s._empty_gathers}")
+    if s._empty_gathers >= 4:
+        _finish(s, "failed", "incomplete", "Call dead air — 4 empty listens, hanging up",
+                failure_type="error")
+        return _twiml("<Hangup/>")
     return _twiml(_gather(session_id))

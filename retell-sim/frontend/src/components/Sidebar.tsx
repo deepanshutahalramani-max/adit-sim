@@ -49,36 +49,12 @@ export function Sidebar({ config, onChange, agentName = "—" }: Props) {
 
       <div className="flex-1 px-5 py-4 overflow-y-auto">
 
-        {/* ── Transport: how simulations run ── */}
-        <div className="mb-4">
-          <Label>Simulation Transport</Label>
-          <div className="grid grid-cols-2 gap-1.5">
-            {([
-              { id: "real", icon: "📱", label: "Real Phone", desc: "Actual calls & SMS" },
-              { id: "api",  icon: "⚡", label: "API Direct", desc: "Fast, no app data" },
-            ] as const).map(t => (
-              <button
-                key={t.id}
-                onClick={() => {
-                  localStorage.setItem("adit_transport", t.id);
-                  set("transport", t.id);
-                }}
-                className={`text-left px-2.5 py-2 rounded-lg border-2 transition-all ${
-                  config.transport === t.id
-                    ? "border-brand-500 bg-brand-50"
-                    : "border-[#E5E5E5] bg-white hover:border-[#D0D0D0]"
-                }`}
-              >
-                <div className="text-[12px] font-bold text-[#111]">{t.icon} {t.label}</div>
-                <div className="text-[10px] text-[#888] leading-tight">{t.desc}</div>
-              </button>
-            ))}
+        {/* ── Real phone badge ── */}
+        <div className="mb-4 bg-brand-50 border border-brand-200 rounded-lg px-3 py-2.5">
+          <div className="text-[12px] font-bold text-[#111]">📱 Real Phone Testing</div>
+          <div className="text-[10.5px] text-[#888] leading-snug mt-0.5">
+            Every test is an actual call or SMS to the practice number — conversations appear in the ADIT app.
           </div>
-          <p className="text-[10.5px] text-[#ADADAD] mt-1.5 leading-snug">
-            {config.transport === "real"
-              ? "Tests run as real calls/SMS to the practice number — conversations appear in the ADIT app."
-              : "Tests call ADIT's API directly — fast, but conversations don't appear in the ADIT app."}
-          </p>
         </div>
 
         {/* ── Environment selector (top-level, always visible) ── */}

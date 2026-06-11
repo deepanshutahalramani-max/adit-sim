@@ -1,28 +1,18 @@
 /**
- * SimulationsHub — unified entry point for all agent testing.
+ * SimulationsHub — unified entry point for agent testing over REAL phone.
  *
- * Top-level toggle: 📱 SMS  |  📞 Call
- *
- * SMS  → Manual Chat (real agent) | AI Simulation (automated, real agent)
- * Call → Manual Call (real agent) | AI Caller (real agent, GPT+TTS) | AI Sim (LLM-to-LLM batch)
- *
- * Both channels share the same design language and feature parity:
- *   - "Manual" mode: you interact directly with the real agent
- *   - "AI" mode: automated AI patient drives the conversation
+ * 📱 SMS  → AI-driven scenario runs + manual chat console (real SMS)
+ * 📞 Call → real voice calls with live transcript + recordings
  */
 import { useState } from "react";
 import { MessageSquare, Phone } from "lucide-react";
-import type { Config, AppConfig, SimResult } from "../types";
+import type { Config, AppConfig } from "../types";
 import { Simulations } from "./Simulations";
 import { CallSimulations } from "./CallSimulations";
 
 interface Props {
   config: Config;
   appConfig?: AppConfig;
-  onSmsResults: (rs: SimResult[]) => void;
-  smsResults: SimResult[];
-  onCallResults: (rs: SimResult[]) => void;
-  callResults: SimResult[];
 }
 
 type Channel = "sms" | "call";
@@ -33,24 +23,18 @@ const CHANNELS = [
     icon: MessageSquare,
     label: "SMS",
     badge: "Text agent",
-    color: "brand",
-    desc: "Test the SMS text agent — manual or AI-driven conversations.",
+    desc: "Real SMS conversations with the practice number — AI-driven or manual.",
   },
   {
     id: "call" as Channel,
     icon: Phone,
     label: "Call",
     badge: "Voice agent",
-    color: "dark",
-    desc: "Test the voice call agent — live WebRTC or LLM-to-LLM simulation.",
+    desc: "Real phone calls — the AI Front Desk answers, every call recorded.",
   },
 ];
 
-export function SimulationsHub({
-  config, appConfig,
-  onSmsResults, smsResults,
-  onCallResults, callResults,
-}: Props) {
+export function SimulationsHub({ config, appConfig }: Props) {
   const [channel, setChannel] = useState<Channel>("sms");
 
   return (
@@ -61,7 +45,8 @@ export function SimulationsHub({
           Simulations
         </h1>
         <p className="text-[13.5px] text-[#888]">
-          Test your AI agent manually or with an AI patient — across SMS and voice call.
+          Every test is a real call or SMS to the practice number — exactly the path a real patient takes,
+          fully visible in the ADIT app.
         </p>
       </div>
 
@@ -76,7 +61,7 @@ export function SimulationsHub({
               onClick={() => setChannel(ch.id)}
               className={`
                 flex items-center gap-3 px-5 py-3.5 rounded-2xl border-2 transition-all
-                text-left flex-1 max-w-[260px]
+                text-left flex-1 max-w-[280px]
                 ${active
                   ? ch.id === "sms"
                     ? "border-brand-500 bg-brand-50 shadow-sm"
@@ -121,22 +106,8 @@ export function SimulationsHub({
       </div>
 
       {/* ── Channel content ── */}
-      {channel === "sms" && (
-        <Simulations
-          config={config}
-          appConfig={appConfig}
-          onResults={onSmsResults}
-          results={smsResults}
-        />
-      )}
-      {channel === "call" && (
-        <CallSimulations
-          config={config}
-          appConfig={appConfig}
-          onResults={onCallResults}
-          results={callResults}
-        />
-      )}
+      {channel === "sms"  && <Simulations config={config} appConfig={appConfig} />}
+      {channel === "call" && <CallSimulations config={config} appConfig={appConfig} />}
     </div>
   );
 }

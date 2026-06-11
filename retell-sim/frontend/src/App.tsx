@@ -8,21 +8,18 @@ import { SimulationsHub } from "./pages/SimulationsHub";
 import { E2EChain } from "./pages/E2EChain";
 import { DebugSuite } from "./pages/DebugSuite";
 import { Dashboard } from "./pages/Dashboard";
-import { RealPhone } from "./pages/RealPhone";
-import type { SimResult } from "./types";
 
 const TABS = [
   { id: "debug",       label: "🔍 Debug Suite" },
   { id: "simulations", label: "💬 Simulations" },
-  { id: "realphone",   label: "📱 Real Phone" },
-  { id: "chain",       label: "E2E Chain" },
-  { id: "dashboard",   label: "Dashboard" },
+  { id: "chain",       label: "🧭 Patient Journey" },
+  { id: "dashboard",   label: "📊 Dashboard" },
 ] as const;
 
 type TabId = typeof TABS[number]["id"];
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<TabId>("debug");
+  const [activeTab, setActiveTab] = useState<TabId>("simulations");
   const [config, setConfig] = useState<Config>(() => {
     const HOSTS: Record<string, string> = {
       live: "https://frontdeskchatagent.adit.com",
@@ -39,22 +36,16 @@ export default function App() {
 
     return {
       environment: env,
-      transport: localStorage.getItem("adit_transport") ?? "real",
       apiBase: HOSTS[env] ?? HOSTS.live,
       agentPhone: phone,
       useLlmJudge: true,
       smsAgentId:  smsAgentId  || undefined,
       callAgentId: callAgentId || undefined,
-      // bearer/openai now resolved server-side; keep empty so API calls stay compatible
+      // bearer/openai resolved server-side; kept for API call compatibility
       bearerToken: "",
       openaiKey:   "",
     };
   });
-
-  // Results tracked separately per channel
-  const [smsResults, setSmsResults]   = useState<SimResult[]>([]);
-  const [callResults, setCallResults] = useState<SimResult[]>([]);
-  const [chainResults, setChainResults] = useState<Record<string, SimResult> | null>(null);
 
   const { data: appConfig } = useQuery({ queryKey: ["config"], queryFn: fetchConfig });
 
@@ -87,18 +78,6 @@ export default function App() {
   // Persona name ("Cimo") > dashboard name ("Test Agents…") > fallback
   const agentName = agentInfo?.persona_name || agentInfo?.call_agent_name || agentInfo?.sms_agent_name || "—";
 
-  const handleSmsResults = (rs: SimResult[]) => {
-    if (rs.length === 0) setSmsResults([]);
-    else setSmsResults(prev => [...rs, ...prev]);
-  };
-  const handleCallResults = (rs: SimResult[]) => {
-    if (rs.length === 0) setCallResults([]);
-    else setCallResults(prev => [...rs, ...prev]);
-  };
-
-  // Dashboard gets all results combined
-  const allResults = [...smsResults, ...callResults];
-
   return (
     <AgentNameContext.Provider value={agentName}>
     <div className="flex h-screen bg-[#FAFAF8] overflow-hidden">
@@ -124,7 +103,7 @@ export default function App() {
             </div>
             <div>
               <div className="text-xl font-extrabold text-[#111] leading-tight tracking-tight">Agent QA Platform</div>
-              <div className="text-[13px] text-[#ADADAD] mt-0.5">AI Front Desk · Simulate, test and evaluate your receptionist</div>
+              <div className="text-[13px] text-[#ADADAD] mt-0.5">AI Front Desk · Real calls & SMS, exactly like a patient</div>
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -161,32 +140,10 @@ export default function App() {
         {/* Page content */}
         <main className="flex-1 overflow-auto px-8 py-8">
           <div className="max-w-[1160px] mx-auto">
-            {activeTab === "debug" && (
-              <DebugSuite config={config} onResults={handleSmsResults} />
-            )}
-            {activeTab === "simulations" && (
-              <SimulationsHub
-                config={config}
-                appConfig={appConfig}
-                onSmsResults={handleSmsResults}
-                smsResults={smsResults}
-                onCallResults={handleCallResults}
-                callResults={callResults}
-              />
-            )}
-            {activeTab === "realphone" && (
-              <RealPhone />
-            )}
-            {activeTab === "chain" && (
-              <E2EChain
-                config={config}
-                onResults={(rs) => { setChainResults(rs); handleSmsResults(Object.values(rs)); }}
-                chainResults={chainResults}
-              />
-            )}
-            {activeTab === "dashboard" && (
-              <Dashboard results={allResults} chainResults={chainResults} />
-            )}
+            {activeTab === "debug"       && <DebugSuite config={config} onResults={() => {}} />}
+            {activeTab === "simulations" && <SimulationsHub config={config} appConfig={appConfig} />}
+            {activeTab === "chain"       && <E2EChain config={config} />}
+            {activeTab === "dashboard"   && <Dashboard />}
           </div>
         </main>
       </div>

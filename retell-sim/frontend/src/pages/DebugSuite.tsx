@@ -178,8 +178,8 @@ export function DebugSuite({ config, onResults }: Props) {
     setDiagnosis(updated);
     setSmsReproRuns([]);
     setCallReproRuns([]);
-    setCurrentRunId(1);
-    setStreamKey(k => k + 1);
+    // Repro now runs over the REAL phone path (panel in the reproducing step) —
+    // no auto-started API stream.
     setStep("reproducing");
   };
 
@@ -627,32 +627,32 @@ export function DebugSuite({ config, onResults }: Props) {
             ))}
           </div>
 
-          {/* REAL PHONE transport: reproduce over an actual call/SMS conversation */}
-          {config.transport === "real" && mode === "sms" && (
-            <div className="bg-white border border-[#EAEAEA] rounded-xl p-4 mb-4">
-              <div className="text-[12.5px] font-bold text-[#111] mb-1">📱 Reproduce over Real Phone</div>
-              <div className="text-[11.5px] text-[#888] mb-3">
-                Runs the repro as a real SMS conversation with the practice number — the truest reproduction,
-                visible in the ADIT app. Run it up to 3× to confirm consistency.
-              </div>
-              {realEnv(config.environment) ? (
-                <RealRunPanel
-                  env={realEnv(config.environment)!}
-                  kind="repro"
-                  opener={diagnosis.repro_opener}
-                  goal={`Reproduce this bug: ${editedRootCause || diagnosis.root_cause}. Follow the scenario faithfully and observe whether the agent misbehaves.`}
-                  label={`🐛 Repro: ${(editedRootCause || diagnosis.root_cause).slice(0, 60)}`}
-                  repeat={2}
-                  allowedTriggers={["inbound_sms", "incomplete_call"]}
-                  buttonLabel="📱 Reproduce over Real Phone (2 runs)"
-                />
-              ) : (
-                <div className="text-[12.5px] text-[#92600A] bg-[#FFF7E6] border border-[#F5D998] rounded-lg px-3 py-2">
-                  Real Phone transport supports Live (PROD) and Beta only.
-                </div>
-              )}
+          {/* Reproduce over an actual call/SMS conversation — the only repro path */}
+          <div className="bg-white border border-[#EAEAEA] rounded-xl p-4 mb-4">
+            <div className="text-[12.5px] font-bold text-[#111] mb-1">
+              {mode === "call" ? "🎙️ Reproduce over a real call" : "📱 Reproduce over real SMS"}
             </div>
-          )}
+            <div className="text-[11.5px] text-[#888] mb-3">
+              Runs the repro as a real {mode === "call" ? "phone call" : "SMS conversation"} with the
+              practice number — the truest reproduction, visible in the ADIT app. 2 runs to confirm consistency.
+            </div>
+            {realEnv(config.environment) ? (
+              <RealRunPanel
+                env={realEnv(config.environment)!}
+                kind="repro"
+                opener={diagnosis.repro_opener}
+                goal={`Reproduce this bug: ${editedRootCause || diagnosis.root_cause}. Follow the scenario faithfully and observe whether the agent misbehaves.`}
+                label={`🐛 Repro: ${(editedRootCause || diagnosis.root_cause).slice(0, 60)}`}
+                repeat={2}
+                allowedTriggers={mode === "call" ? ["inbound_call"] : ["inbound_sms", "incomplete_call"]}
+                buttonLabel={mode === "call" ? "🎙️ Reproduce over real calls (2 runs)" : "📱 Reproduce over real SMS (2 runs)"}
+              />
+            ) : (
+              <div className="text-[12.5px] text-[#92600A] bg-[#FFF7E6] border border-[#F5D998] rounded-lg px-3 py-2">
+                Real-phone testing supports Live (PROD) and Beta only.
+              </div>
+            )}
+          </div>
 
           {/* Past runs badges */}
           {reproRuns.length > 0 && (

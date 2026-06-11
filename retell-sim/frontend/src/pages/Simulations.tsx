@@ -1,15 +1,18 @@
-import { useState, useRef } from "react";
-import { Play, Trash2, Paperclip, X } from "lucide-react";
-import { runParallel, extractContextFromImage } from "../api";
-import { useQueryClient } from "@tanstack/react-query";
-import type { Config, AppConfig, SimResult } from "../types";
-import { SimResultCard } from "../components/SimResultCard";
-import { ManualSMS } from "../components/ManualSMS";
+/**
+ * Simulations → SMS — everything runs over REAL phone calls/SMS.
+ *
+ * AI Simulation: pick scenarios → each runs as a real conversation with the
+ *   practice number (entry point: incomplete call / missed call / inbound SMS).
+ * Manual Chat: you drive the patient side over real SMS through the platform.
+ */
+import { useState } from "react";
+import type { Config, AppConfig } from "../types";
 import { PromptConfigurator } from "../components/PromptConfigurator";
-import { RegisteredPatientCard } from "../components/RegisteredPatientCard";
 import { RealRunPanel } from "../components/RealRunPanel";
+import { RealManualConsole } from "../components/RealManualConsole";
+import { IdentityBoard } from "../components/RealOps";
 
-/** Map sidebar environment to real-phone env ("dev" unsupported on real transport) */
+/** Map sidebar environment to real-phone env */
 export function realEnv(environment: string): "beta" | "prod" | null {
   if (environment === "live") return "prod";
   if (environment === "beta") return "beta";
@@ -19,89 +22,36 @@ export function realEnv(environment: string): "beta" | "prod" | null {
 interface Props {
   config: Config;
   appConfig?: AppConfig;
-  onResults: (rs: SimResult[]) => void;
-  results: SimResult[];
 }
 
 type SubTab = "ai" | "manual";
 
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="bg-white border border-brand-500 rounded-xl px-5 py-4 shadow-sm">
-      <div className="text-[10.5px] font-bold uppercase tracking-widest text-[#ADADAD] mb-1">{label}</div>
-      <div className="text-[30px] font-extrabold text-[#111] leading-none tracking-tight">{value}</div>
-    </div>
-  );
-}
-
-export function Simulations({ config, appConfig, onResults, results }: Props) {
+export function Simulations({ config, appConfig }: Props) {
   const scenarios = appConfig?.scenarios ?? [];
-  const [subTab, setSubTab]     = useState<SubTab>("ai");
+  const [subTab, setSubTab] = useState<SubTab>("ai");
   const [selected, setSelected] = useState<string[]>([]);
-  const [repeats, setRepeats]   = useState(1);
-  const [parallel, setParallel] = useState(5);
-  const [running, setRunning]   = useState(false);
-  const [error, setError]       = useState("");
-  const qc = useQueryClient();
-
-  /* ── Scenario context ── */
-  const [simContext, setSimContext]      = useState("");
-  const [contextFile, setContextFile]   = useState<File | null>(null);
-  const [extracting, setExtracting]     = useState(false);
-  const [extractError, setExtractError] = useState("");
-  const contextFileRef                   = useRef<HTMLInputElement>(null);
-
-  const handleContextFile = async (file: File) => {
-    setContextFile(file);
-    setExtractError("");
-    setExtracting(true);
-    try {
-      const { context } = await extractContextFromImage(file, config.openaiKey);
-      setSimContext(prev => prev ? `${prev}\n\n[From screenshot]: ${context}` : context);
-    } catch (e) {
-      setExtractError(e instanceof Error ? e.message : "Failed to extract context");
-    } finally {
-      setExtracting(false);
-    }
-  };
+  const env = realEnv(config.environment);
 
   const toggleScenario = (id: string) =>
     setSelected(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
   const toggleAll = () =>
     setSelected(s => s.length === scenarios.length ? [] : scenarios.map(s => s.id));
 
-  const handleRun = async () => {
-    if (selected.length === 0) { setError("Select at least one scenario."); return; }
-    setError(""); setRunning(true);
-    try {
-      const res = await runParallel({
-        scenario_ids: selected, repeats, max_parallel: parallel,
-        api_base: config.apiBase, bearer_token: config.bearerToken,
-        agent_phone: config.agentPhone, openai_key: config.openaiKey,
-        use_judge: config.useLlmJudge,
-        extra_context: simContext,
-      });
-      onResults(res.results);
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Run failed");
-    } finally {
-      setRunning(false);
-      // Refresh registered patient in case a new-patient booking just ran
-      qc.invalidateQueries({ queryKey: ["registeredPatient"] });
-    }
-  };
-
-  const nPass    = results.filter(r => r.passed).length;
-  const avgScore = results.length ? Math.round(results.reduce((a, b) => a + b.score, 0) / results.length) : 0;
-  const avgMs    = results.length ? results.reduce((a, b) => a + b.total_ms, 0) / results.length : 0;
+  if (!env) {
+    return (
+      <div className="text-[13px] text-[#92600A] bg-[#FFF7E6] border border-[#F5D998] rounded-2xl p-6">
+        Real-phone testing supports <b>Live (PROD)</b> and <b>Beta</b> — switch the environment in the sidebar.
+      </div>
+    );
+  }
 
   return (
     <div>
       {/* Sub-tab bar */}
       <div className="flex border-b border-[#EAEAEA] mb-6">
         {([
-          { id: "ai",     label: "🤖  AI Simulation",  desc: "Automated, real agent" },
-          { id: "manual", label: "✏️  Manual Chat",     desc: "You as patient, real agent" },
+          { id: "ai",     label: "🤖  AI Simulation" },
+          { id: "manual", label: "✏️  Manual Chat" },
         ] as const).map(t => (
           <button
             key={t.id}
@@ -117,19 +67,15 @@ export function Simulations({ config, appConfig, onResults, results }: Props) {
         ))}
       </div>
 
-      {/* ══════════ AI SIMULATION TAB ══════════ */}
       {subTab === "ai" && (
-        <>
-          {/* Prompt configurator — toggles update resolved prompt live */}
-          <div className="mb-4">
-            <PromptConfigurator agentPhone={config.agentPhone} agentId={config.smsAgentId} apiBase={config.apiBase} />
-          </div>
+        <div className="space-y-4">
+          <PromptConfigurator agentPhone={config.agentPhone} agentId={config.smsAgentId} apiBase={config.apiBase} />
 
-          {/* ── Registered Patient ── */}
-          <RegisteredPatientCard />
+          {/* Patient test numbers */}
+          <IdentityBoard env={env} />
 
           {/* Scenario picker */}
-          <div className="bg-white border border-[#EAEAEA] rounded-xl p-5 mb-4">
+          <div className="bg-white border border-[#EAEAEA] rounded-xl p-5">
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-[13px] font-semibold text-[#333]">Scenarios</h2>
               <button onClick={toggleAll} className="text-[12px] text-brand-500 font-medium hover:text-brand-600">
@@ -152,160 +98,27 @@ export function Simulations({ config, appConfig, onResults, results }: Props) {
             </div>
           </div>
 
-          {/* ── REAL PHONE transport: shared run panel ── */}
-          {config.transport === "real" && (
-            <div className="bg-white border border-[#EAEAEA] rounded-xl p-5 mb-8">
-              <div className="text-[13px] font-bold text-[#111] mb-1">📱 Run over Real Phone</div>
-              <div className="text-[12px] text-[#888] mb-4">
-                Each selected scenario runs as a real call/SMS conversation with the practice number —
-                results register in the ADIT app. Existing-patient scenarios auto-book first.
-              </div>
-              {realEnv(config.environment) ? (
-                <RealRunPanel
-                  env={realEnv(config.environment)!}
-                  kind="suite"
-                  scenarioIds={selected}
-                  allowedTriggers={["incomplete_call", "missed_call", "inbound_sms"]}
-                  buttonLabel={`📱 Run ${selected.length} scenario${selected.length === 1 ? "" : "s"} over Real Phone`}
-                  disabled={selected.length === 0}
-                  disabledReason={selected.length === 0 ? "Select at least one scenario above." : undefined}
-                />
-              ) : (
-                <div className="text-[12.5px] text-[#92600A] bg-[#FFF7E6] border border-[#F5D998] rounded-lg px-3 py-2">
-                  Real Phone transport supports Live (PROD) and Beta only — switch environment or use API Direct.
-                </div>
-              )}
+          {/* Run over real phone */}
+          <div className="bg-white border border-[#EAEAEA] rounded-xl p-5">
+            <div className="text-[13px] font-bold text-[#111] mb-1">📱 Run as real conversations</div>
+            <div className="text-[12px] text-[#888] mb-4">
+              Each scenario runs as a real call/SMS conversation with the practice number — results
+              register in the ADIT app. Existing-patient scenarios auto-book the patient first.
             </div>
-          )}
-
-          {/* Options */}
-          <div className="flex gap-3 mb-4" style={config.transport === "real" ? { display: "none" } : undefined}>
-            <div className="bg-white border border-[#EAEAEA] rounded-xl p-4 flex-1">
-              <label className="text-[10.5px] font-bold uppercase tracking-widest text-[#ADADAD] block mb-1.5">
-                Runs per scenario
-              </label>
-              <input type="number" min={1} max={5} value={repeats}
-                onChange={e => setRepeats(+e.target.value)}
-                className="w-20 border border-[#E5E5E5] rounded-lg px-3 py-1.5 text-[13px] focus:outline-none focus:border-brand-500" />
-            </div>
-            <div className="bg-white border border-[#EAEAEA] rounded-xl p-4 flex-1">
-              <label className="text-[10.5px] font-bold uppercase tracking-widest text-[#ADADAD] block mb-1.5">
-                Max parallel
-              </label>
-              <input type="number" min={1} max={10} value={parallel}
-                onChange={e => setParallel(+e.target.value)}
-                className="w-20 border border-[#E5E5E5] rounded-lg px-3 py-1.5 text-[13px] focus:outline-none focus:border-brand-500" />
-            </div>
-          </div>
-
-          {/* ── Scenario Context (optional) — API transport only ── */}
-          <div className="bg-white border border-[#EAEAEA] rounded-xl p-4 mb-4" style={config.transport === "real" ? { display: "none" } : undefined}>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[10.5px] font-bold uppercase tracking-widest text-[#ADADAD]">
-                Scenario Context <span className="normal-case font-normal text-[#ADADAD]">(optional)</span>
-              </span>
-              {simContext && (
-                <button onClick={() => { setSimContext(""); setContextFile(null); setExtractError(""); }}
-                  className="flex items-center gap-1 text-[11px] text-[#ADADAD] hover:text-red-500 transition-colors">
-                  <X className="w-3 h-3" /> Clear
-                </button>
-              )}
-            </div>
-            <div className="text-[11px] text-[#ADADAD] mb-2">
-              Describe the patient or scenario — the AI patient will use this context during the simulation.
-            </div>
-            <textarea
-              value={simContext}
-              onChange={e => setSimContext(e.target.value)}
-              placeholder="e.g. Patient is calling about a broken crown, anxious about cost, has United Concordia insurance and wants to be seen today."
-              rows={3}
-              className="w-full text-[12px] border border-[#E5E5E5] rounded-lg px-3 py-2 resize-none focus:outline-none focus:border-brand-400 mb-2"
+            <RealRunPanel
+              env={env}
+              kind="suite"
+              scenarioIds={selected}
+              allowedTriggers={["incomplete_call", "missed_call", "inbound_sms"]}
+              buttonLabel={`📱 Run ${selected.length} scenario${selected.length === 1 ? "" : "s"}`}
+              disabled={selected.length === 0}
+              disabledReason={selected.length === 0 ? "Select at least one scenario above." : undefined}
             />
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => contextFileRef.current?.click()}
-                disabled={extracting}
-                className="flex items-center gap-1.5 text-[11.5px] font-medium text-[#555] border border-[#E5E5E5] rounded-lg px-3 py-1.5 hover:border-[#ADADAD] disabled:opacity-50 transition-colors bg-white"
-              >
-                <Paperclip className="w-3.5 h-3.5" />
-                {extracting ? "Extracting…" : contextFile ? contextFile.name : "Upload screenshot"}
-              </button>
-              {contextFile && !extracting && (
-                <button onClick={() => { setContextFile(null); if (contextFileRef.current) contextFileRef.current.value = ""; }}
-                  className="text-[11px] text-[#ADADAD] hover:text-red-500 transition-colors">
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              )}
-              <span className="text-[10.5px] text-[#ADADAD]">GPT-4o will extract scenario details from the image</span>
-              <input ref={contextFileRef} type="file" accept="image/*" className="hidden"
-                onChange={e => { const f = e.target.files?.[0]; if (f) handleContextFile(f); }} />
-            </div>
-            {extractError && <div className="text-[11px] text-red-500 mt-1">{extractError}</div>}
-          </div>
-
-          {error && (
-            <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-[13px] text-red-600 mb-4">{error}</div>
-          )}
-
-          {config.transport !== "real" && (
-            <button onClick={handleRun} disabled={running}
-              className="w-full flex items-center justify-center gap-2 bg-brand-500 hover:bg-brand-600 text-white font-semibold text-[14px] rounded-xl py-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed mb-8 shadow-sm">
-              <Play className="w-4 h-4" />
-              {running ? "Running simulations…" : "⚡ Run Simulations (API direct)"}
-            </button>
-          )}
-
-          {/* Stats + results */}
-          {results.length > 0 && (
-            <>
-              <div className="grid grid-cols-3 gap-3 mb-6">
-                <Stat label="Pass Rate" value={`${nPass}/${results.length} (${Math.round(100 * nPass / results.length)}%)`} />
-                <Stat label="Avg Score" value={`${avgScore}/100`} />
-                <Stat label="Avg Time"  value={`${(avgMs / 1000).toFixed(1)}s`} />
-              </div>
-              <div className="flex items-center justify-between mb-3">
-                <div className="text-[10.5px] font-bold uppercase tracking-widest text-[#ADADAD]">
-                  Results ({results.length})
-                </div>
-                <button onClick={() => onResults([])}
-                  className="flex items-center gap-1.5 text-[12px] text-[#888] hover:text-red-600 transition-colors">
-                  <Trash2 className="w-3.5 h-3.5" /> Clear
-                </button>
-              </div>
-              {results.slice(0, 30).map((r, i) => (
-                <SimResultCard key={`${r.scenario}-${r.patient_phone}-${i}`} result={r} defaultExpanded={false} />
-              ))}
-            </>
-          )}
-        </>
-      )}
-
-      {/* ══════════ MANUAL CHAT TAB ══════════ */}
-      {subTab === "manual" && (
-        <div>
-          <div className="mb-4">
-            <h2 className="text-[14px] font-bold text-[#111] mb-1">Manual SMS Chat</h2>
-            <p className="text-[13px] text-[#888] leading-relaxed">
-              Type as a patient — your messages go directly to the <strong>real SMS agent</strong> via the ADIT backend.
-              Exactly what a real patient texting in would experience.
-            </p>
-          </div>
-          <ManualSMS config={{
-            apiBase: config.apiBase,
-            bearerToken: "",
-            agentPhone: config.agentPhone,
-          }} />
-          <div className="mt-4 bg-[#F8F8F6] border border-[#EAEAEA] rounded-xl px-4 py-3">
-            <div className="text-[10px] font-bold uppercase tracking-widest text-[#ADADAD] mb-1.5">How it works</div>
-            <div className="text-[12.5px] text-[#555] leading-relaxed space-y-1">
-              <div>• Each conversation gets a unique patient phone number (auto-generated)</div>
-              <div>• Messages proxy through <code className="bg-white border border-[#E5E5E5] rounded px-1 text-[11px]">/engage/forward-to-agent</code> — same endpoint real patients use</div>
-              <div>• API events (booking called, patient lookup, etc.) appear as blue pills above each response</div>
-              <div>• Hit <strong>New</strong> to start a fresh conversation with a new phone number</div>
-            </div>
           </div>
         </div>
       )}
+
+      {subTab === "manual" && <RealManualConsole env={env} />}
     </div>
   );
 }

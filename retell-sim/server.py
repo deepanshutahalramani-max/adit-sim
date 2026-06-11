@@ -129,11 +129,14 @@ BOOKING_CONFIRMED_KWS = [
     "successfully rescheduled", "updated your appointment",
     "appointment has been cancelled", "successfully cancelled",
     "appointment has been canceled",
-    # Additional patterns the agent commonly uses
-    "is booked for", "appointment for", "booked for",
+    # Additional patterns the agent commonly uses.
+    # IMPORTANT: keep these UNAMBIGUOUS — loose substrings like "appointment for"
+    # match agent QUESTIONS ("Is this appointment for you?") and caused false
+    # completions where the sim hung up mid-conversation (seen live on voice).
+    "is booked for", "are booked for",
     "you're booked", "you are booked", "got you booked",
-    "appointment is set", "see you on", "see you then",
-    "appointment is scheduled", "we have you scheduled",
+    "appointment is set", "appointment is scheduled",
+    "we have you scheduled", "we'll see you on", "we will see you on",
 ]
 TASK_CREATED_KWS = [
     "i've created a note", "i have created a note", "created a note for the team",
@@ -501,7 +504,9 @@ def smart_patient_reply(agent_msg, persona, history, goal, oai_key, patient_phon
         agent_lower = agent_msg.lower()
         if any(ph in agent_lower for ph in TASK_TRIGGER_PHRASES):
             return "Yes please", False
-        if any(kw in agent_lower for kw in ALL_SUCCESS_KWS):
+        # Success shortcut only after a real exchange — early keyword hits on
+        # greeting/question fragments caused premature "Great, thanks! Bye".
+        if len(history) >= 4 and any(kw in agent_lower for kw in ALL_SUCCESS_KWS):
             return "Great, thanks!", True
 
         recent = history[-10:]
