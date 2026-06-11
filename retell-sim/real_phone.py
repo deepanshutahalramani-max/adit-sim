@@ -76,7 +76,66 @@ NUMBER_IDENTITIES: dict[str, dict] = {
         {"first": "Robert", "last": "Lee", "dob": "June 20, 1978", "insurance": "Aetna"},
     TWILIO_NUMBERS[3] if len(TWILIO_NUMBERS) > 3 else "+10000000004":
         {"first": "Sarah", "last": "Johnson", "dob": "November 8, 1995", "insurance": "MetLife PPO"},
+    # RingCentral company number — used for PROD SMS conversations (A2P-exempt path)
+    os.environ.get("RINGCENTRAL_NUMBER", "+18324464448"):
+        {"first": "David", "last": "Kim", "dob": "March 15, 1982", "insurance": "United Concordia"},
 }
+
+# ── RingCentral SMS provider ──────────────────────────────────────────────────
+# PROD practice carrier blocks SMS from unregistered Twilio numbers (A2P 30034).
+# The company RingCentral number delivers fine, so PROD SMS conversations run
+# through RingCentral; Twilio keeps all calls + BETA SMS.
+RC_BASE = "https://platform.ringcentral.com"
+RC_CLIENT_ID     = os.environ.get("RINGCENTRAL_CLIENT_ID", "1RFSaNL0hNmddoL1qwjL0s")
+RC_CLIENT_SECRET = os.environ.get("RINGCENTRAL_CLIENT_SECRET", "")
+RC_JWT           = os.environ.get("RINGCENTRAL_JWT", "")
+RC_NUMBER        = os.environ.get("RINGCENTRAL_NUMBER", "+18324464448")
+
+_rc_token: dict = {"access": "", "exp": 0.0}
+_rc_lock = threading.Lock()
+
+
+def _rc_configured() -> bool:
+    return bool(RC_CLIENT_ID and RC_CLIENT_SECRET and RC_JWT)
+
+
+def _rc_access_token() -> str:
+    with _rc_lock:
+        if _rc_token["access"] and time.time() < _rc_token["exp"] - 60:
+            return _rc_token["access"]
+        r = httpx.post(
+            f"{RC_BASE}/restapi/oauth/token",
+            auth=(RC_CLIENT_ID, RC_CLIENT_SECRET),
+            data={"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer", "assertion": RC_JWT},
+            timeout=20,
+        )
+        r.raise_for_status()
+        d = r.json()
+        _rc_token["access"] = d["access_token"]
+        _rc_token["exp"] = time.time() + int(d.get("expires_in", 3600))
+        return _rc_token["access"]
+
+
+def _rc_send_sms(to_number: str, body: str) -> None:
+    tok = _rc_access_token()
+    r = httpx.post(
+        f"{RC_BASE}/restapi/v1.0/account/~/extension/~/sms",
+        headers={"Authorization": f"Bearer {tok}"},
+        json={"from": {"phoneNumber": RC_NUMBER},
+              "to": [{"phoneNumber": to_number}],
+              "text": body},
+        timeout=20,
+    )
+    r.raise_for_status()
+
+
+def _send_patient_sms(session: "RealSession", body: str) -> None:
+    """Send an SMS as the session's patient, via the right provider for its number."""
+    if session.patient_number == RC_NUMBER:
+        _rc_send_sms(session.practice_number, body)
+    else:
+        _tw_send_sms(session.patient_number, session.practice_number, body)
+
 
 # Persistent-ish state (survives within a deploy; Railway FS is ephemeral across deploys)
 _STATE_FILE = "/tmp/real_phone_state.json"
@@ -411,6 +470,7 @@ def _ensure_watchdog() -> None:
     if not _watchdog_started:
         _watchdog_started = True
         threading.Thread(target=_watchdog_loop, daemon=True).start()
+        threading.Thread(target=_rc_poll_loop, daemon=True).start()
 
 
 # ── Call orchestration ────────────────────────────────────────────────────────
@@ -514,9 +574,20 @@ def _start_session(trigger_type: str, practice: str, scenario_id: str, env: str,
     srv = _sim()
     base = srv.PERSONAS[cfg.get("persona_idx", 0)]
     needs_existing = not base.is_new
-    patient = _pick_patient_number(practice, patient_number,
-                                   needs_existing=needs_existing,
-                                   prefer_new=base.is_new)
+
+    # PROD SMS conversations must use the RingCentral number — the practice
+    # carrier drops SMS from unregistered Twilio numbers (A2P error 30034).
+    # Voice-only sessions (inbound_call) stay on Twilio numbers.
+    is_prod = practice == PRACTICE_NUMBERS.get("prod", "")
+    if is_prod and trigger_type != "inbound_call" and _rc_configured() and not patient_number:
+        patient = RC_NUMBER
+        if _number_busy(patient):
+            raise HTTPException(status_code=503,
+                                detail="The RingCentral number is busy with another PROD session — try again shortly.")
+    else:
+        patient = _pick_patient_number(practice, patient_number,
+                                       needs_existing=needs_existing,
+                                       prefer_new=base.is_new)
     if not patient:
         raise HTTPException(status_code=503, detail="All patient numbers are busy — try again shortly.")
 
@@ -544,7 +615,7 @@ def _start_session(trigger_type: str, practice: str, scenario_id: str, env: str,
             session.log(f"WARNING: number in 24h cooldown for another {cooldown}s — AI may not reply")
         msg = opener or cfg["opener"]
         try:
-            _tw_send_sms(patient, practice, msg)
+            _send_patient_sms(session, msg)
             session.turns.append(RealTurn("patient", msg, "sms"))
             session.status = "in_conversation"
             session.awaiting_reply_since = time.time()
@@ -565,17 +636,20 @@ def _start_session(trigger_type: str, practice: str, scenario_id: str, env: str,
 
 @router.get("/api/real/config")
 def real_config():
+    all_numbers = TWILIO_NUMBERS + ([RC_NUMBER] if _rc_configured() else [])
     return {
         "configured": _twilio_configured(),
+        "ringcentral_configured": _rc_configured(),
         "patient_numbers": [
             {
                 "number": n,
                 "identity": NUMBER_IDENTITIES.get(n, {}),
+                "provider": "ringcentral" if n == RC_NUMBER else "twilio",
                 "busy": _number_busy(n),
                 "cooldowns": {env: _cooldown_remaining(n, p) for env, p in PRACTICE_NUMBERS.items() if p},
                 "booked": {env: _is_booked(n, p) for env, p in PRACTICE_NUMBERS.items() if p},
             }
-            for n in TWILIO_NUMBERS
+            for n in all_numbers
         ],
         "practice_numbers": {k: v for k, v in PRACTICE_NUMBERS.items() if v},
         "webhook_base": PUBLIC_BASE,
@@ -636,6 +710,22 @@ def real_session_stop(session_id: str):
     return _session_dict(s)
 
 
+@router.post("/api/real/verify-callerid")
+def verify_callerid():
+    """One-time: register the RingCentral number as a Twilio verified caller ID
+    so PROD missed/incomplete calls can originate from it (the AI then texts the
+    RC number, where SMS delivery works). Twilio calls the RC number — answer it
+    in the RingCentral app and enter the validation code returned here."""
+    _require_twilio()
+    try:
+        r = _tw_post("/OutgoingCallerIds.json", {"PhoneNumber": RC_NUMBER})
+        return {"validation_code": r.get("validation_code", ""),
+                "note": f"Twilio is calling {RC_NUMBER} now — answer in the RingCentral app "
+                        f"and key in the validation code."}
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=502, detail=f"Verification start failed: {e.response.text[:200]}")
+
+
 @router.post("/api/real/setup")
 def real_setup():
     """One-time: point every Twilio number's SMS webhook at this app."""
@@ -687,7 +777,7 @@ def manual_send(req: ManualSendRequest):
         raise HTTPException(status_code=404, detail="Session not found")
     if s.mode != "manual":
         raise HTTPException(status_code=400, detail="Not a manual session")
-    _tw_send_sms(s.patient_number, s.practice_number, req.message)
+    _send_patient_sms(s, req.message)
     s.turns.append(RealTurn("patient", req.message, "sms"))
     s.awaiting_reply_since = time.time()
     if s.status in ("waiting_for_sms", "starting"):
@@ -935,17 +1025,9 @@ def _twiml(content: str) -> Response:
                     media_type="application/xml")
 
 
-@router.post("/api/twilio/sms")
-async def twilio_sms_webhook(request: Request):
-    form = await request.form()
-    to_number   = str(form.get("To", ""))
-    from_number = str(form.get("From", ""))
-    body        = str(form.get("Body", "")).strip()
-
-    session = _active_session_for(to_number)
-    if not session:
-        return _twiml("")
-
+def _handle_agent_message(session: RealSession, body: str, from_number: str) -> None:
+    """Shared inbound-SMS conversation step — used by the Twilio webhook AND the
+    RingCentral poller, so both providers behave identically."""
     now = time.time()
     latency = round(now - session.awaiting_reply_since, 1) if session.awaiting_reply_since else 0.0
     session.turns.append(RealTurn("agent", body, "sms", latency_s=latency))
@@ -961,27 +1043,27 @@ async def twilio_sms_webhook(request: Request):
     if _check_completion(session, body):
         if session.mode == "auto":
             try:
-                _tw_send_sms(session.patient_number, session.practice_number, "Great, thanks!")
+                _send_patient_sms(session, "Great, thanks!")
                 session.turns.append(RealTurn("patient", "Great, thanks!", "sms"))
             except Exception:
                 pass
-        return _twiml("")
+        return
 
     if session.mode == "manual":
-        return _twiml("")   # human drives — just record the agent turn
+        return   # human drives — just record the agent turn
 
     n_patient_turns = sum(1 for t in session.turns if t.role == "patient")
     if n_patient_turns >= MAX_SMS_TURNS:
         _finish(session, "completed", "incomplete",
                 f"Max turns ({MAX_SMS_TURNS}) reached", failure_type="max_turns")
-        return _twiml("")
+        return
 
     try:
         reply, should_end = _patient_reply(session, body)
         # Human-like typing delay — replying within ~2s races ADIT's in-flight
         # agent message and the answer gets silently dropped (observed live).
         time.sleep(random.uniform(*REPLY_DELAY_RANGE))
-        _tw_send_sms(session.patient_number, session.practice_number, reply)
+        _send_patient_sms(session, reply)
         session.turns.append(RealTurn("patient", reply, "sms"))
         session.awaiting_reply_since = time.time()
         if should_end:
@@ -990,7 +1072,56 @@ async def twilio_sms_webhook(request: Request):
     except Exception as exc:
         session.log(f"Reply generation/send failed: {exc}")
 
+
+@router.post("/api/twilio/sms")
+async def twilio_sms_webhook(request: Request):
+    form = await request.form()
+    to_number   = str(form.get("To", ""))
+    from_number = str(form.get("From", ""))
+    body        = str(form.get("Body", "")).strip()
+
+    session = _active_session_for(to_number)
+    if session:
+        _handle_agent_message(session, body, from_number)
     return _twiml("")
+
+
+# ── RingCentral inbound poller (RC has no webhook here — poll message-store) ──
+
+_rc_seen_ids: set[str] = set()
+
+
+def _rc_poll_loop() -> None:
+    import datetime
+    while True:
+        time.sleep(4)
+        try:
+            if not _rc_configured():
+                continue
+            session = _active_session_for(RC_NUMBER)
+            if not session:
+                continue
+            tok = _rc_access_token()
+            date_from = datetime.datetime.utcfromtimestamp(session.created_at - 60).strftime(
+                "%Y-%m-%dT%H:%M:%S.000Z")
+            r = httpx.get(
+                f"{RC_BASE}/restapi/v1.0/account/~/extension/~/message-store",
+                params={"messageType": "SMS", "direction": "Inbound", "dateFrom": date_from},
+                headers={"Authorization": f"Bearer {tok}"},
+                timeout=15,
+            )
+            r.raise_for_status()
+            records = sorted(r.json().get("records", []),
+                             key=lambda m: m.get("creationTime", ""))
+            for m in records:
+                mid = str(m.get("id", ""))
+                frm = (m.get("from") or {}).get("phoneNumber", "")
+                if mid in _rc_seen_ids or frm != session.practice_number:
+                    continue
+                _rc_seen_ids.add(mid)
+                _handle_agent_message(session, str(m.get("subject", "")).strip(), frm)
+        except Exception:
+            pass
 
 
 @router.post("/api/twilio/call-status")
