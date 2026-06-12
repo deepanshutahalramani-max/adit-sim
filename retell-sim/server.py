@@ -140,10 +140,12 @@ BOOKING_CONFIRMED_KWS = [
 ]
 TASK_CREATED_KWS = [
     "i've created a note", "i have created a note", "created a note for the team",
-    "note for the team", "team will contact", "team member will",
+    "note for the team", "note for our team", "team will contact", "team member will",
     "a team member will", "someone will reach out", "team will reach out",
-    "i've made a note", "passed this along", "i'll have someone",
+    "i've made a note", "i'll make a note", "i will make a note",
+    "passed this along", "i'll have someone",
     "i will have someone", "created a task", "i've noted", "i have noted",
+    "i'll note that down", "i will note that down", "noted that down",
     "your request has been sent", "request has been sent",
     "will contact you soon", "will reach out soon",
 ]
@@ -535,6 +537,7 @@ RULES:
 3. Sound casual and human — not robotic
 4. If asked "for yourself or someone else?" → For myself
 5. If asked "new or existing patient?" → {"New patient" if persona.is_new else "Existing patient, I've been there before"}
+5b. If the agent says a patient with your name/DOB ALREADY EXISTS in their system → say "Oh yes, that's me — I must have visited before" and continue as an existing patient. NEVER claim to be a different person.
 6. If asked reason/purpose for visit → {persona.reason}
 7. If asked preferred day/date → {persona.preferred_day}
 8. If asked morning/afternoon/time → {persona.preferred_time}

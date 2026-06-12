@@ -480,7 +480,9 @@ def _call_common(session: RealSession, extra: dict) -> dict:
         "From": session.patient_number,
         "To": session.practice_number,
         "StatusCallback": f"{PUBLIC_BASE}/api/twilio/call-status?session_id={session.session_id}",
-        "StatusCallbackEvent": "initiated ringing answered completed",
+        # Twilio requires REPEATED StatusCallbackEvent params — a single
+        # space-separated string is silently ignored (no callbacks at all).
+        "StatusCallbackEvent": ["initiated", "ringing", "answered", "completed"],
         "Record": "true",
         "RecordingStatusCallback": f"{PUBLIC_BASE}/api/twilio/recording-status?session_id={session.session_id}",
     }
@@ -1136,16 +1138,20 @@ async def twilio_call_status(request: Request, session_id: str = ""):
             s.call_ended_at = time.time()
         if s.trigger_type == "inbound_call" and status in ("completed", "failed", "busy", "no-answer"):
             if s.status not in ("completed", "failed"):
-                agent_text = " ".join(t.message.lower() for t in s.turns if t.role == "agent")
-                srv = _sim()
-                if any(kw in agent_text for kw in srv.BOOKING_CONFIRMED_KWS):
-                    outcome = "booking_confirmed"
-                elif any(kw in agent_text for kw in srv.TASK_CREATED_KWS):
-                    outcome = "task_created"
-                else:
-                    outcome = "incomplete"
-                _finish(s, "completed", s.outcome or outcome, "Voice call ended")
+                outcome = _derive_voice_outcome(s)
+                _finish(s, "completed", s.outcome or outcome, f"Voice call ended — outcome: {outcome}")
     return _twiml("")
+
+
+def _derive_voice_outcome(s: RealSession) -> str:
+    """Classify a finished voice conversation from the full agent transcript."""
+    srv = _sim()
+    agent_text = " ".join(t.message.lower() for t in s.turns if t.role == "agent")
+    if any(kw in agent_text for kw in srv.BOOKING_CONFIRMED_KWS):
+        return "booking_confirmed"
+    if any(kw in agent_text for kw in srv.TASK_CREATED_KWS):
+        return "task_created"
+    return "incomplete"
 
 
 @router.post("/api/twilio/recording-status")
@@ -1159,6 +1165,13 @@ async def twilio_recording_status(request: Request, session_id: str = ""):
         except Exception:
             pass
         s.log(f"Recording ready ({s.recording_duration_s}s)")
+        # The recording exists ⇒ the call has ended. If a voice session is still
+        # open (e.g. a status callback was missed), finalize it from the transcript
+        # instead of letting the watchdog mark a good conversation as failed.
+        if s.trigger_type == "inbound_call" and s.status not in ("completed", "failed"):
+            outcome = _derive_voice_outcome(s)
+            _finish(s, "completed", s.outcome or outcome,
+                    f"Call ended (recording ready) — outcome: {outcome}")
     return _twiml("")
 
 

@@ -10,16 +10,21 @@ A patient SMS that is carrier-confirmed **delivered** to the practice number nev
 reaches the Retell chat session. The agent keeps waiting, the conversation dies,
 and the chat stays "ongoing". A real patient would simply never get an answer.
 
-Both reproductions stalled on the reply to the **insurance question**.
+**All three reproductions stalled on the reply to the insurance question** —
+strong signal the drop correlates with whatever ADIT's pipeline does at that
+step of the booking flow.
 
-| | Occurrence 1 | Occurrence 2 |
-|---|---|---|
-| Date (UTC) | 2026-06-10 23:04 | 2026-06-11 10:00 |
-| Patient number | +18327725892 | +19314652485 |
-| Dropped message | "Delta Dental PPO." | "MetLife PPO." |
-| Twilio status | delivered | delivered |
-| Retell chat | chat_5ab36aab0bb4ea0d3aad31c9dc7 — message absent | chat_55c1c87c38a356c1b5e04b8ccdf — message absent, still "ongoing" |
-| Reply delay used | ~2s (could be race) | **8–12s (rules out race)** |
+| | Occurrence 1 | Occurrence 2 | Occurrence 3 |
+|---|---|---|---|
+| Date (UTC) | 2026-06-10 23:04 | 2026-06-11 10:00 | 2026-06-12 10:03 |
+| Patient number | +18327725892 | +19314652485 | +18327725892 |
+| Dropped message | "Delta Dental PPO." | "MetLife PPO." | "Cigna PPO." |
+| Twilio status | delivered | delivered | delivered |
+| Reply delay used | ~2s (could be race) | **8–12s (rules out race)** | 8–12s |
+
+Successful conversations (Robert Lee BETA, David Kim PROD) passed the same
+step fine — the drop is intermittent (~3 of 5 conversations) but always at
+the same point when it happens.
 
 **Ask for ADIT engineering:** trace the inbound SMS pipeline for the practice
 number 832-476-8799 at the timestamps above — the message reached the number
