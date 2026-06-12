@@ -27,6 +27,7 @@ Config (Railway env vars override; numbers/practices have safe defaults):
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import random
@@ -809,6 +810,7 @@ class SuiteRun:
     env: str
     status: str = "running"
     current_idx: int = 0
+    done: int = 0                  # finished scenarios (suites run in parallel)
     session_ids: list = field(default_factory=list)
     pinned_number: str = ""        # journeys pin one number for identity continuity
     opener: str = ""               # repro override
@@ -836,39 +838,101 @@ def _wait_terminal(session: RealSession) -> None:
                 failure_type="error")
 
 
-def _run_suite(suite: SuiteRun) -> None:
+# Serializes number selection + session creation so two parallel workers can
+# never grab the same patient number in the pick/create race window.
+_PICK_LOCK = threading.Lock()
+
+
+def _run_journey(suite: SuiteRun) -> None:
+    """Journeys are inherently sequential — same identity through every phase."""
     for idx, sid in enumerate(suite.scenario_ids):
         suite.current_idx = idx
-        pinned = suite.pinned_number
-
-        # Existing-patient scenarios: make sure this number has a booking first
-        if sid in _NEEDS_BOOKING:
-            probe = pinned or _pick_patient_number(suite.practice_number, needs_existing=True)
-            if probe and not _is_booked(probe, suite.practice_number):
-                try:
-                    prep = _start_session(suite.trigger_type, suite.practice_number,
-                                          "new-patient-cleaning", suite.env,
-                                          patient_number=probe, suite_id=suite.suite_id)
-                    prep.log(f"Prior-booking step for '{sid}' — registering {prep.patient_name} first")
-                    suite.session_ids.append(prep.session_id)
-                    _wait_terminal(prep)
-                    time.sleep(15)
-                except Exception:
-                    pass
-            pinned = probe
-
         try:
-            session = _start_session(suite.trigger_type, suite.practice_number, sid, suite.env,
-                                     patient_number=pinned, suite_id=suite.suite_id,
-                                     opener=suite.opener, goal_override=suite.goal,
-                                     label_override=suite.label)
+            with _PICK_LOCK:
+                session = _start_session(suite.trigger_type, suite.practice_number, sid, suite.env,
+                                         patient_number=suite.pinned_number, suite_id=suite.suite_id)
         except Exception:
             continue
         suite.session_ids.append(session.session_id)
-        if suite.kind == "journey" and not suite.pinned_number:
+        if not suite.pinned_number:
             suite.pinned_number = session.patient_number
         _wait_terminal(session)
+        suite.done += 1
         time.sleep(15)  # gap between real conversations
+
+
+def _suite_worker(suite: SuiteRun, q) -> None:
+    import queue as _q
+    while True:
+        try:
+            sid = q.get_nowait()
+        except _q.Empty:
+            return
+        try:
+            # Existing-patient scenarios: secure a number and make sure it has a
+            # booking first (the booking runs on the SAME number, same worker).
+            pinned = ""
+            if sid in _NEEDS_BOOKING:
+                for _ in range(60):           # wait up to ~5 min for a free number
+                    with _PICK_LOCK:
+                        probe = _pick_patient_number(suite.practice_number, needs_existing=True)
+                    if probe:
+                        pinned = probe
+                        break
+                    time.sleep(5)
+                if pinned and not _is_booked(pinned, suite.practice_number):
+                    try:
+                        with _PICK_LOCK:
+                            prep = _start_session(suite.trigger_type, suite.practice_number,
+                                                  "new-patient-cleaning", suite.env,
+                                                  patient_number=pinned, suite_id=suite.suite_id)
+                        prep.log(f"Prior-booking step for '{sid}' — registering {prep.patient_name} first")
+                        suite.session_ids.append(prep.session_id)
+                        _wait_terminal(prep)
+                        time.sleep(15)
+                    except Exception:
+                        pass
+
+            session = None
+            for _ in range(60):               # wait for a free number if all busy
+                try:
+                    with _PICK_LOCK:
+                        session = _start_session(suite.trigger_type, suite.practice_number, sid,
+                                                 suite.env, patient_number=pinned,
+                                                 suite_id=suite.suite_id,
+                                                 opener=suite.opener, goal_override=suite.goal,
+                                                 label_override=suite.label)
+                    break
+                except HTTPException:
+                    time.sleep(5)
+            if session is None:
+                continue
+            suite.session_ids.append(session.session_id)
+            _wait_terminal(session)
+        except Exception:
+            pass
+        finally:
+            suite.done += 1
+            q.task_done()
+
+
+def _run_suite(suite: SuiteRun) -> None:
+    if suite.kind == "journey":
+        _run_journey(suite)
+    else:
+        # PARALLEL: scenarios fan out across all free patient numbers at once —
+        # an 8-scenario regression takes ~2 conversation-lengths, not 8.
+        import queue
+        q: "queue.Queue[str]" = queue.Queue()
+        for sid in suite.scenario_ids:
+            q.put(sid)
+        n_workers = min(len(TWILIO_NUMBERS), max(1, len(suite.scenario_ids)))
+        threads = [threading.Thread(target=_suite_worker, args=(suite, q), daemon=True)
+                   for _ in range(n_workers)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
 
     suite.status = "completed"
     suite.finished_at = time.time()
@@ -1029,7 +1093,9 @@ def _twiml(content: str) -> Response:
 
 def _handle_agent_message(session: RealSession, body: str, from_number: str) -> None:
     """Shared inbound-SMS conversation step — used by the Twilio webhook AND the
-    RingCentral poller, so both providers behave identically."""
+    RingCentral poller, so both providers behave identically.
+    Runs in a worker thread (contains an LLM call + a human-typing sleep), so
+    many conversations can progress concurrently without blocking each other."""
     now = time.time()
     latency = round(now - session.awaiting_reply_since, 1) if session.awaiting_reply_since else 0.0
     session.turns.append(RealTurn("agent", body, "sms", latency_s=latency))
@@ -1084,7 +1150,10 @@ async def twilio_sms_webhook(request: Request):
 
     session = _active_session_for(to_number)
     if session:
-        _handle_agent_message(session, body, from_number)
+        # Fire-and-forget into a worker thread: respond to Twilio instantly and
+        # never block the event loop (the handler sleeps 8-12s before replying).
+        threading.Thread(target=_handle_agent_message,
+                         args=(session, body, from_number), daemon=True).start()
     return _twiml("")
 
 
@@ -1310,7 +1379,10 @@ async def twilio_voice_turn(request: Request, session_id: str = ""):
         # (Retell end_call) — the outcome is derived from the full transcript when
         # the call completes (status/recording callbacks → _derive_voice_outcome).
         try:
-            reply, _should_end = _patient_reply(s, agent_speech)
+            # LLM call runs in the threadpool — parallel voice calls don't block
+            # each other (or the SMS webhooks) on the event loop.
+            loop = asyncio.get_running_loop()
+            reply, _should_end = await loop.run_in_executor(None, _patient_reply, s, agent_speech)
         except Exception as exc:
             s.log(f"Patient reply failed: {exc}")
             return _twiml("<Hangup/>")

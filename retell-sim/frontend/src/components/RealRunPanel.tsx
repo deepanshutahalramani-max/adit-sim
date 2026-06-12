@@ -97,11 +97,13 @@ export function RealRunPanel({
           className="bg-brand-500 hover:bg-brand-600 disabled:opacity-40 text-white font-bold text-[13.5px] px-6 py-2.5 rounded-xl shadow-sm"
         >
           {anyRunning && !mySuite ? "Another run in progress…"
-            : mySuite?.status === "running" ? `Running ${(mySuite.current_idx ?? 0) + 1}/${mySuite.total ?? totalScenarios}…`
+            : mySuite?.status === "running" ? `Running — ${mySuite.done ?? 0}/${mySuite.total ?? totalScenarios} done…`
             : buttonLabel ?? `📱 Run over Real Phone (${totalScenarios})`}
         </button>
         <span className="text-[11.5px] text-[#888]">
-          Real calls/SMS take a few minutes each — runs are sequential and appear live below.
+          {kind === "journey"
+            ? "Journey phases run sequentially on one identity (~5 min each) and appear live below."
+            : "Scenarios run in PARALLEL across the patient numbers — watch them all live below."}
         </span>
         {disabled && disabledReason && <span className="text-[11.5px] text-[#92600A] w-full">{disabledReason}</span>}
         {msg && <span className="text-[12.5px] font-medium text-[#991B1B] w-full">{msg}</span>}
@@ -117,7 +119,7 @@ export function RealRunPanel({
           {mySuite.status === "running" ? (
             <span className="text-[#1456A0] font-semibold">
               <span className="inline-block w-[6px] h-[6px] bg-current rounded-full mr-1.5 animate-pulse" />
-              scenario {(mySuite.current_idx ?? 0) + 1} of {mySuite.total ?? totalScenarios}
+              {mySuite.done ?? 0} of {mySuite.total ?? totalScenarios} done
             </span>
           ) : (
             <span className="font-semibold">

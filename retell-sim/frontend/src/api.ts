@@ -448,6 +448,7 @@ export interface SuiteRun {
   env: string;
   status: string;
   current_idx: number;
+  done?: number;
   session_ids: string[];
   started_at: number;
   finished_at: number;
