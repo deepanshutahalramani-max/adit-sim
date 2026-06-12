@@ -121,10 +121,13 @@ MAX_PARALLEL = 10
 MAX_TURNS = 14
 
 BOOKING_CONFIRMED_KWS = [
-    "appointment is confirmed", "you're all set", "all set",
+    # NOTE: every entry must be UNAMBIGUOUS confirmation language. Loose
+    # substrings ("all set", "your appointment on", "appointment for") appear
+    # inside agent QUESTIONS and caused the sim to hang up mid-conversation.
+    "appointment is confirmed", "you're all set", "you are all set",
     "appointment has been booked", "successfully booked",
-    "your appointment on", "we've got you booked", "booking is confirmed",
-    "confirmed for", "appointment has been scheduled", "you are scheduled",
+    "we've got you booked", "booking is confirmed",
+    "appointment has been scheduled", "you are scheduled",
     "you're scheduled", "appointment has been rescheduled",
     "successfully rescheduled", "updated your appointment",
     "appointment has been cancelled", "successfully cancelled",

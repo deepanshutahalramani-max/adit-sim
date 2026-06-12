@@ -1,7 +1,73 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { stopRealSession } from "../api";
 import type { RealSession } from "../api";
+
+/* ── Live call audio (Twilio media stream relayed over WebSocket) ──────────── */
+
+function ulawToFloat(u: number): number {
+  u = ~u & 0xff;
+  const sign = u & 0x80;
+  const exp = (u >> 4) & 7;
+  const man = u & 0x0f;
+  let x = ((man << 3) + 0x84) << exp;
+  x -= 0x84;
+  return (sign ? -x : x) / 32768;
+}
+
+function LiveListen({ sessionId }: { sessionId: string }) {
+  const [listening, setListening] = useState(false);
+  const ref = useRef<{ ctx: AudioContext; ws: WebSocket; t: Record<string, number> } | null>(null);
+
+  const stop = () => {
+    try { ref.current?.ws.close(); } catch { /* noop */ }
+    try { ref.current?.ctx.close(); } catch { /* noop */ }
+    ref.current = null;
+    setListening(false);
+  };
+
+  const start = () => {
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    const ws = new WebSocket(`${proto}://${location.host}/api/real/listen/${sessionId}`);
+    const ctx = new AudioContext({ sampleRate: 8000 });
+    const t: Record<string, number> = { inbound: 0, outbound: 0 };
+    ws.onmessage = e => {
+      try {
+        const { track, payload } = JSON.parse(e.data);
+        const bin = atob(payload);
+        const n = bin.length;
+        if (n === 0) return;
+        const buf = ctx.createBuffer(1, n, 8000);
+        const ch = buf.getChannelData(0);
+        for (let i = 0; i < n; i++) ch[i] = ulawToFloat(bin.charCodeAt(i));
+        const src = ctx.createBufferSource();
+        src.buffer = buf;
+        src.connect(ctx.destination);
+        const key = track === "outbound" ? "outbound" : "inbound";
+        const at = Math.max(ctx.currentTime + 0.05, t[key]);
+        src.start(at);
+        t[key] = at + buf.duration;
+      } catch { /* skip bad frame */ }
+    };
+    ws.onclose = () => { if (ref.current?.ws === ws) stop(); };
+    ref.current = { ctx, ws, t };
+    setListening(true);
+  };
+
+  return (
+    <button
+      onClick={() => (listening ? stop() : start())}
+      className={`text-[11.5px] font-bold px-3 py-1 rounded-full border transition-colors ${
+        listening
+          ? "bg-[#FEF2F2] text-[#991B1B] border-[#FECACA] animate-pulse"
+          : "bg-[#1A1A1A] text-white border-[#1A1A1A] hover:bg-[#333]"
+      }`}
+      title="Hear the call audio live while the conversation is happening"
+    >
+      {listening ? "⏹ Stop listening" : "🔴 Listen LIVE"}
+    </button>
+  );
+}
 
 export const REAL_TRIGGERS = [
   { id: "missed_call",     icon: "📵", label: "Missed Call",
@@ -34,14 +100,16 @@ export function fmtPhone(n: string): string {
 }
 
 export function RealSessionCard({ s, compact }: { s: RealSession; compact?: boolean }) {
-  const [expanded, setExpanded] = useState(!compact);
+  const isActive = !["completed", "failed"].includes(s.status);
+  // Live sessions always start expanded so the conversation is visible in real time
+  const [expanded, setExpanded] = useState(!compact || isActive);
   const qc = useQueryClient();
   const stop = useMutation({
     mutationFn: () => stopRealSession(s.session_id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["realSessions"] }),
   });
   const trig = REAL_TRIGGERS.find(t => t.id === s.trigger_type);
-  const active = !["completed", "failed"].includes(s.status);
+  const active = isActive;
 
   return (
     <div className="bg-white border border-[#EAEAEA] rounded-2xl p-5 shadow-sm">
@@ -96,6 +164,9 @@ export function RealSessionCard({ s, compact }: { s: RealSession; compact?: bool
             {active && <span className="inline-block w-[6px] h-[6px] bg-current rounded-full mr-1.5 animate-pulse" />}
             {STATUS_LABEL[s.status] ?? s.status}
           </span>
+          {active && s.trigger_type === "inbound_call" && (
+            <LiveListen sessionId={s.session_id} />
+          )}
           {active && (
             <button onClick={() => stop.mutate()}
               className="text-[11.5px] font-semibold px-2.5 py-1 rounded-full border border-[#FECACA] bg-[#FEF2F2] text-[#991B1B] hover:bg-[#FEE2E2]">

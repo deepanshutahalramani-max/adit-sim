@@ -38,7 +38,7 @@ from typing import Any, Optional
 from xml.sax.saxutils import escape as xml_escape
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
@@ -1180,6 +1180,85 @@ async def twilio_sms_status(request: Request):
     return _twiml("")
 
 
+# ── Live audio: Twilio Media Streams → WebSocket relay → browser ─────────────
+# The call's audio (both directions) is forked to /api/twilio/media-stream and
+# relayed to any browser connected on /api/real/listen/{session_id}, so QA can
+# LISTEN to the conversation while it is happening.
+
+_LISTENERS: dict[str, list] = {}   # session_id → [browser WebSockets]
+
+
+def _stream_start_xml(session_id: str) -> str:
+    ws_url = PUBLIC_BASE.replace("https://", "wss://") + "/api/twilio/media-stream"
+    return (f'<Start><Stream url="{ws_url}" track="both_tracks">'
+            f'<Parameter name="session_id" value="{session_id}"/>'
+            f"</Stream></Start>")
+
+
+@router.websocket("/api/twilio/media-stream")
+async def twilio_media_stream(ws: WebSocket):
+    """Twilio connects here and pushes base64 μ-law audio frames for the call."""
+    await ws.accept()
+    session_id = ""
+    try:
+        while True:
+            frame = await ws.receive_json()
+            ev = frame.get("event")
+            if ev == "start":
+                params = (frame.get("start", {}) or {}).get("customParameters", {}) or {}
+                session_id = params.get("session_id", "")
+                s = REAL_SESSIONS.get(session_id)
+                if s:
+                    s.log("🔴 Live audio stream active")
+            elif ev == "media" and session_id:
+                listeners = _LISTENERS.get(session_id)
+                if listeners:
+                    msg = {"track": frame.get("media", {}).get("track", "inbound"),
+                           "payload": frame.get("media", {}).get("payload", "")}
+                    dead = []
+                    for lw in listeners:
+                        try:
+                            await lw.send_json(msg)
+                        except Exception:
+                            dead.append(lw)
+                    for d in dead:
+                        try:
+                            listeners.remove(d)
+                        except ValueError:
+                            pass
+            elif ev == "stop":
+                break
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        for lw in _LISTENERS.pop(session_id, []):
+            try:
+                await lw.close()
+            except Exception:
+                pass
+
+
+@router.websocket("/api/real/listen/{session_id}")
+async def real_listen(ws: WebSocket, session_id: str):
+    """Browser connects here to hear the live call audio."""
+    await ws.accept()
+    _LISTENERS.setdefault(session_id, []).append(ws)
+    try:
+        while True:
+            await ws.receive_text()   # keepalive pings; we never expect content
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        try:
+            _LISTENERS.get(session_id, []).remove(ws)
+        except (ValueError, KeyError):
+            pass
+
+
 # ── Voice conversation loop (inbound_call) ───────────────────────────────────
 
 def _gather(session_id: str, say: str = "") -> str:
@@ -1203,7 +1282,8 @@ async def twilio_voice_answer(request: Request, session_id: str = ""):
         return _twiml("<Hangup/>")
     s.status = "in_conversation"
     s.log("Call answered — listening for AI greeting")
-    return _twiml(_gather(session_id))
+    # Fork live audio to the browser listeners, then start the conversation loop
+    return _twiml(_stream_start_xml(session_id) + _gather(session_id))
 
 
 @router.post("/api/twilio/voice-turn")
@@ -1224,21 +1304,22 @@ async def twilio_voice_turn(request: Request, session_id: str = ""):
         s.awaiting_reply_since = 0.0
         s.log("Agent voice turn captured")
 
-        # Completion only after a genuine exchange — keyword hits inside the
-        # agent's greeting/questions caused premature hangups (observed live).
-        if n_patient_turns >= 3 and _check_completion(s, agent_speech):
-            return _twiml('<Say voice="Polly.Joanna">Great, thank you so much. Bye!</Say><Hangup/>')
-
+        # NO mid-call keyword completion: agent questions contain confirmation-like
+        # substrings ("your appointment on…?") and twice caused premature hangups.
+        # Like a real call, the conversation runs until the AGENT ends the call
+        # (Retell end_call) — the outcome is derived from the full transcript when
+        # the call completes (status/recording callbacks → _derive_voice_outcome).
         try:
-            reply, should_end = _patient_reply(s, agent_speech)
+            reply, _should_end = _patient_reply(s, agent_speech)
         except Exception as exc:
             s.log(f"Patient reply failed: {exc}")
             return _twiml("<Hangup/>")
 
         s.turns.append(RealTurn("patient", reply, "voice"))
         s.awaiting_reply_since = time.time()
-        if (should_end and n_patient_turns >= 3) or n_patient_turns + 1 >= MAX_SMS_TURNS:
-            _finish(s, "completed", s.outcome or "booking_confirmed", "Voice goal reached")
+        if n_patient_turns + 1 >= MAX_SMS_TURNS:
+            _finish(s, "completed", s.outcome or _derive_voice_outcome(s),
+                    f"Voice safety cap ({MAX_SMS_TURNS} turns) — hanging up")
             return _twiml(f'<Say voice="Polly.Joanna">{xml_escape(reply)}</Say><Hangup/>')
         return _twiml(_gather(session_id, say=reply))
 
@@ -1247,7 +1328,7 @@ async def twilio_voice_turn(request: Request, session_id: str = ""):
     s._empty_gathers = getattr(s, "_empty_gathers", 0) + 1
     s.log(f"empty gather #{s._empty_gathers}")
     if s._empty_gathers >= 4:
-        _finish(s, "failed", "incomplete", "Call dead air — 4 empty listens, hanging up",
-                failure_type="error")
+        _finish(s, "completed", s.outcome or _derive_voice_outcome(s),
+                "Call went silent — ending; outcome derived from transcript")
         return _twiml("<Hangup/>")
     return _twiml(_gather(session_id))
