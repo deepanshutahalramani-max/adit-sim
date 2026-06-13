@@ -578,15 +578,20 @@ def _start_session(trigger_type: str, practice: str, scenario_id: str, env: str,
     base = srv.PERSONAS[cfg.get("persona_idx", 0)]
     needs_existing = not base.is_new
 
-    # PROD SMS conversations must use the RingCentral number — the practice
+    # PROD SMS conversations MUST use the RingCentral number — the practice
     # carrier drops SMS from unregistered Twilio numbers (A2P error 30034).
-    # Voice-only sessions (inbound_call) stay on Twilio numbers.
+    # This is forced for every PROD SMS-capable trigger (missed/incomplete/inbound_sms),
+    # OVERRIDING any patient_number a suite/journey worker passed (those are Twilio
+    # numbers from the pool and would silently fail on PROD). Voice-only sessions
+    # (inbound_call) place a pure phone call, which Twilio numbers handle fine.
     is_prod = practice == PRACTICE_NUMBERS.get("prod", "")
-    if is_prod and trigger_type != "inbound_call" and _rc_configured() and not patient_number:
+    force_rc = is_prod and trigger_type != "inbound_call" and _rc_configured()
+    if force_rc:
         patient = RC_NUMBER
         if _number_busy(patient):
             raise HTTPException(status_code=503,
-                                detail="The RingCentral number is busy with another PROD session — try again shortly.")
+                                detail="The RingCentral number is busy with another PROD SMS session — "
+                                       "PROD SMS runs one at a time (single number). Try again shortly.")
     else:
         patient = _pick_patient_number(practice, patient_number,
                                        needs_existing=needs_existing,
@@ -926,7 +931,14 @@ def _run_suite(suite: SuiteRun) -> None:
         q: "queue.Queue[str]" = queue.Queue()
         for sid in suite.scenario_ids:
             q.put(sid)
-        n_workers = min(len(TWILIO_NUMBERS), max(1, len(suite.scenario_ids)))
+        # PROD SMS is single-number (RingCentral) → must run one at a time.
+        # BETA (and PROD voice) fan out across the Twilio pool.
+        is_prod_sms = (suite.practice_number == PRACTICE_NUMBERS.get("prod", "")
+                       and suite.trigger_type != "inbound_call" and _rc_configured())
+        if is_prod_sms:
+            n_workers = 1
+        else:
+            n_workers = min(len(TWILIO_NUMBERS), max(1, len(suite.scenario_ids)))
         threads = [threading.Thread(target=_suite_worker, args=(suite, q), daemon=True)
                    for _ in range(n_workers)]
         for t in threads:
