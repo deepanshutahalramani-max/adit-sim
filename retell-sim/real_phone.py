@@ -1978,11 +1978,23 @@ async def twilio_voice_turn(request: Request, session_id: str = ""):
             return _twiml(f'<Say voice="Polly.Joanna">{xml_escape(reply)}</Say><Hangup/>')
         return _twiml(_gather(session_id, say=reply))
 
-    # Empty gather — agent silent or still connecting. Allow a few, then end
-    # the call cleanly instead of looping forever on dead air.
+    # Empty gather — far end hasn't said anything we could transcribe.
     s._empty_gathers = getattr(s, "_empty_gathers", 0) + 1
     s.log(f"empty gather #{s._empty_gathers}")
-    if s._empty_gathers >= 4:
+
+    # If we haven't spoken yet and the far end isn't greeting (or its greeting
+    # didn't transcribe), the AI patient OPENS the conversation itself. This makes
+    # the call work whether the agent greets first OR waits for the caller —
+    # essential for Custom numbers / agents that expect the caller to speak first.
+    if n_patient_turns == 0 and s._empty_gathers <= 2:
+        cfg = _sim().SCENARIOS.get(s.scenario_id, {})
+        opener = cfg.get("opener") or "Hi, I'd like to book an appointment."
+        s.turns.append(RealTurn("patient", opener, "voice"))
+        s.awaiting_reply_since = time.time()
+        s.log("No greeting heard — AI patient opening the conversation")
+        return _twiml(_gather(session_id, say=opener))
+
+    if s._empty_gathers >= 5:
         _finish(s, "completed", s.outcome or _derive_voice_outcome(s),
                 "Call went silent — ending; outcome derived from transcript")
         return _twiml("<Hangup/>")
