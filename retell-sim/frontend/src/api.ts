@@ -534,6 +534,22 @@ export async function fetchRealInsights(): Promise<RealInsights> {
   return r.json();
 }
 
+export interface RealActive {
+  active_sessions: number;
+  running_suites: number;
+  busy: boolean;
+  sessions: { session_id: string; label: string; env: string; status: string; trigger: string }[];
+}
+
+export async function fetchRealActive(): Promise<RealActive> {
+  const r = await fetch(`${BASE}/real/active`);
+  return r.json();
+}
+
+export async function stopAllReal(): Promise<{ stopped_sessions: number; aborted_suites: number }> {
+  return post("/real/stop-all", {});
+}
+
 export async function manualStart(params: {
   env?: string;
   practice_number?: string;

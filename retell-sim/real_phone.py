@@ -704,18 +704,61 @@ def real_session(session_id: str):
     return _session_dict(s)
 
 
+def _hangup_if_live(s: RealSession) -> None:
+    if s.call_sid and s.call_status not in ("completed", "failed", "busy", "no-answer", "canceled"):
+        try:
+            _tw_post(f"/Calls/{s.call_sid}.json", {"Status": "completed"})
+        except Exception:
+            pass
+
+
 @router.post("/api/real/session/{session_id}/stop")
 def real_session_stop(session_id: str):
     s = REAL_SESSIONS.get(session_id)
     if not s:
         raise HTTPException(status_code=404, detail="Session not found")
-    if s.call_sid and s.status == "calling":
-        try:
-            _tw_post(f"/Calls/{s.call_sid}.json", {"Status": "completed"})
-        except Exception:
-            pass
+    _hangup_if_live(s)
     _finish(s, "completed" if s.outcome else "failed", s.outcome or "incomplete", "Stopped by user")
     return _session_dict(s)
+
+
+@router.get("/api/real/active")
+def real_active():
+    """Live count of in-flight work — drives the header Stop-All indicator."""
+    active_sessions = [s for s in REAL_SESSIONS.values()
+                       if s.status not in ("completed", "failed")]
+    running_suites = [s for s in SUITES.values() if s.status == "running" and not s.aborted]
+    return {
+        "active_sessions": len(active_sessions),
+        "running_suites": len(running_suites),
+        "busy": bool(active_sessions or running_suites),
+        "sessions": [{"session_id": s.session_id, "label": s.scenario_label,
+                      "env": s.env, "status": s.status, "trigger": s.trigger_type}
+                     for s in sorted(active_sessions, key=lambda x: x.created_at, reverse=True)],
+    }
+
+
+@router.post("/api/real/stop-all")
+def real_stop_all():
+    """KILL SWITCH — abort every running suite and end every active session,
+    hanging up any live calls. Stops all real-world communication at once."""
+    # 1. Abort suites first so worker loops stop spawning new conversations
+    aborted_suites = 0
+    for suite in SUITES.values():
+        if suite.status == "running" and not suite.aborted:
+            suite.aborted = True
+            suite.status = "completed"
+            suite.finished_at = time.time()
+            aborted_suites += 1
+    # 2. End every active session + hang up live calls
+    stopped = 0
+    for s in list(REAL_SESSIONS.values()):
+        if s.status not in ("completed", "failed"):
+            _hangup_if_live(s)
+            _finish(s, "failed", s.outcome or "incomplete", "Stopped by Stop-All",
+                    failure_type=s.failure_type or "stopped")
+            stopped += 1
+    return {"stopped_sessions": stopped, "aborted_suites": aborted_suites}
 
 
 @router.post("/api/real/verify-callerid")
@@ -814,6 +857,7 @@ class SuiteRun:
     practice_number: str
     env: str
     status: str = "running"
+    aborted: bool = False          # set by Stop-All — workers stop spawning
     current_idx: int = 0
     done: int = 0                  # finished scenarios (suites run in parallel)
     session_ids: list = field(default_factory=list)
@@ -832,12 +876,14 @@ SESSION_TERMINAL_TIMEOUT_S = 12 * 60
 _NEEDS_BOOKING = {"existing-routine", "reschedule", "cancel", "post-treatment-followup"}
 
 
-def _wait_terminal(session: RealSession) -> None:
+def _wait_terminal(session: RealSession, suite: "SuiteRun | None" = None) -> None:
     deadline = time.time() + SESSION_TERMINAL_TIMEOUT_S
     while time.time() < deadline:
         time.sleep(5)
         if session.status in ("completed", "failed"):
             return
+        if suite is not None and suite.aborted:
+            return  # Stop-All — let the session's own stop handle hangup
     if session.status not in ("completed", "failed"):
         _finish(session, "failed", "incomplete", "Suite watchdog: scenario hard timeout",
                 failure_type="error")
@@ -851,6 +897,8 @@ _PICK_LOCK = threading.Lock()
 def _run_journey(suite: SuiteRun) -> None:
     """Journeys are inherently sequential — same identity through every phase."""
     for idx, sid in enumerate(suite.scenario_ids):
+        if suite.aborted:
+            break
         suite.current_idx = idx
         try:
             with _PICK_LOCK:
@@ -861,14 +909,18 @@ def _run_journey(suite: SuiteRun) -> None:
         suite.session_ids.append(session.session_id)
         if not suite.pinned_number:
             suite.pinned_number = session.patient_number
-        _wait_terminal(session)
+        _wait_terminal(session, suite)
         suite.done += 1
+        if suite.aborted:
+            break
         time.sleep(30)  # gap between real conversations — lets trailing SMS drain
 
 
 def _suite_worker(suite: SuiteRun, q) -> None:
     import queue as _q
     while True:
+        if suite.aborted:
+            return
         try:
             sid = q.get_nowait()
         except _q.Empty:
@@ -885,7 +937,7 @@ def _suite_worker(suite: SuiteRun, q) -> None:
                         pinned = probe
                         break
                     time.sleep(5)
-                if pinned and not _is_booked(pinned, suite.practice_number):
+                if pinned and not _is_booked(pinned, suite.practice_number) and not suite.aborted:
                     try:
                         with _PICK_LOCK:
                             prep = _start_session(suite.trigger_type, suite.practice_number,
@@ -893,10 +945,12 @@ def _suite_worker(suite: SuiteRun, q) -> None:
                                                   patient_number=pinned, suite_id=suite.suite_id)
                         prep.log(f"Prior-booking step for '{sid}' — registering {prep.patient_name} first")
                         suite.session_ids.append(prep.session_id)
-                        _wait_terminal(prep)
+                        _wait_terminal(prep, suite)
                         time.sleep(15)
                     except Exception:
                         pass
+            if suite.aborted:
+                continue
 
             session = None
             for _ in range(60):               # wait for a free number if all busy
@@ -913,7 +967,7 @@ def _suite_worker(suite: SuiteRun, q) -> None:
             if session is None:
                 continue
             suite.session_ids.append(session.session_id)
-            _wait_terminal(session)
+            _wait_terminal(session, suite)
         except Exception:
             pass
         finally:

@@ -8,6 +8,7 @@ import { SimulationsHub } from "./pages/SimulationsHub";
 import { E2EChain } from "./pages/E2EChain";
 import { DebugSuite } from "./pages/DebugSuite";
 import { Dashboard } from "./pages/Dashboard";
+import { StopAllButton } from "./components/StopAllButton";
 
 const TABS = [
   { id: "debug",       label: "🔍 Debug Suite" },
@@ -107,13 +108,10 @@ export default function App() {
             </div>
           </div>
           <div className="flex items-center gap-3">
+            <StopAllButton />
             <div className="text-right">
               <div className="text-[13.5px] font-semibold text-[#333]">{agentName}</div>
               <div className="text-[11.5px] text-[#ADADAD]">Test QA · AI Agent</div>
-            </div>
-            <div className="flex items-center gap-1.5 bg-[#F2FDF4] border border-[#B8EFC8] px-3.5 py-1.5 rounded-full">
-              <div className="w-[7px] h-[7px] bg-[#22C55E] rounded-full shadow-[0_0_0_3px_rgba(34,197,94,0.2)]" />
-              <span className="text-[12.5px] font-semibold text-[#166534]">Live</span>
             </div>
           </div>
         </header>
