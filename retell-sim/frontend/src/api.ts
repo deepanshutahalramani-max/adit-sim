@@ -471,6 +471,7 @@ export interface RealConfig {
   trigger_types: string[];
   reply_timeout_s: number;
   followup_timeout_s: number;
+  supabase_configured?: boolean;
 }
 
 export interface RealInsights {
@@ -548,6 +549,28 @@ export async function fetchRealActive(): Promise<RealActive> {
 
 export async function stopAllReal(): Promise<{ stopped_sessions: number; aborted_suites: number }> {
   return post("/real/stop-all", {});
+}
+
+export interface ApiMetricRow {
+  count: number; errors: number; error_rate: number;
+  avg_ms: number; p95_ms: number; cost: number;
+  provider?: string; operation?: string;
+}
+export interface ApiMetrics {
+  total: number;
+  total_cost: number;
+  total_errors: number;
+  providers: Record<string, ApiMetricRow>;
+  operations: ApiMetricRow[];
+  recent: {
+    ts: number; provider: string; operation: string; latency_ms: number;
+    ok: boolean; cost: number; session_id: string; env: string; detail: string; ago_s: number;
+  }[];
+}
+
+export async function fetchApiMetrics(): Promise<ApiMetrics> {
+  const r = await fetch(`${BASE}/real/api-metrics`);
+  return r.json();
 }
 
 export async function manualStart(params: {

@@ -6,7 +6,7 @@
  */
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { fetchRealConfig, fetchRealSessions, fetchRealInsights } from "../api";
+import { fetchRealConfig, fetchRealSessions, fetchRealInsights, fetchApiMetrics } from "../api";
 import { RealSessionCard, REAL_TRIGGERS, fmtPhone } from "./RealSessionCard";
 
 export function fmtCooldown(s: number): string {
@@ -91,12 +91,125 @@ export function SessionsExplorer() {
 
 /* ── Insights ──────────────────────────────────────────────────────────────── */
 
-function Stat({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
+function Stat({ label, value, sub, accent }: { label: string; value: string | number; sub?: string; accent?: string }) {
   return (
-    <div className="bg-white border border-[#EAEAEA] rounded-2xl p-4">
-      <div className="text-[11.5px] font-bold text-[#ADADAD] uppercase tracking-wide">{label}</div>
-      <div className="text-[26px] font-extrabold text-[#111] mt-1">{value}</div>
-      {sub && <div className="text-[11.5px] text-[#888]">{sub}</div>}
+    <div className="card card-pad !p-4">
+      <div className="section-label">{label}</div>
+      <div className={`text-[26px] font-extrabold mt-1 ${accent ?? "text-ink-900"}`}>{value}</div>
+      {sub && <div className="text-[11.5px] text-ink-400 mt-0.5">{sub}</div>}
+    </div>
+  );
+}
+
+const PROVIDER_TONE: Record<string, string> = {
+  Twilio: "bg-[#F22F46]", RingCentral: "bg-[#FF8800]", OpenAI: "bg-[#10A37F]",
+};
+
+function latencyTone(ms: number): string {
+  if (ms <= 0) return "text-ink-400";
+  if (ms < 1500) return "text-[#15803D]";
+  if (ms < 4000) return "text-[#B45309]";
+  return "text-[#B91C1C]";
+}
+
+/* ── API performance dashboard ─────────────────────────────────────────────── */
+
+export function ApiPerformance() {
+  const { data: m } = useQuery({ queryKey: ["apiMetrics"], queryFn: fetchApiMetrics, refetchInterval: 5000 });
+
+  if (!m || m.total === 0) {
+    return (
+      <div className="text-[13px] text-ink-400 italic card card-pad text-center py-10 border-dashed">
+        No API calls recorded yet — run a simulation and every meaningful call (Twilio, RingCentral, OpenAI)
+        will be measured here with latency, error rate, and cost.
+      </div>
+    );
+  }
+
+  const providers = Object.entries(m.providers);
+  return (
+    <div className="space-y-5">
+      {/* Totals */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <Stat label="API calls" value={m.total.toLocaleString()} sub="meaningful calls only" />
+        <Stat label="Errors" value={m.total_errors}
+          sub={`${m.total ? Math.round(100 * m.total_errors / m.total) : 0}% error rate`}
+          accent={m.total_errors > 0 ? "text-[#B91C1C]" : "text-ink-900"} />
+        <Stat label="Est. spend" value={`$${m.total_cost.toFixed(2)}`} sub="Twilio + OpenAI" />
+        <Stat label="Providers" value={providers.length} sub={providers.map(p => p[0]).join(" · ")} />
+      </div>
+
+      {/* By provider */}
+      <div className="card card-pad">
+        <div className="text-[13px] font-bold text-ink-900 mb-3">By provider</div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {providers.map(([name, p]) => (
+            <div key={name} className="border border-line rounded-xl p-4">
+              <div className="flex items-center gap-2 mb-2.5">
+                <span className={`w-2.5 h-2.5 rounded-full ${PROVIDER_TONE[name] ?? "bg-ink-400"}`} />
+                <span className="text-[13.5px] font-bold text-ink-900">{name}</span>
+                <span className="text-[11.5px] text-ink-400 ml-auto">{p.count} calls</span>
+              </div>
+              <div className="grid grid-cols-2 gap-y-2 text-[12px]">
+                <div><div className="text-ink-400">Avg latency</div><div className={`font-bold ${latencyTone(p.avg_ms)}`}>{p.avg_ms} ms</div></div>
+                <div><div className="text-ink-400">P95 latency</div><div className={`font-bold ${latencyTone(p.p95_ms)}`}>{p.p95_ms} ms</div></div>
+                <div><div className="text-ink-400">Error rate</div><div className={`font-bold ${p.error_rate > 0 ? "text-[#B91C1C]" : "text-[#15803D]"}`}>{p.error_rate}%</div></div>
+                <div><div className="text-ink-400">Spend</div><div className="font-bold text-ink-900">${p.cost.toFixed(3)}</div></div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* By operation */}
+      <div className="card card-pad">
+        <div className="text-[13px] font-bold text-ink-900 mb-3">By operation</div>
+        <table className="w-full text-[12.5px]">
+          <thead>
+            <tr className="text-left text-ink-400 border-b border-line">
+              <th className="pb-2 font-semibold">Operation</th>
+              <th className="pb-2 font-semibold">Calls</th>
+              <th className="pb-2 font-semibold">Avg</th>
+              <th className="pb-2 font-semibold">P95</th>
+              <th className="pb-2 font-semibold">Errors</th>
+              <th className="pb-2 font-semibold text-right">Spend</th>
+            </tr>
+          </thead>
+          <tbody>
+            {m.operations.map((o, i) => (
+              <tr key={i} className="border-b border-line-soft">
+                <td className="py-2">
+                  <span className="font-semibold text-ink-700">{o.provider}</span>
+                  <span className="text-ink-400"> · {o.operation}</span>
+                </td>
+                <td className="py-2">{o.count}</td>
+                <td className={`py-2 font-medium ${latencyTone(o.avg_ms)}`}>{o.avg_ms ? `${o.avg_ms} ms` : "—"}</td>
+                <td className={`py-2 font-medium ${latencyTone(o.p95_ms)}`}>{o.p95_ms ? `${o.p95_ms} ms` : "—"}</td>
+                <td className={`py-2 ${o.errors > 0 ? "text-[#B91C1C] font-semibold" : "text-ink-400"}`}>{o.errors || "—"}</td>
+                <td className="py-2 text-right">{o.cost > 0 ? `$${o.cost.toFixed(3)}` : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Live call feed */}
+      <div className="card card-pad">
+        <div className="text-[13px] font-bold text-ink-900 mb-3">Recent API calls</div>
+        <div className="space-y-1 max-h-[300px] overflow-auto">
+          {m.recent.map((r, i) => (
+            <div key={i} className="flex items-center gap-3 text-[12px] py-1 border-b border-line-soft last:border-0">
+              <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${r.ok ? "bg-[#22C55E]" : "bg-[#EF4444]"}`} />
+              <span className="font-semibold text-ink-700 w-[90px] flex-shrink-0">{r.provider}</span>
+              <span className="text-ink-500 w-[120px] flex-shrink-0">{r.operation.replace(/_/g, " ")}</span>
+              <span className={`font-medium w-[64px] flex-shrink-0 ${latencyTone(r.latency_ms)}`}>{r.latency_ms ? `${r.latency_ms}ms` : "—"}</span>
+              {r.env && <span className="pill pill-neutral !py-0 !text-[10px] uppercase">{r.env}</span>}
+              <span className="text-ink-300 truncate flex-1">{r.detail}</span>
+              <span className="text-ink-300 flex-shrink-0">{r.ago_s}s ago</span>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -123,11 +236,11 @@ export function RealInsights() {
       </div>
 
       {ins.by_trigger && Object.keys(ins.by_trigger).length > 0 && (
-        <div className="bg-white border border-[#EAEAEA] rounded-2xl p-5">
-          <div className="text-[13px] font-bold text-[#111] mb-3">Trigger engagement — how fast does the AI engage after each entry point?</div>
+        <div className="card card-pad">
+          <div className="text-[13px] font-bold text-ink-900 mb-3">Trigger engagement — how fast does the AI engage after each entry point?</div>
           <table className="w-full text-[12.5px]">
             <thead>
-              <tr className="text-left text-[#ADADAD] border-b border-[#EAEAEA]">
+              <tr className="text-left text-ink-400 border-b border-line">
                 <th className="pb-2 font-semibold">Trigger</th>
                 <th className="pb-2 font-semibold">Runs</th>
                 <th className="pb-2 font-semibold">Passed</th>
@@ -137,8 +250,8 @@ export function RealInsights() {
             </thead>
             <tbody>
               {Object.entries(ins.by_trigger).map(([t, v]) => (
-                <tr key={t} className="border-b border-[#F4F4F2]">
-                  <td className="py-2 font-semibold text-[#333]">{REAL_TRIGGERS.find(x => x.id === t)?.label ?? t}</td>
+                <tr key={t} className="border-b border-line-soft">
+                  <td className="py-2 font-semibold text-ink-700">{REAL_TRIGGERS.find(x => x.id === t)?.label ?? t}</td>
                   <td className="py-2">{v.total}</td>
                   <td className="py-2">{v.passed}</td>
                   <td className="py-2">{v.avg_first_sms_latency_s > 0 ? `${v.avg_first_sms_latency_s}s` : "—"}</td>
@@ -151,11 +264,11 @@ export function RealInsights() {
       )}
 
       {ins.by_scenario && Object.keys(ins.by_scenario).length > 0 && (
-        <div className="bg-white border border-[#EAEAEA] rounded-2xl p-5">
-          <div className="text-[13px] font-bold text-[#111] mb-3">Per-scenario quality</div>
+        <div className="card card-pad">
+          <div className="text-[13px] font-bold text-ink-900 mb-3">Per-scenario quality</div>
           <table className="w-full text-[12.5px]">
             <thead>
-              <tr className="text-left text-[#ADADAD] border-b border-[#EAEAEA]">
+              <tr className="text-left text-ink-400 border-b border-line">
                 <th className="pb-2 font-semibold">Scenario</th>
                 <th className="pb-2 font-semibold">Runs</th>
                 <th className="pb-2 font-semibold">Passed</th>
@@ -164,8 +277,8 @@ export function RealInsights() {
             </thead>
             <tbody>
               {Object.entries(ins.by_scenario).map(([id, v]) => (
-                <tr key={id} className="border-b border-[#F4F4F2]">
-                  <td className="py-2 font-semibold text-[#333]">{SCENARIO_LABELS[id] ?? id}</td>
+                <tr key={id} className="border-b border-line-soft">
+                  <td className="py-2 font-semibold text-ink-700">{SCENARIO_LABELS[id] ?? id}</td>
                   <td className="py-2">{v.total}</td>
                   <td className="py-2">{v.passed}</td>
                   <td className="py-2">{v.avg_score > 0 ? `${v.avg_score}/100` : "—"}</td>
@@ -177,8 +290,8 @@ export function RealInsights() {
       )}
 
       {ins.failure_taxonomy && Object.keys(ins.failure_taxonomy).length > 0 && (
-        <div className="bg-white border border-[#EAEAEA] rounded-2xl p-5">
-          <div className="text-[13px] font-bold text-[#111] mb-3">Failure taxonomy — what's breaking?</div>
+        <div className="card card-pad">
+          <div className="text-[13px] font-bold text-ink-900 mb-3">Failure taxonomy — what's breaking?</div>
           <div className="flex gap-2 flex-wrap">
             {Object.entries(ins.failure_taxonomy).map(([k, v]) => (
               <span key={k} className="text-[12px] font-semibold bg-[#FEF2F2] text-[#991B1B] border border-[#FECACA] px-3 py-1.5 rounded-full">
@@ -186,7 +299,7 @@ export function RealInsights() {
               </span>
             ))}
           </div>
-          <div className="text-[11.5px] text-[#888] mt-2">
+          <div className="text-[11.5px] text-ink-400 mt-2">
             no followup sms = AI never engaged after a call trigger · reply timeout = agent went silent &gt;90s mid-conversation
           </div>
         </div>

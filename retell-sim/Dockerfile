@@ -17,6 +17,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY server.py .
 COPY real_phone.py .
+COPY supa.py .
 COPY --from=frontend-builder /frontend/dist /app/frontend/dist
 
 EXPOSE 8000

@@ -100,6 +100,14 @@ def _rc_configured() -> bool:
     return bool(RC_CLIENT_ID and RC_CLIENT_SECRET and RC_JWT)
 
 
+def _supa_configured() -> bool:
+    try:
+        import supa
+        return supa.configured()
+    except Exception:
+        return False
+
+
 def _rc_access_token() -> str:
     with _rc_lock:
         if _rc_token["access"] and time.time() < _rc_token["exp"] - 60:
@@ -119,15 +127,17 @@ def _rc_access_token() -> str:
 
 def _rc_send_sms(to_number: str, body: str) -> None:
     tok = _rc_access_token()
-    r = httpx.post(
-        f"{RC_BASE}/restapi/v1.0/account/~/extension/~/sms",
-        headers={"Authorization": f"Bearer {tok}"},
-        json={"from": {"phoneNumber": RC_NUMBER},
-              "to": [{"phoneNumber": to_number}],
-              "text": body},
-        timeout=20,
-    )
-    r.raise_for_status()
+    def _do():
+        r = httpx.post(
+            f"{RC_BASE}/restapi/v1.0/account/~/extension/~/sms",
+            headers={"Authorization": f"Bearer {tok}"},
+            json={"from": {"phoneNumber": RC_NUMBER},
+                  "to": [{"phoneNumber": to_number}],
+                  "text": body},
+            timeout=20,
+        )
+        r.raise_for_status()
+    _timed("ringcentral", "sms", _do, cost=_COST["ringcentral.sms"], detail="PROD SMS")
 
 
 def _send_patient_sms(session: "RealSession", body: str) -> None:
@@ -136,6 +146,59 @@ def _send_patient_sms(session: "RealSession", body: str) -> None:
         _rc_send_sms(session.practice_number, body)
     else:
         _tw_send_sms(session.patient_number, session.practice_number, body)
+
+
+# ── API-call telemetry ────────────────────────────────────────────────────────
+# We record only MEANINGFUL outbound calls (placing a call, sending SMS, the LLM
+# judge, patient-reply generation, recording fetch) — NOT high-frequency noise
+# like call-status polls or token refreshes. Each record carries latency, ok/err,
+# an estimated cost, and the session it belongs to, so the dashboard can show
+# real performance + spend per provider.
+from collections import deque
+
+API_CALLS: deque = deque(maxlen=5000)
+_API_LOCK = threading.Lock()
+
+# Rough unit costs (USD) for spend estimation — tune as needed.
+_COST = {
+    "twilio.call_minute": 0.014,
+    "twilio.sms":         0.0079,
+    "twilio.recording":   0.0005,
+    "ringcentral.sms":    0.0,     # included in the RC plan
+    "openai.judge":       0.0025,  # ~one gpt-4o-mini judge pass
+    "openai.patient":     0.0008,  # ~one short reply
+}
+
+
+def _record_api(provider: str, operation: str, latency_ms: int, ok: bool,
+                session_id: str = "", env: str = "", cost: float = 0.0,
+                detail: str = "") -> None:
+    rec = {
+        "ts": time.time(), "provider": provider, "operation": operation,
+        "latency_ms": int(latency_ms), "ok": bool(ok),
+        "session_id": session_id, "env": env, "cost": round(cost, 5), "detail": detail[:120],
+    }
+    with _API_LOCK:
+        API_CALLS.append(rec)
+    try:
+        import supa
+        supa.record_api_call(rec)
+    except Exception:
+        pass
+
+
+def _timed(provider: str, operation: str, fn, *, session_id="", env="", cost=0.0, **kw):
+    """Run fn(), record one API-call telemetry row with its latency + ok/err."""
+    t0 = time.time()
+    ok = True
+    try:
+        return fn()
+    except Exception:
+        ok = False
+        raise
+    finally:
+        _record_api(provider, operation, (time.time() - t0) * 1000, ok,
+                    session_id=session_id, env=env, cost=cost, **kw)
 
 
 # Persistent-ish state (survives within a deploy; Railway FS is ephemeral across deploys)
@@ -169,9 +232,10 @@ def _tw_get(path: str, params: dict | None = None, timeout: int = 15) -> dict:
 
 
 def _tw_send_sms(from_number: str, to_number: str, body: str) -> dict:
-    return _tw_post("/Messages.json", {
-        "From": from_number, "To": to_number, "Body": body,
-    })
+    return _timed("twilio", "sms",
+                  lambda: _tw_post("/Messages.json", {
+                      "From": from_number, "To": to_number, "Body": body}),
+                  cost=_COST["twilio.sms"], detail="BETA SMS")
 
 
 # ── Session model ─────────────────────────────────────────────────────────────
@@ -390,10 +454,11 @@ def _patient_reply(session: RealSession, agent_msg: str) -> tuple[str, bool]:
     persona = _persona_for(session)
     history = [srv.Turn(t.role, t.message) for t in session.turns if t.role in ("patient", "agent")]
     oai_key = srv._resolve_openai_key("")
-    return srv.smart_patient_reply(
-        agent_msg, persona, history, session.goal, oai_key,
-        patient_phone=session.patient_number,
-    )
+    return _timed("openai", "patient_reply",
+                  lambda: srv.smart_patient_reply(
+                      agent_msg, persona, history, session.goal, oai_key,
+                      patient_phone=session.patient_number),
+                  session_id=session.session_id, env=session.env, cost=_COST["openai.patient"])
 
 
 def _judge_session(session: RealSession) -> None:
@@ -403,7 +468,9 @@ def _judge_session(session: RealSession) -> None:
         if not turns:
             return
         oai_key = srv._resolve_openai_key("")
-        score, reason = srv._llm_judge(session.scenario_label or session.scenario_id, turns, oai_key)
+        score, reason = _timed("openai", "judge",
+                               lambda: srv._llm_judge(session.scenario_label or session.scenario_id, turns, oai_key),
+                               session_id=session.session_id, env=session.env, cost=_COST["openai.judge"])
         session.score, session.judge_reason = score, reason
         session.log(f"Judge score: {score}")
     except Exception as exc:
@@ -422,8 +489,13 @@ def _finish(session: RealSession, status: str, outcome: str, note: str = "",
         _mark_booked(session.patient_number, session.practice_number)
 
     def _judge_and_save():
-        _judge_session(session)
-        _save_sessions()
+        _judge_session(session)        # fills score/judge_reason
+        _save_sessions()               # local /tmp snapshot
+        try:
+            import supa
+            supa.record_session(_session_dict(session))  # durable Supabase row
+        except Exception:
+            pass
 
     threading.Thread(target=_judge_and_save, daemon=True).start()
 
@@ -488,7 +560,10 @@ def _call_common(session: RealSession, extra: dict) -> dict:
         "RecordingStatusCallback": f"{PUBLIC_BASE}/api/twilio/recording-status?session_id={session.session_id}",
     }
     body.update(extra)
-    return _tw_post("/Calls.json", body)
+    return _timed("twilio", "call_placed",
+                  lambda: _tw_post("/Calls.json", body),
+                  session_id=session.session_id, env=session.env,
+                  detail=session.trigger_type)
 
 
 def _run_missed_call(session: RealSession) -> None:
@@ -664,6 +739,7 @@ def real_config():
         "trigger_types": list(VALID_TRIGGERS),
         "reply_timeout_s": REPLY_TIMEOUT_S,
         "followup_timeout_s": FOLLOWUP_SMS_TIMEOUT_S,
+        "supabase_configured": _supa_configured(),
     }
 
 
@@ -1067,17 +1143,68 @@ def real_suites():
 
 # ── Insights: engineering performance metrics ─────────────────────────────────
 
+def _pct(vals: list, p: float) -> float:
+    if not vals:
+        return 0.0
+    vals = sorted(vals)
+    return round(vals[min(len(vals) - 1, int(len(vals) * p))], 1)
+
+
+@router.get("/api/real/api-metrics")
+def real_api_metrics():
+    """Performance + spend of every meaningful API call the platform makes."""
+    with _API_LOCK:
+        calls = list(API_CALLS)
+    if not calls:
+        return {"total": 0, "providers": {}, "operations": [], "recent": [], "total_cost": 0.0}
+
+    PROVIDER_LABEL = {"twilio": "Twilio", "ringcentral": "RingCentral", "openai": "OpenAI"}
+
+    def agg(rows: list) -> dict:
+        lat = [r["latency_ms"] for r in rows if r["latency_ms"] > 0]
+        errs = sum(1 for r in rows if not r["ok"])
+        return {
+            "count": len(rows),
+            "errors": errs,
+            "error_rate": round(100 * errs / len(rows)) if rows else 0,
+            "avg_ms": round(sum(lat) / len(lat)) if lat else 0,
+            "p95_ms": round(_pct(lat, 0.95)) if lat else 0,
+            "cost": round(sum(r["cost"] for r in rows), 4),
+        }
+
+    providers: dict = {}
+    for p in sorted(set(r["provider"] for r in calls)):
+        rows = [r for r in calls if r["provider"] == p]
+        providers[PROVIDER_LABEL.get(p, p)] = agg(rows)
+
+    operations = []
+    for key in sorted(set(f'{r["provider"]}.{r["operation"]}' for r in calls)):
+        prov, op = key.split(".", 1)
+        rows = [r for r in calls if r["provider"] == prov and r["operation"] == op]
+        d = agg(rows)
+        d["provider"] = PROVIDER_LABEL.get(prov, prov)
+        d["operation"] = op.replace("_", " ")
+        operations.append(d)
+    operations.sort(key=lambda x: x["count"], reverse=True)
+
+    recent = [{**r, "ago_s": round(time.time() - r["ts"])} for r in list(calls)[-40:][::-1]]
+    return {
+        "total": len(calls),
+        "total_cost": round(sum(r["cost"] for r in calls), 4),
+        "total_errors": sum(1 for r in calls if not r["ok"]),
+        "providers": providers,
+        "operations": operations,
+        "recent": recent,
+    }
+
+
 @router.get("/api/real/insights")
 def real_insights():
     sessions = [s for s in REAL_SESSIONS.values() if s.status in ("completed", "failed")]
     if not sessions:
         return {"total": 0}
 
-    def pct(vals: list, p: float) -> float:
-        if not vals:
-            return 0.0
-        vals = sorted(vals)
-        return round(vals[min(len(vals) - 1, int(len(vals) * p))], 1)
+    pct = _pct
 
     by_trigger: dict[str, dict] = {}
     for t in VALID_TRIGGERS:
@@ -1309,6 +1436,12 @@ async def twilio_recording_status(request: Request, session_id: str = ""):
         except Exception:
             pass
         s.log(f"Recording ready ({s.recording_duration_s}s)")
+        # Now that the call has ended we know its real duration → record the
+        # actual Twilio voice spend (placement telemetry had cost 0).
+        minutes = max(1, -(-s.recording_duration_s // 60))  # ceil to whole minutes
+        _record_api("twilio", "call_charge", 0, True, session_id=s.session_id, env=s.env,
+                    cost=minutes * _COST["twilio.call_minute"] + _COST["twilio.recording"],
+                    detail=f"{s.recording_duration_s}s call")
         # The recording exists ⇒ the call has ended. If a voice session is still
         # open (e.g. a status callback was missed), finalize it from the transcript
         # instead of letting the watchdog mark a good conversation as failed.
