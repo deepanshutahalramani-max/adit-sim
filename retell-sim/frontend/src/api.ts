@@ -476,6 +476,7 @@ export interface RealConfig {
 
 export interface RealInsights {
   total: number;
+  not_testable?: number;
   passed?: number;
   failed?: number;
   pass_rate?: number;
@@ -570,6 +571,24 @@ export interface ApiMetrics {
 
 export async function fetchApiMetrics(): Promise<ApiMetrics> {
   const r = await fetch(`${BASE}/real/api-metrics`);
+  return r.json();
+}
+
+export interface EhrMetrics {
+  total: number;
+  total_failures?: number;
+  functions: {
+    name: string; label: string; count: number; success: number;
+    failures: number; success_rate: number; avg_ms: number;
+  }[];
+  recent: {
+    ts: number; name: string; ok: boolean; business_ok: boolean;
+    latency_ms: number; result: string; env: string; scenario_id: string; ago_s: number;
+  }[];
+}
+
+export async function fetchEhrMetrics(): Promise<EhrMetrics> {
+  const r = await fetch(`${BASE}/real/ehr-metrics`);
   return r.json();
 }
 

@@ -6,7 +6,7 @@
  */
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { fetchRealConfig, fetchRealSessions, fetchRealInsights, fetchApiMetrics } from "../api";
+import { fetchRealConfig, fetchRealSessions, fetchRealInsights, fetchApiMetrics, fetchEhrMetrics } from "../api";
 import { RealSessionCard, REAL_TRIGGERS, fmtPhone } from "./RealSessionCard";
 
 export function fmtCooldown(s: number): string {
@@ -304,6 +304,110 @@ export function RealInsights() {
           </div>
         </div>
       )}
+
+      {(ins.not_testable ?? 0) > 0 && (
+        <div className="card card-pad bg-canvas-sunken">
+          <div className="text-[12.5px] text-ink-500">
+            <b>{ins.not_testable}</b> session(s) excluded from scoring — the agent reported no EHR/system
+            access, so booking/reschedule/cancel can't be tested there (not connected practice).
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── EHR / agent API flow (from Retell tool-call logs) ─────────────────────── */
+
+const EHR_ORDER = [
+  "create_new_patient", "fetch_patient_details", "upcoming_appointments",
+  "get_available_slot", "get_rescheduling_slots", "book_appointment",
+  "modify_appointment", "provider_list", "create_task",
+];
+
+export function EhrApiFlow() {
+  const { data: m } = useQuery({ queryKey: ["ehrMetrics"], queryFn: fetchEhrMetrics, refetchInterval: 6000 });
+
+  if (!m || m.total === 0) {
+    return (
+      <div className="text-[13px] text-ink-400 italic card card-pad text-center py-10 border-dashed">
+        No EHR function calls captured yet. Run a scenario on a connected practice (e.g. PROD) — the agent's
+        create_new_patient / get_available_slot / book_appointment / create_task calls are pulled from Retell
+        and measured here with success vs failure and latency.
+      </div>
+    );
+  }
+
+  const fns = [...m.functions].sort(
+    (a, b) => EHR_ORDER.indexOf(a.name) - EHR_ORDER.indexOf(b.name));
+
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <Stat label="EHR calls" value={m.total} sub="agent → ADIT functions" />
+        <Stat label="Business failures" value={m.total_failures ?? 0}
+          accent={(m.total_failures ?? 0) > 0 ? "text-[#B91C1C]" : "text-ink-900"}
+          sub="e.g. booking rejected" />
+        <Stat label="Functions used" value={m.functions.length} />
+        <Stat label="Success rate"
+          value={`${m.total ? Math.round(100 * (m.total - (m.total_failures ?? 0)) / m.total) : 0}%`} />
+      </div>
+
+      {/* Per-function */}
+      <div className="card card-pad">
+        <div className="text-[13px] font-bold text-ink-900 mb-3">EHR functions — the booking-flow APIs</div>
+        <div className="space-y-2.5">
+          {fns.map(f => {
+            const failPct = f.count ? (f.failures / f.count) * 100 : 0;
+            return (
+              <div key={f.name} className="flex items-center gap-3">
+                <div className="w-[170px] flex-shrink-0">
+                  <div className="text-[12.5px] font-semibold text-ink-700">{f.label}</div>
+                  <div className="text-[10.5px] text-ink-400 font-mono">{f.name}</div>
+                </div>
+                {/* success/fail bar */}
+                <div className="flex-1 h-6 rounded-lg overflow-hidden bg-canvas-sunken flex">
+                  <div className="h-full bg-[#86EFAC] flex items-center justify-end pr-2" style={{ width: `${100 - failPct}%` }}>
+                    {f.success > 0 && <span className="text-[10px] font-bold text-[#15803D]">{f.success}</span>}
+                  </div>
+                  {f.failures > 0 && (
+                    <div className="h-full bg-[#FCA5A5] flex items-center justify-start pl-2" style={{ width: `${failPct}%` }}>
+                      <span className="text-[10px] font-bold text-[#B91C1C]">{f.failures}</span>
+                    </div>
+                  )}
+                </div>
+                <div className="w-[120px] flex-shrink-0 text-right text-[11.5px]">
+                  <span className={`font-bold ${f.success_rate >= 90 ? "text-[#15803D]" : f.success_rate >= 60 ? "text-[#B45309]" : "text-[#B91C1C]"}`}>
+                    {f.success_rate}%
+                  </span>
+                  <span className="text-ink-400"> · {f.count}× · {f.avg_ms}ms</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="text-[11px] text-ink-400 mt-3">
+          Green = business success · Red = business failure (e.g. <code>book_appointment</code> returning
+          "slot no longer available"). Pulled live from the Retell agent's tool-call logs.
+        </div>
+      </div>
+
+      {/* Recent calls */}
+      <div className="card card-pad">
+        <div className="text-[13px] font-bold text-ink-900 mb-3">Recent EHR calls</div>
+        <div className="space-y-1 max-h-[300px] overflow-auto">
+          {m.recent.map((r, i) => (
+            <div key={i} className="flex items-center gap-3 text-[12px] py-1 border-b border-line-soft last:border-0">
+              <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${r.business_ok ? "bg-[#22C55E]" : "bg-[#EF4444]"}`} />
+              <span className="font-mono font-semibold text-ink-700 w-[170px] flex-shrink-0">{r.name}</span>
+              {r.env && <span className="pill pill-neutral !py-0 !text-[10px] uppercase">{r.env}</span>}
+              <span className={`font-medium ${r.business_ok ? "text-[#15803D]" : "text-[#B91C1C]"}`}>{r.business_ok ? "ok" : "fail"}</span>
+              <span className="text-ink-300 truncate flex-1">{r.result}</span>
+              <span className="text-ink-300 flex-shrink-0">{r.ago_s}s</span>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

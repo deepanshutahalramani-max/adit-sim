@@ -61,11 +61,22 @@ _TW_BASE = "https://api.twilio.com/2010-04-01"
 
 MAX_SMS_TURNS          = 16        # safety cap on auto-replies per session
 INCOMPLETE_HOLD_S      = 12        # silence before hanging up an incomplete call
-MISSED_CANCEL_S        = 4         # ringing seconds before cancelling a missed call
+MISSED_CANCEL_S        = 1         # cancel ASAP after ringing starts (true missed call)
 COOLDOWN_S             = 24 * 3600
 REPLY_TIMEOUT_S        = 90        # agent must reply within 90s mid-conversation
-FOLLOWUP_SMS_TIMEOUT_S = 180       # AI follow-up SMS must arrive within 3 min of a call
+# AI follow-up SMS after a missed/incomplete call can take 6-7 minutes to arrive
+# on the live practice path — give it 10 minutes before declaring no-engagement.
+FOLLOWUP_SMS_TIMEOUT_S = 600
 REPLY_DELAY_RANGE      = (8, 12)   # human-like typing delay (avoids ADIT in-flight race)
+
+# When the agent says this, the practice's EHR isn't connected — the conversation
+# can't actually book/reschedule/cancel, so it's NOT a meaningful pass/fail test.
+EHR_NOT_CONNECTED_KWS = [
+    "not near the system", "don't have access to the system",
+    "do not have access to the system", "can't access the system",
+    "cannot access the system", "not able to access the system",
+    "no access to the system", "system is not available right now",
+]
 
 # Stable identity per Twilio number — ADIT builds one consistent patient record per number.
 NUMBER_IDENTITIES: dict[str, dict] = {
@@ -201,6 +212,105 @@ def _timed(provider: str, operation: str, fn, *, session_id="", env="", cost=0.0
                     session_id=session_id, env=env, cost=cost, **kw)
 
 
+# ── EHR / agent function-call tracking (from Retell tool-call logs) ──────────
+# The Retell agent calls ADIT's EHR functions during the conversation. Retell
+# logs each with name/args/result/successful. We pull these post-session so the
+# dashboard can show the real EHR API flow + business success per function.
+EHR_FUNCTIONS = {
+    "create_new_patient", "fetch_patient_details", "get_available_slot",
+    "get_rescheduling_slots", "book_appointment", "modify_appointment",
+    "upcoming_appointments", "provider_list", "create_task",
+}
+EHR_CALLS: deque = deque(maxlen=5000)
+
+
+def _business_ok(name: str, content: str, successful: bool) -> bool:
+    """Retell marks the HTTP call successful even when the business result failed
+    (e.g. book_appointment returns 'BOOKING FAILED'). Decode the real outcome."""
+    if not successful:
+        return False
+    low = (content or "").lower()
+    if "booking failed" in low or "failed." in low:
+        return False
+    if name == "book_appointment":
+        return "booking failed" not in low
+    return True
+
+
+def _extract_ehr_calls(messages: list) -> list:
+    """Turn Retell message_with_tool_calls into ordered EHR call records."""
+    inv: dict[str, dict] = {}
+    out: list = []
+    for m in messages or []:
+        role = m.get("role")
+        if role == "tool_call_invocation" and m.get("name") in EHR_FUNCTIONS:
+            inv[m.get("tool_call_id")] = {
+                "name": m.get("name"),
+                "ts": m.get("created_timestamp", 0),
+                "args": m.get("arguments", ""),
+            }
+        elif role == "tool_call_result" and m.get("tool_call_id") in inv:
+            i = inv.pop(m.get("tool_call_id"))
+            content = m.get("content", "")
+            ok = bool(m.get("successful", True))
+            biz = _business_ok(i["name"], content, ok)
+            lat = max(0, m.get("created_timestamp", 0) - i["ts"])
+            out.append({
+                "name": i["name"], "ok": ok, "business_ok": biz,
+                "latency_ms": int(lat), "result": content[:200],
+            })
+    return out
+
+
+def _fetch_ehr_calls(session: RealSession) -> None:
+    """Find this session's Retell record and extract its EHR tool calls."""
+    try:
+        srv = _sim()
+        api_base = ("https://betafrontdeskchatagent.adit.com" if session.env == "beta"
+                    else "https://frontdeskchatagent.adit.com")
+        key = srv._resolve_retell_key(api_base)
+        digits = session.patient_number.lstrip("+")[-10:]
+        hdrs = {"Authorization": f"Bearer {key}"}
+
+        msgs = None
+        if session.trigger_type == "inbound_call":
+            r = httpx.post("https://api.retellai.com/v2/list-calls", headers=hdrs,
+                           json={"limit": 30, "sort_order": "descending"}, timeout=15)
+            calls = r.json() if r.status_code == 200 else []
+            for c in calls:
+                if digits in str(c.get("from_number", "")) and \
+                   c.get("start_timestamp", 0) / 1000 >= session.created_at - 120:
+                    msgs = c.get("transcript_with_tool_calls") or c.get("message_with_tool_calls")
+                    break
+        else:
+            r = httpx.get("https://api.retellai.com/list-chat", headers=hdrs, timeout=15)
+            chats = sorted(r.json() if r.status_code == 200 else [],
+                           key=lambda c: c.get("start_timestamp", 0), reverse=True)
+            for c in chats:
+                dv = c.get("retell_llm_dynamic_variables", {}) or {}
+                if digits in str(dv.get("patient_phone_number", "")) and \
+                   c.get("start_timestamp", 0) / 1000 >= session.created_at - 120:
+                    msgs = c.get("message_with_tool_calls")
+                    break
+
+        if not msgs:
+            return
+        calls = _extract_ehr_calls(msgs)
+        session.ehr_calls = calls
+        for c in calls:
+            rec = {"ts": time.time(), "session_id": session.session_id, "env": session.env,
+                   "scenario_id": session.scenario_id, **c}
+            EHR_CALLS.append(rec)
+            try:
+                import supa
+                supa.record_ehr_call(rec)
+            except Exception:
+                pass
+        session.log(f"EHR: {len(calls)} function call(s) extracted from Retell")
+    except Exception as exc:
+        session.log(f"EHR fetch failed: {exc}")
+
+
 # Persistent-ish state (survives within a deploy; Railway FS is ephemeral across deploys)
 _STATE_FILE = "/tmp/real_phone_state.json"
 
@@ -277,6 +387,7 @@ class RealSession:
     suite_id: str = ""
     first_sms_latency_s: float = 0.0   # call end → first AI SMS
     awaiting_reply_since: float = 0.0  # set when patient sends; cleared on agent reply
+    ehr_calls: list = field(default_factory=list)  # EHR tool calls pulled from Retell
     error: str = ""
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
@@ -489,6 +600,8 @@ def _finish(session: RealSession, status: str, outcome: str, note: str = "",
         _mark_booked(session.patient_number, session.practice_number)
 
     def _judge_and_save():
+        time.sleep(8)                  # let Retell finalize the chat/call record
+        _fetch_ehr_calls(session)      # pull EHR tool calls from Retell
         _judge_session(session)        # fills score/judge_reason
         _save_sessions()               # local /tmp snapshot
         try:
@@ -503,6 +616,12 @@ def _finish(session: RealSession, status: str, outcome: str, note: str = "",
 def _check_completion(session: RealSession, agent_msg: str) -> bool:
     srv = _sim()
     low = agent_msg.lower()
+    # EHR not connected → this practice can't actually book/reschedule/cancel,
+    # so it's not a meaningful test. End it and flag it as not-testable.
+    if any(kw in low for kw in EHR_NOT_CONNECTED_KWS):
+        _finish(session, "completed", "ehr_not_connected",
+                "Agent has no EHR/system access — not a valid test")
+        return True
     if any(kw in low for kw in srv.BOOKING_CONFIRMED_KWS):
         _finish(session, "completed", "booking_confirmed", "Goal reached: booking confirmed")
     elif any(kw in low for kw in srv.TASK_CREATED_KWS):
@@ -573,21 +692,28 @@ def _run_missed_call(session: RealSession) -> None:
         })
         session.call_sid = call.get("sid", "")
         session.status = "calling"
-        session.log(f"Call placed — cancelling after ~{MISSED_CANCEL_S}s of ringing (missed call)")
+        session.log("Call placed — cancelling the instant it rings (true missed call)")
 
+        # Poll FAST and cancel the moment it starts ringing, so the AI never
+        # answers. The old 1s poll + extra sleep let the practice→Retell forward
+        # pick up first, turning missed calls into incomplete calls.
         deadline = time.time() + 30
+        cancelled = False
         while time.time() < deadline:
-            time.sleep(1)
+            time.sleep(0.4)
             st = _tw_get(f"/Calls/{session.call_sid}.json").get("status", "")
             session.call_status = st
             if st == "ringing":
-                time.sleep(MISSED_CANCEL_S)
                 _tw_post(f"/Calls/{session.call_sid}.json", {"Status": "canceled"})
-                session.log("Cancelled while ringing → missed call created")
+                session.log("Cancelled during first ring → missed call created")
+                cancelled = True
                 break
             if st == "in-progress":
+                # Answered faster than we could cancel — end immediately, but be
+                # honest that this landed as an incomplete call, not a missed one.
                 _tw_post(f"/Calls/{session.call_sid}.json", {"Status": "completed"})
-                session.log("Agent answered before cancel — hung up (registered as incomplete call)")
+                session.log("⚠ Answered before cancel — registered as INCOMPLETE call, not missed")
+                cancelled = True
                 break
             if st in ("completed", "busy", "failed", "no-answer", "canceled"):
                 session.log(f"Call ended: {st}")
@@ -1198,11 +1324,58 @@ def real_api_metrics():
     }
 
 
+@router.get("/api/real/ehr-metrics")
+def real_ehr_metrics():
+    """Per-EHR-function call metrics pulled from the Retell agent's tool-call logs —
+    the create_new_patient / get_available_slot / book_appointment / modify /
+    create_task flow. Shows volume, business success vs failure, and latency."""
+    with _API_LOCK:
+        calls = list(EHR_CALLS)
+    if not calls:
+        return {"total": 0, "functions": [], "recent": []}
+
+    FN_LABEL = {
+        "create_new_patient": "Create New Patient", "fetch_patient_details": "Fetch Patient Details",
+        "get_available_slot": "Get Available Slots", "get_rescheduling_slots": "Get Rescheduling Slots",
+        "book_appointment": "Book Appointment", "modify_appointment": "Modify Appointment",
+        "upcoming_appointments": "Upcoming Appointment", "provider_list": "Provider List",
+        "create_task": "Create Task",
+    }
+    functions = []
+    for name in sorted(set(c["name"] for c in calls)):
+        rows = [c for c in calls if c["name"] == name]
+        lat = [c["latency_ms"] for c in rows if c["latency_ms"] > 0]
+        biz_fail = sum(1 for c in rows if not c["business_ok"])
+        functions.append({
+            "name": name, "label": FN_LABEL.get(name, name),
+            "count": len(rows),
+            "success": sum(1 for c in rows if c["business_ok"]),
+            "failures": biz_fail,
+            "success_rate": round(100 * (len(rows) - biz_fail) / len(rows)) if rows else 0,
+            "avg_ms": round(sum(lat) / len(lat)) if lat else 0,
+        })
+    functions.sort(key=lambda x: x["count"], reverse=True)
+    recent = [{**c, "ago_s": round(time.time() - c["ts"])} for c in list(calls)[-50:][::-1]]
+    return {
+        "total": len(calls),
+        "total_failures": sum(1 for c in calls if not c["business_ok"]),
+        "functions": functions,
+        "recent": recent,
+    }
+
+
 @router.get("/api/real/insights")
 def real_insights():
-    sessions = [s for s in REAL_SESSIONS.values() if s.status in ("completed", "failed")]
-    if not sessions:
+    all_terminal = [s for s in REAL_SESSIONS.values() if s.status in ("completed", "failed")]
+    # EHR-not-connected sessions aren't valid tests (practice has no system access)
+    # → keep them visible but EXCLUDE from pass/fail and quality scoring.
+    not_testable = [s for s in all_terminal if s.outcome == "ehr_not_connected"]
+    sessions = [s for s in all_terminal if s.outcome != "ehr_not_connected"]
+    if not all_terminal:
         return {"total": 0}
+    if not sessions:
+        return {"total": 0, "not_testable": len(not_testable),
+                "note": "All sessions hit 'EHR not connected' — no valid tests yet."}
 
     pct = _pct
 
@@ -1241,6 +1414,7 @@ def real_insights():
     passed = sum(1 for s in sessions if s.outcome in ("booking_confirmed", "task_created"))
     return {
         "total": len(sessions),
+        "not_testable": len(not_testable),   # EHR-not-connected, excluded from scoring
         "passed": passed,
         "failed": sum(1 for s in sessions if s.status == "failed"),
         "pass_rate": round(100 * passed / len(sessions)),

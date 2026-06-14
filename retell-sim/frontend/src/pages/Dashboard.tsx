@@ -6,15 +6,16 @@
  */
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { BarChart3, Activity, FolderClock } from "lucide-react";
-import { RealInsights, SessionsExplorer, ApiPerformance } from "../components/RealOps";
+import { BarChart3, Activity, Stethoscope, FolderClock } from "lucide-react";
+import { RealInsights, SessionsExplorer, ApiPerformance, EhrApiFlow } from "../components/RealOps";
 import { fetchRealConfig } from "../api";
 
-type Section = "overview" | "api" | "sessions";
+type Section = "overview" | "ehr" | "api" | "sessions";
 
 const SECTIONS = [
   { id: "overview", label: "Overview",   icon: BarChart3 },
-  { id: "api",      label: "API & Cost", icon: Activity },
+  { id: "ehr",      label: "EHR APIs",   icon: Stethoscope },
+  { id: "api",      label: "Infra & Cost", icon: Activity },
   { id: "sessions", label: "Sessions",   icon: FolderClock },
 ] as const;
 
@@ -47,6 +48,7 @@ export function Dashboard() {
       </div>
 
       {section === "overview" && <RealInsights />}
+      {section === "ehr"      && <EhrApiFlow />}
       {section === "api"      && <ApiPerformance />}
       {section === "sessions" && <SessionsExplorer />}
     </div>

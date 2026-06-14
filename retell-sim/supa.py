@@ -29,7 +29,13 @@ One-time schema (run in the Supabase SQL editor):
     latency_ms int, ok boolean, cost real,
     session_id text, env text, detail text
   );
+  create table if not exists qa_ehr_calls (
+    id bigint generated always as identity primary key,
+    ts timestamptz, session_id text, env text, scenario_id text,
+    name text, ok boolean, business_ok boolean, latency_ms int, result text
+  );
   create index if not exists qa_api_calls_ts on qa_api_calls(ts);
+  create index if not exists qa_ehr_calls_ts on qa_ehr_calls(ts);
   create index if not exists qa_sessions_created on qa_sessions(created_at);
 """
 from __future__ import annotations
@@ -118,6 +124,20 @@ def record_api_call(rec: dict) -> None:
         if len(_buf) >= _BATCH:
             batch, _buf[:] = _buf[:], []
             threading.Thread(target=_post, args=("qa_api_calls", batch), daemon=True).start()
+
+
+def record_ehr_call(rec: dict) -> None:
+    """Persist one EHR/agent function-call telemetry row."""
+    if not configured():
+        return
+    row = {
+        "ts": _iso(rec.get("ts")), "session_id": rec.get("session_id"),
+        "env": rec.get("env"), "scenario_id": rec.get("scenario_id"),
+        "name": rec.get("name"), "ok": rec.get("ok"),
+        "business_ok": rec.get("business_ok"), "latency_ms": rec.get("latency_ms"),
+        "result": rec.get("result"),
+    }
+    threading.Thread(target=_post, args=("qa_ehr_calls", [row]), daemon=True).start()
 
 
 def flush() -> None:
