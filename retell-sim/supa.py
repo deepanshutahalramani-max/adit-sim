@@ -56,8 +56,13 @@ from datetime import datetime, timezone
 
 import httpx
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
-SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
+# Accept either the base project URL or the full REST URL — normalize to base,
+# since we append /rest/v1/{table} ourselves.
+_raw_url = os.environ.get("SUPABASE_URL", "").strip().rstrip("/")
+if _raw_url.endswith("/rest/v1"):
+    _raw_url = _raw_url[: -len("/rest/v1")]
+SUPABASE_URL = _raw_url
+SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "").strip()
 
 # small background buffer for api_calls so we batch inserts and never block callers
 _buf: list[dict] = []
