@@ -7,15 +7,41 @@
  */
 import { useState } from "react";
 import type { Config, AppConfig } from "../types";
-import { PromptConfigurator } from "../components/PromptConfigurator";
 import { RealRunPanel } from "../components/RealRunPanel";
 import { RealManualConsole } from "../components/RealManualConsole";
 import { IdentityBoard } from "../components/RealOps";
 
 /** Map sidebar environment to real-phone env */
-export function realEnv(environment: string): "beta" | "prod" | null {
+export function realEnv(environment: string): "beta" | "prod" | "custom" | null {
   if (environment === "live") return "prod";
   if (environment === "beta") return "beta";
+  if (environment === "custom") return "custom";
+  return null;
+}
+
+/** The destination number for a run: custom env uses the user-entered number;
+ *  prod/beta use their configured practice number server-side (undefined). */
+export function destNumber(config: Config): string | undefined {
+  return config.environment === "custom" ? (config.customNumber || undefined) : undefined;
+}
+
+/** Shared guard: returns an error node if the env can't run, else null. */
+export function envGuard(config: Config): JSX.Element | null {
+  const env = realEnv(config.environment);
+  if (!env) {
+    return (
+      <div className="text-[13px] text-[#92600A] bg-[#FFF7E6] border border-[#F5D998] rounded-2xl p-6">
+        Switch to <b>Production</b>, <b>Beta</b>, or <b>Custom</b> in the sidebar to run tests.
+      </div>
+    );
+  }
+  if (env === "custom" && !config.customNumber) {
+    return (
+      <div className="text-[13px] text-[#92600A] bg-[#FFF7E6] border border-[#F5D998] rounded-2xl p-6">
+        Custom environment selected — enter the <b>number to call / text</b> in the sidebar to begin.
+      </div>
+    );
+  }
   return null;
 }
 
@@ -30,20 +56,16 @@ export function Simulations({ config, appConfig }: Props) {
   const scenarios = appConfig?.scenarios ?? [];
   const [subTab, setSubTab] = useState<SubTab>("ai");
   const [selected, setSelected] = useState<string[]>([]);
-  const env = realEnv(config.environment);
+  const env = realEnv(config.environment)!;
+  const dest = destNumber(config);
 
   const toggleScenario = (id: string) =>
     setSelected(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
   const toggleAll = () =>
     setSelected(s => s.length === scenarios.length ? [] : scenarios.map(s => s.id));
 
-  if (!env) {
-    return (
-      <div className="text-[13px] text-[#92600A] bg-[#FFF7E6] border border-[#F5D998] rounded-2xl p-6">
-        Real-phone testing supports <b>Live (PROD)</b> and <b>Beta</b> — switch the environment in the sidebar.
-      </div>
-    );
-  }
+  const guard = envGuard(config);
+  if (guard) return <>{guard}</>;
 
   return (
     <div>
@@ -69,8 +91,6 @@ export function Simulations({ config, appConfig }: Props) {
 
       {subTab === "ai" && (
         <div className="space-y-4">
-          <PromptConfigurator agentPhone={config.agentPhone} agentId={config.smsAgentId} apiBase={config.apiBase} />
-
           {/* Patient test numbers */}
           <IdentityBoard env={env} />
 
@@ -102,11 +122,12 @@ export function Simulations({ config, appConfig }: Props) {
           <div className="bg-white border border-[#EAEAEA] rounded-xl p-5">
             <div className="text-[13px] font-bold text-[#111] mb-1">📱 Run as real conversations</div>
             <div className="text-[12px] text-[#888] mb-4">
-              Each scenario runs as a real call/SMS conversation with the practice number — results
-              register in the ADIT app. Existing-patient scenarios auto-book the patient first.
+              Each scenario runs as a real call/SMS conversation with the {env === "custom" ? "number you entered" : "practice number"} —
+              results register in the agent's system.
             </div>
             <RealRunPanel
               env={env}
+              practiceNumber={dest}
               kind="suite"
               scenarioIds={selected}
               allowedTriggers={["incomplete_call", "missed_call", "inbound_sms"]}
@@ -118,7 +139,7 @@ export function Simulations({ config, appConfig }: Props) {
         </div>
       )}
 
-      {subTab === "manual" && <RealManualConsole env={env} />}
+      {subTab === "manual" && <RealManualConsole env={env} practiceNumber={dest} />}
     </div>
   );
 }

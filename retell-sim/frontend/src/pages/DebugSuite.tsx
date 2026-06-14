@@ -12,9 +12,8 @@ import type { Config, DebugAnalysis, SimResult } from "../types";
 import { SimResultCard } from "../components/SimResultCard";
 import { LiveChat, type LiveChatDoneResult } from "../components/LiveChat";
 import { LiveWebCall, type LiveWebCallHandle } from "../components/LiveWebCall";
-import { PromptConfigurator } from "../components/PromptConfigurator";
 import { RealRunPanel } from "../components/RealRunPanel";
-import { realEnv } from "./Simulations";
+import { realEnv, destNumber } from "./Simulations";
 
 interface Props {
   config: Config;
@@ -377,9 +376,6 @@ export function DebugSuite({ config, onResults }: Props) {
               <div className="grid grid-cols-2 gap-5 mb-4">
                 <div className="space-y-4">
                   <div>
-                    <PromptConfigurator onLoad={setSystemPrompt} agentPhone={config.agentPhone} agentId={config.smsAgentId} apiBase={config.apiBase} />
-                  </div>
-                  <div>
                     <label className="text-[10px] font-bold uppercase tracking-widest text-[#ADADAD] block mb-1.5">
                       Expected Behaviour <span className="text-[#DADAD8] normal-case font-normal">(optional)</span>
                     </label>
@@ -441,11 +437,8 @@ export function DebugSuite({ config, onResults }: Props) {
               </div>
 
               <div className="grid grid-cols-2 gap-5 mb-4">
-                {/* Left — prompt */}
+                {/* Left — context */}
                 <div className="space-y-4">
-                  <div>
-                    <PromptConfigurator onLoad={setSystemPrompt} agentType="call" agentPhone={config.agentPhone} agentId={config.callAgentId} apiBase={config.apiBase} />
-                  </div>
                   <div>
                     <label className="text-[10px] font-bold uppercase tracking-widest text-[#ADADAD] block mb-1.5">
                       Additional Context <span className="text-[#DADAD8] normal-case font-normal">(optional)</span>
@@ -633,9 +626,10 @@ export function DebugSuite({ config, onResults }: Props) {
               Runs the repro as a real {mode === "call" ? "phone call" : "SMS conversation"} with the
               practice number — the truest reproduction, visible in the ADIT app. 2 runs to confirm consistency.
             </div>
-            {realEnv(config.environment) ? (
+            {realEnv(config.environment) && !(config.environment === "custom" && !config.customNumber) ? (
               <RealRunPanel
                 env={realEnv(config.environment)!}
+                practiceNumber={destNumber(config)}
                 kind="repro"
                 opener={diagnosis.repro_opener}
                 goal={`Reproduce this bug: ${editedRootCause || diagnosis.root_cause}. Follow the scenario faithfully and observe whether the agent misbehaves.`}
@@ -646,7 +640,7 @@ export function DebugSuite({ config, onResults }: Props) {
               />
             ) : (
               <div className="text-[12.5px] text-[#92600A] bg-[#FFF7E6] border border-[#F5D998] rounded-lg px-3 py-2">
-                Real-phone testing supports Live (PROD) and Beta only.
+                Switch to Production, Beta, or Custom (with a number) in the sidebar to reproduce.
               </div>
             )}
           </div>

@@ -20,15 +20,15 @@ interface Props {
 }
 
 const HOSTS: Record<string, string> = {
-  live: "https://frontdeskchatagent.adit.com",
-  beta: "https://betafrontdeskchatagent.adit.com",
-  dev:  "https://gjqwwdfeo35edl-8009.proxy.runpod.net",
+  live:   "https://frontdeskchatagent.adit.com",
+  beta:   "https://betafrontdeskchatagent.adit.com",
+  custom: "https://frontdeskchatagent.adit.com",
 };
 
 const ENVS = [
-  { id: "live", label: "Production", dot: "bg-[#22C55E]" },
-  { id: "beta", label: "Beta",       dot: "bg-[#F59E0B]" },
-  { id: "dev",  label: "Dev",        dot: "bg-[#3B82F6]" },
+  { id: "live",   label: "Production", dot: "bg-[#22C55E]" },
+  { id: "beta",   label: "Beta",       dot: "bg-[#F59E0B]" },
+  { id: "custom", label: "Custom",     dot: "bg-[#7C3AED]" },
 ];
 
 export function Sidebar({ config, onChange, agentName = "—", nav, activeTab, onNavigate }: Props) {
@@ -128,6 +128,27 @@ export function Sidebar({ config, onChange, agentName = "—", nav, activeTab, o
           </div>
           <ChevronDown className={`w-4 h-4 text-ink-400 ml-auto transition-transform ${envOpen ? "rotate-180" : ""}`} />
         </button>
+
+        {/* Custom destination number (Custom env only) */}
+        {config.environment === "custom" && (
+          <div className="mt-2">
+            <div className="text-[10px] text-ink-400 uppercase tracking-wide font-bold mb-1">Number to call / text</div>
+            <input
+              value={config.customNumber ?? ""}
+              onChange={e => {
+                const v = e.target.value;
+                localStorage.setItem("adit_custom_number", v);
+                set("customNumber", v);
+              }}
+              placeholder="+1 555 123 4567"
+              className="w-full bg-white border border-line-strong rounded-lg px-3 py-2 text-[13px] font-mono
+                         focus:outline-none focus:border-brand-400 focus:ring-4 focus:ring-brand-500/10"
+            />
+            <p className="text-[10.5px] text-ink-400 mt-1 leading-snug">
+              The platform will call / text this number directly. Use E.164 (e.g. +14025031303).
+            </p>
+          </div>
+        )}
 
         {/* Judge toggle */}
         <button onClick={() => set("useLlmJudge", !config.useLlmJudge)}

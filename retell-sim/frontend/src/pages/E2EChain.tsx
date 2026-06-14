@@ -4,10 +4,9 @@
  * as actual conversations with the practice number.
  */
 import type { Config } from "../types";
-import { PromptConfigurator } from "../components/PromptConfigurator";
 import { RealRunPanel } from "../components/RealRunPanel";
 import { IdentityBoard } from "../components/RealOps";
-import { realEnv } from "./Simulations";
+import { realEnv, destNumber, envGuard } from "./Simulations";
 
 interface Props {
   config: Config;
@@ -20,15 +19,11 @@ const PHASES = [
 ];
 
 export function E2EChain({ config }: Props) {
-  const env = realEnv(config.environment);
+  const env = realEnv(config.environment)!;
+  const dest = destNumber(config);
 
-  if (!env) {
-    return (
-      <div className="text-[13px] text-[#92600A] bg-[#FFF7E6] border border-[#F5D998] rounded-2xl p-6">
-        Real-phone testing supports <b>Live (PROD)</b> and <b>Beta</b> — switch the environment in the sidebar.
-      </div>
-    );
-  }
+  const guard = envGuard(config);
+  if (guard) return <>{guard}</>;
 
   return (
     <div className="space-y-5">
@@ -48,8 +43,6 @@ export function E2EChain({ config }: Props) {
         ))}
       </div>
 
-      <PromptConfigurator agentPhone={config.agentPhone} agentId={config.smsAgentId} apiBase={config.apiBase} />
-
       <IdentityBoard env={env} />
 
       <div className="bg-white border border-[#EAEAEA] rounded-xl p-5">
@@ -60,6 +53,7 @@ export function E2EChain({ config }: Props) {
         </div>
         <RealRunPanel
           env={env}
+          practiceNumber={dest}
           kind="journey"
           allowedTriggers={["incomplete_call", "missed_call", "inbound_sms"]}
           buttonLabel="🧭 Run Patient Journey (Book → Reschedule → Cancel)"

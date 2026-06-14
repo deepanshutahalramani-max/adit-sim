@@ -8,7 +8,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchRealSessions, manualStart, manualSend, manualEnd } from "../api";
 import { STATUS_STYLES, STATUS_LABEL, fmtPhone } from "./RealSessionCard";
 
-export function RealManualConsole({ env }: { env: "beta" | "prod" }) {
+export function RealManualConsole({ env, practiceNumber }: { env: string; practiceNumber?: string }) {
   const qc = useQueryClient();
   const [sessionId, setSessionId] = useState<string>("");
   const [draft, setDraft] = useState("");
@@ -29,6 +29,7 @@ export function RealManualConsole({ env }: { env: "beta" | "prod" }) {
     mutationFn: (kind: "sms" | "call") =>
       manualStart({
         env,
+        practice_number: practiceNumber,
         trigger_type: kind === "sms" ? "inbound_sms" : callTrigger,
         message: kind === "sms" ? starter : "",
       }),

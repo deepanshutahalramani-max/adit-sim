@@ -11,7 +11,8 @@ import { runRealSuite, fetchRealSuites, fetchRealSessions } from "../api";
 import { RealSessionCard, REAL_TRIGGERS } from "./RealSessionCard";
 
 interface Props {
-  env: "beta" | "prod";              // mapped from sidebar environment
+  env: string;                       // "beta" | "prod" | "custom"
+  practiceNumber?: string;           // required for custom env — the number to call/text
   kind: "suite" | "journey" | "repro";
   scenarioIds?: string[];            // suite kind
   opener?: string;                   // repro kind
@@ -26,7 +27,7 @@ interface Props {
 }
 
 export function RealRunPanel({
-  env, kind, scenarioIds, opener, goal, label, repeat,
+  env, practiceNumber, kind, scenarioIds, opener, goal, label, repeat,
   buttonLabel, allowedTriggers, disabled, disabledReason,
 }: Props) {
   const qc = useQueryClient();
@@ -52,6 +53,7 @@ export function RealRunPanel({
     mutationFn: () => runRealSuite({
       kind,
       env,
+      practice_number: practiceNumber,
       trigger_type: trigger,
       scenario_ids: kind === "suite" ? scenarioIds : undefined,
       opener: kind === "repro" ? opener : undefined,

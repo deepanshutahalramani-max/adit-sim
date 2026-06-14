@@ -7,10 +7,9 @@
  */
 import { useState } from "react";
 import type { Config, AppConfig } from "../types";
-import { PromptConfigurator } from "../components/PromptConfigurator";
 import { RealRunPanel } from "../components/RealRunPanel";
 import { IdentityBoard } from "../components/RealOps";
-import { realEnv } from "./Simulations";
+import { realEnv, destNumber, envGuard } from "./Simulations";
 
 interface Props {
   config: Config;
@@ -20,30 +19,19 @@ interface Props {
 export function CallSimulations({ config, appConfig }: Props) {
   const scenarios = appConfig?.scenarios ?? [];
   const [selected, setSelected] = useState<string[]>([]);
-  const env = realEnv(config.environment);
+  const env = realEnv(config.environment)!;
+  const dest = destNumber(config);
 
   const toggleScenario = (id: string) =>
     setSelected(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
   const toggleAll = () =>
     setSelected(s => s.length === scenarios.length ? [] : scenarios.map(s => s.id));
 
-  if (!env) {
-    return (
-      <div className="text-[13px] text-[#92600A] bg-[#FFF7E6] border border-[#F5D998] rounded-2xl p-6">
-        Real-phone testing supports <b>Live (PROD)</b> and <b>Beta</b> — switch the environment in the sidebar.
-      </div>
-    );
-  }
+  const guard = envGuard(config);
+  if (guard) return <>{guard}</>;
 
   return (
     <div className="space-y-4">
-      <PromptConfigurator
-        agentType="call"
-        agentPhone={config.agentPhone}
-        agentId={config.callAgentId}
-        apiBase={config.apiBase}
-      />
-
       <IdentityBoard env={env} />
 
       <div className="bg-[#EAF3FF] border border-[#B5D4F5] rounded-xl p-4 text-[12.5px] text-[#1456A0]">
@@ -85,6 +73,7 @@ export function CallSimulations({ config, appConfig }: Props) {
         </div>
         <RealRunPanel
           env={env}
+          practiceNumber={dest}
           kind="suite"
           scenarioIds={selected}
           allowedTriggers={["inbound_call"]}

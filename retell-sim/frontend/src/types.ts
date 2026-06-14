@@ -78,7 +78,9 @@ export interface GeneratedScenario {
 
 /** Sidebar/config state shared across the whole app */
 export interface Config {
-  environment: string; // "live" | "beta" | "dev"
+  environment: string; // "live" | "beta" | "custom"
+  /** For the Custom environment: the destination number to call / text. */
+  customNumber?: string;
   apiBase: string;
   agentPhone: string;
   useLlmJudge: boolean;

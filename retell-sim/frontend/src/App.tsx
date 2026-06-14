@@ -24,9 +24,9 @@ const NAV = [
 type TabId = typeof NAV[number]["id"];
 
 const HOSTS: Record<string, string> = {
-  live: "https://frontdeskchatagent.adit.com",
-  beta: "https://betafrontdeskchatagent.adit.com",
-  dev:  "https://gjqwwdfeo35edl-8009.proxy.runpod.net",
+  live:   "https://frontdeskchatagent.adit.com",
+  beta:   "https://betafrontdeskchatagent.adit.com",
+  custom: "https://frontdeskchatagent.adit.com",  // placeholder; custom targets a user-entered number
 };
 
 export default function App() {
@@ -38,6 +38,7 @@ export default function App() {
     const callAgentId = localStorage.getItem(`adit_call_agent_id_${env}`) ?? "";
     return {
       environment: env,
+      customNumber: localStorage.getItem("adit_custom_number") ?? "",
       apiBase: HOSTS[env] ?? HOSTS.live,
       agentPhone: phone,
       useLlmJudge: true,
@@ -81,9 +82,9 @@ export default function App() {
   const nav = NAV.filter(n => !("adminOnly" in n && n.adminOnly) || isAdmin);
 
   const envMeta: Record<string, { label: string; dot: string; tone: string }> = {
-    live: { label: "Production", dot: "bg-[#22C55E]", tone: "text-[#15803D] bg-[#F0FDF4] border-[#BBF7D0]" },
-    beta: { label: "Beta",       dot: "bg-[#F59E0B]", tone: "text-[#B45309] bg-[#FFF7ED] border-[#FED7AA]" },
-    dev:  { label: "Dev",        dot: "bg-[#3B82F6]", tone: "text-[#1D4ED8] bg-[#EFF6FF] border-[#BFDBFE]" },
+    live:   { label: "Production", dot: "bg-[#22C55E]", tone: "text-[#15803D] bg-[#F0FDF4] border-[#BBF7D0]" },
+    beta:   { label: "Beta",       dot: "bg-[#F59E0B]", tone: "text-[#B45309] bg-[#FFF7ED] border-[#FED7AA]" },
+    custom: { label: "Custom",     dot: "bg-[#7C3AED]", tone: "text-[#6D28D9] bg-[#F5F3FF] border-[#DDD6FE]" },
   };
   const em = envMeta[config.environment] ?? envMeta.live;
   const current = NAV.find(n => n.id === activeTab)!;
