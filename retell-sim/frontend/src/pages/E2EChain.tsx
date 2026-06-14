@@ -32,13 +32,10 @@ export function E2EChain({ config }: Props) {
 
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="text-[20px] font-extrabold text-[#111] tracking-tight mb-1">Patient Journey</h1>
-        <p className="text-[13.5px] text-[#888] leading-relaxed">
-          One identity, one number, three real conversations — exercises the full appointment
-          lifecycle exactly as a real patient would, visible in the ADIT app end to end.
-        </p>
-      </div>
+      <p className="text-[13.5px] text-ink-500 leading-relaxed -mt-2">
+        One identity, one number, three real conversations — exercises the full appointment
+        lifecycle exactly as a real patient would, visible in the ADIT app end to end.
+      </p>
 
       {/* Phase cards */}
       <div className="grid grid-cols-3 gap-3">

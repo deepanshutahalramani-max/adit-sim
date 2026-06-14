@@ -1,9 +1,22 @@
 import type { Config } from "../types";
+import type { LucideIcon } from "lucide-react";
+import { Phone, ChevronDown } from "lucide-react";
+import { useState } from "react";
+
+interface NavItem {
+  id: string;
+  label: string;
+  icon: LucideIcon;
+  sub: string;
+}
 
 interface Props {
   config: Config;
   onChange: (c: Config) => void;
   agentName?: string;
+  nav: readonly NavItem[];
+  activeTab: string;
+  onNavigate: (id: string) => void;
 }
 
 const HOSTS: Record<string, string> = {
@@ -12,149 +25,119 @@ const HOSTS: Record<string, string> = {
   dev:  "https://gjqwwdfeo35edl-8009.proxy.runpod.net",
 };
 
-function Label({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="text-[10px] font-bold uppercase tracking-widest text-[#ADADAD] mb-1.5">
-      {children}
-    </div>
-  );
-}
+const ENVS = [
+  { id: "live", label: "Production", dot: "bg-[#22C55E]" },
+  { id: "beta", label: "Beta",       dot: "bg-[#F59E0B]" },
+  { id: "dev",  label: "Dev",        dot: "bg-[#3B82F6]" },
+];
 
-export function Sidebar({ config, onChange, agentName = "—" }: Props) {
-  const set = (k: keyof Config, v: unknown) => {
-    onChange({ ...config, [k]: v });
+export function Sidebar({ config, onChange, agentName = "—", nav, activeTab, onNavigate }: Props) {
+  const [envOpen, setEnvOpen] = useState(false);
+  const set = (k: keyof Config, v: unknown) => onChange({ ...config, [k]: v });
+  const activeEnv = ENVS.find(e => e.id === config.environment) ?? ENVS[0];
+
+  const switchEnv = (id: string) => {
+    localStorage.setItem("adit_env", id);
+    onChange({
+      ...config,
+      environment: id,
+      apiBase: HOSTS[id] ?? HOSTS.live,
+      smsAgentId: undefined,
+      callAgentId: undefined,
+    });
+    setEnvOpen(false);
   };
 
   return (
-    <aside className="w-64 bg-white border-r border-[#EAEAEA] flex flex-col flex-shrink-0 overflow-y-auto">
-      {/* Logo */}
-      <div className="px-5 py-4 border-b border-[#F0F0EE]">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg overflow-hidden flex items-center justify-center flex-shrink-0">
-            <img src="/adit-logo.svg" alt="ADIT" className="w-8 h-8 object-contain"
-              onError={e => {
-                const t = e.currentTarget;
-                t.onerror = null; t.style.display = "none";
-                (t.parentElement as HTMLElement).innerHTML =
-                  '<div class="w-8 h-8 bg-brand-500 rounded-lg flex items-center justify-center text-white font-extrabold text-base shadow-sm">a</div>';
-              }}
-            />
-          </div>
-          <div className="min-w-0">
-            <div className="text-[14px] font-bold text-[#111] leading-tight">Agent QA</div>
-            <div className="text-[11px] text-[#ADADAD]">AI Front Desk</div>
-          </div>
+    <aside className="w-[248px] bg-canvas-raised border-r border-line flex flex-col flex-shrink-0">
+      {/* Brand */}
+      <div className="px-5 h-[68px] flex items-center gap-3 border-b border-line">
+        <div className="w-9 h-9 rounded-xl overflow-hidden flex items-center justify-center flex-shrink-0 bg-brand-500 shadow-brand">
+          <img src="/adit-logo.svg" alt="ADIT" className="w-9 h-9 object-contain"
+            onError={e => {
+              const t = e.currentTarget; t.onerror = null; t.style.display = "none";
+              (t.parentElement as HTMLElement).innerHTML =
+                '<span class="text-white font-extrabold text-[18px]">a</span>';
+            }}
+          />
+        </div>
+        <div className="min-w-0">
+          <div className="text-[14.5px] font-extrabold text-ink-900 leading-tight">Agent QA</div>
+          <div className="text-[11px] text-ink-400 leading-tight">AI Front Desk</div>
         </div>
       </div>
 
-      <div className="flex-1 px-5 py-4 overflow-y-auto">
-
-        {/* ── Real phone badge ── */}
-        <div className="mb-4 bg-brand-50 border border-brand-200 rounded-lg px-3 py-2.5">
-          <div className="text-[12px] font-bold text-[#111]">📱 Real Phone Testing</div>
-          <div className="text-[10.5px] text-[#888] leading-snug mt-0.5">
-            Every test is an actual call or SMS to the practice number — conversations appear in the ADIT app.
-          </div>
-        </div>
-
-        {/* ── Environment selector (top-level, always visible) ── */}
-        <div className="mb-4">
-          <Label>Environment</Label>
-          <select
-            value={config.environment}
-            onChange={e => {
-              const newEnv = e.target.value;
-              localStorage.setItem("adit_env", newEnv);
-              onChange({
-                ...config,
-                environment: newEnv,
-                apiBase:     HOSTS[newEnv] ?? HOSTS.live,
-                // agent IDs will be refreshed by App.tsx useEffect on apiBase change
-                smsAgentId:  undefined,
-                callAgentId: undefined,
-              });
-            }}
-            className="w-full bg-[#F7F7F5] border border-[#E5E5E5] rounded-lg px-3 py-2 text-[13px] text-[#111]
-                       focus:outline-none focus:border-brand-500"
-          >
-            <option value="live">🟢 Live (PROD)</option>
-            <option value="beta">🟡 Beta</option>
-            <option value="dev">🔵 Dev (RunPod)</option>
-          </select>
-          <p className="text-[10.5px] text-[#ADADAD] mt-1 truncate">{config.apiBase}</p>
-        </div>
-
-        {/* ── LLM Judge toggle ── */}
-        <div className="mb-4">
-          <Label>LLM Judge Scoring</Label>
-          <div className="flex items-center gap-3">
+      {/* Nav */}
+      <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
+        <div className="section-label px-3 mb-2">Workspace</div>
+        {nav.map(item => {
+          const Icon = item.icon;
+          const active = activeTab === item.id;
+          return (
             <button
-              onClick={() => set("useLlmJudge", !config.useLlmJudge)}
-              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ${
-                config.useLlmJudge ? "bg-brand-500" : "bg-[#E5E5E5]"
+              key={item.id}
+              onClick={() => onNavigate(item.id)}
+              className={`group w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-left relative ${
+                active
+                  ? "bg-brand-50 text-brand-700"
+                  : "text-ink-500 hover:bg-canvas-sunken hover:text-ink-900"
               }`}
             >
-              <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
-                config.useLlmJudge ? "translate-x-6" : "translate-x-1"
-              }`} />
+              {active && <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 rounded-r-full bg-brand-500" />}
+              <Icon className={`w-[18px] h-[18px] flex-shrink-0 ${active ? "text-brand-500" : "text-ink-400 group-hover:text-ink-700"}`} strokeWidth={2.2} />
+              <div className="min-w-0">
+                <div className="text-[13.5px] font-semibold leading-tight">{item.label}</div>
+              </div>
             </button>
-            <span className="text-[12px] text-[#888]">{config.useLlmJudge ? "On" : "Off"}</span>
-          </div>
-        </div>
+          );
+        })}
+      </nav>
 
-        <hr className="border-[#F0F0EE] my-4" />
-
-        {/* ── Status panel ── */}
-        <div>
-          <Label>Status</Label>
-          <div className="space-y-1.5">
-            <StatusRow
-              ok={!!config.smsAgentId}
-              label="SMS agent"
-              value={config.smsAgentId
-                ? <code className="text-[10px] font-mono text-[#D4620A] bg-[#FFF3E8] rounded px-1">{config.smsAgentId.slice(0, 12)}…</code>
-                : <span className="text-[#ADADAD]">Loading…</span>}
-            />
-            <StatusRow
-              ok={!!config.callAgentId}
-              label="Call agent"
-              value={config.callAgentId
-                ? <code className="text-[10px] font-mono text-[#D4620A] bg-[#FFF3E8] rounded px-1">{config.callAgentId.slice(0, 12)}…</code>
-                : <span className="text-[#ADADAD]">Loading…</span>}
-            />
-            {agentName !== "—" && (
-              <StatusRow ok label="Name" value={agentName} valueClass="text-[#555]" />
-            )}
-            <StatusRow
-              ok={config.environment !== "dev"}
-              okColor={config.environment === "live" ? "bg-green-500" : config.environment === "beta" ? "bg-yellow-400" : "bg-blue-400"}
-              label="Env"
-              value={config.environment === "live" ? "Production" : config.environment === "beta" ? "Beta" : "Dev"}
-              valueClass="text-[#555]"
-            />
-            <StatusRow
-              ok={true}
-              okColor="bg-green-500"
-              label="Credentials"
-              value="Server-managed"
-              valueClass="text-green-600"
-            />
+      {/* Real-phone notice */}
+      <div className="px-3">
+        <div className="flex items-start gap-2.5 px-3 py-2.5 rounded-xl bg-brand-50/60 border border-brand-100">
+          <Phone className="w-4 h-4 text-brand-500 flex-shrink-0 mt-0.5" strokeWidth={2.2} />
+          <div className="text-[11px] text-brand-800 leading-snug">
+            Real calls & SMS — every test hits the practice line and shows in the ADIT app.
           </div>
         </div>
       </div>
-    </aside>
-  );
-}
 
-function StatusRow({ ok, okColor, label, value, valueClass }: {
-  ok: boolean; okColor?: string; label: string;
-  value: React.ReactNode; valueClass?: string;
-}) {
-  return (
-    <div className="flex items-center gap-2">
-      <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${okColor ?? (ok ? "bg-green-500" : "bg-[#DADAD8]")}`} />
-      <span className="text-[12px] text-[#666]">{label}</span>
-      <span className={`text-[11px] font-semibold ml-auto ${valueClass ?? ""}`}>{value}</span>
-    </div>
+      {/* Environment switcher */}
+      <div className="p-3 relative">
+        {envOpen && (
+          <div className="absolute bottom-[calc(100%-4px)] left-3 right-3 card shadow-pop p-1.5 animate-scale-in z-20">
+            {ENVS.map(e => (
+              <button key={e.id} onClick={() => switchEnv(e.id)}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] font-medium transition-colors ${
+                  e.id === config.environment ? "bg-canvas-sunken text-ink-900" : "text-ink-500 hover:bg-canvas-sunken"
+                }`}>
+                <span className={`w-2 h-2 rounded-full ${e.dot}`} />
+                {e.label}
+                {e.id === config.environment && <span className="ml-auto text-brand-500 text-[11px] font-bold">●</span>}
+              </button>
+            ))}
+          </div>
+        )}
+        <button onClick={() => setEnvOpen(o => !o)}
+          className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl border border-line-strong hover:border-ink-300 bg-white transition-colors">
+          <span className={`w-2 h-2 rounded-full ${activeEnv.dot}`} />
+          <div className="text-left min-w-0">
+            <div className="text-[10px] text-ink-400 uppercase tracking-wide font-bold leading-none">Environment</div>
+            <div className="text-[13px] font-semibold text-ink-900 leading-tight mt-0.5">{activeEnv.label}</div>
+          </div>
+          <ChevronDown className={`w-4 h-4 text-ink-400 ml-auto transition-transform ${envOpen ? "rotate-180" : ""}`} />
+        </button>
+
+        {/* Judge toggle */}
+        <button onClick={() => set("useLlmJudge", !config.useLlmJudge)}
+          className="w-full flex items-center justify-between px-3 py-2.5 mt-2 rounded-xl hover:bg-canvas-sunken transition-colors">
+          <span className="text-[12.5px] text-ink-500 font-medium">LLM Judge scoring</span>
+          <span className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors flex-shrink-0 ${config.useLlmJudge ? "bg-brand-500" : "bg-line-strong"}`}>
+            <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${config.useLlmJudge ? "translate-x-[18px]" : "translate-x-[3px]"}`} />
+          </span>
+        </button>
+      </div>
+    </aside>
   );
 }

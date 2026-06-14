@@ -12,14 +12,7 @@ export function Dashboard() {
 
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="text-[20px] font-extrabold text-[#111] tracking-tight mb-1">Dashboard</h1>
-        <p className="text-[13.5px] text-[#888]">
-          Performance metrics and full history of every real-phone test session.
-        </p>
-      </div>
-
-      <div className="flex gap-1 bg-white border border-[#EAEAEA] rounded-xl p-1 w-fit">
+      <div className="flex gap-1 bg-canvas-raised border border-line rounded-xl p-1 w-fit shadow-card">
         {([
           { id: "insights", label: "📊 Insights" },
           { id: "sessions", label: "🗂 Sessions" },

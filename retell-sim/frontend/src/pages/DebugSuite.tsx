@@ -285,17 +285,14 @@ export function DebugSuite({ config, onResults }: Props) {
       {/* Header */}
       <div className="mb-5">
         <div className="flex items-start justify-between">
-          <div>
-            <h1 className="text-[20px] font-extrabold text-[#111] tracking-tight mb-1">Debug Suite</h1>
-            <p className="text-[13.5px] text-[#888] leading-relaxed">
-              {mode === "sms"
-                ? "Upload a client escalation → AI diagnoses → confirm → live reproduce → confirm fix → regression."
-                : "Paste a call transcript → AI diagnoses → confirm → live call reproduce → confirm fix → regression."}
-            </p>
-          </div>
+          <p className="text-[13.5px] text-ink-500 leading-relaxed -mt-2 max-w-[560px]">
+            {mode === "sms"
+              ? "Upload a client escalation → AI diagnoses → confirm → live reproduce → confirm fix → regression."
+              : "Paste a call transcript → AI diagnoses → confirm → live call reproduce → confirm fix → regression."}
+          </p>
 
           {/* SMS / Call toggle — top right */}
-          <div className="flex gap-1 bg-[#F2F2F0] rounded-xl p-1 flex-shrink-0 ml-4">
+          <div className="flex gap-1 bg-canvas-sunken rounded-xl p-1 flex-shrink-0 ml-4">
             <button
               onClick={() => switchMode("sms")}
               className={clsx(

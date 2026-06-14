@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { MessageSquare, Route, Bug, BarChart3 } from "lucide-react";
 import { fetchConfig, fetchAgentInfo, fetchEnvConfig } from "./api";
 import type { Config } from "./types";
 import { Sidebar } from "./components/Sidebar";
@@ -10,31 +11,28 @@ import { DebugSuite } from "./pages/DebugSuite";
 import { Dashboard } from "./pages/Dashboard";
 import { StopAllButton } from "./components/StopAllButton";
 
-const TABS = [
-  { id: "debug",       label: "🔍 Debug Suite" },
-  { id: "simulations", label: "💬 Simulations" },
-  { id: "chain",       label: "🧭 Patient Journey" },
-  { id: "dashboard",   label: "📊 Dashboard" },
+const NAV = [
+  { id: "simulations", label: "Simulations",     icon: MessageSquare, sub: "Run real call & SMS tests" },
+  { id: "chain",       label: "Patient Journey",  icon: Route,         sub: "Book → reschedule → cancel" },
+  { id: "debug",       label: "Debug Suite",      icon: Bug,           sub: "Diagnose & reproduce bugs" },
+  { id: "dashboard",   label: "Dashboard",        icon: BarChart3,     sub: "Metrics & session history" },
 ] as const;
 
-type TabId = typeof TABS[number]["id"];
+type TabId = typeof NAV[number]["id"];
+
+const HOSTS: Record<string, string> = {
+  live: "https://frontdeskchatagent.adit.com",
+  beta: "https://betafrontdeskchatagent.adit.com",
+  dev:  "https://gjqwwdfeo35edl-8009.proxy.runpod.net",
+};
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabId>("simulations");
   const [config, setConfig] = useState<Config>(() => {
-    const HOSTS: Record<string, string> = {
-      live: "https://frontdeskchatagent.adit.com",
-      beta: "https://betafrontdeskchatagent.adit.com",
-      dev:  "https://gjqwwdfeo35edl-8009.proxy.runpod.net",
-    };
-
-    // Restore last-used environment (default live)
     const env = localStorage.getItem("adit_env") ?? "live";
-
     const phone       = localStorage.getItem("adit_agent_phone")        ?? "+12673565689";
     const smsAgentId  = localStorage.getItem(`adit_sms_agent_id_${env}`)  ?? "";
     const callAgentId = localStorage.getItem(`adit_call_agent_id_${env}`) ?? "";
-
     return {
       environment: env,
       apiBase: HOSTS[env] ?? HOSTS.live,
@@ -42,7 +40,6 @@ export default function App() {
       useLlmJudge: true,
       smsAgentId:  smsAgentId  || undefined,
       callAgentId: callAgentId || undefined,
-      // bearer/openai resolved server-side; kept for API call compatibility
       bearerToken: "",
       openaiKey:   "",
     };
@@ -50,7 +47,6 @@ export default function App() {
 
   const { data: appConfig } = useQuery({ queryKey: ["config"], queryFn: fetchConfig });
 
-  // Auto-load agent IDs + phone from server whenever the environment changes
   useEffect(() => {
     fetchEnvConfig(config.apiBase).then(ec => {
       setConfig(prev => ({
@@ -59,11 +55,10 @@ export default function App() {
         callAgentId: ec.call_agent_id || prev.callAgentId,
         agentPhone:  ec.agent_phone   || prev.agentPhone,
       }));
-    }).catch(() => {/* silently ignore — server may not have PROD agent IDs configured */});
+    }).catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config.apiBase]);
 
-  // Fetch agent display names using explicit agent IDs (highest priority) or phone fallback
   const { data: agentInfo } = useQuery({
     queryKey: ["agentInfo", config.smsAgentId, config.callAgentId, config.agentPhone, config.apiBase],
     queryFn: () => fetchAgentInfo(
@@ -76,76 +71,67 @@ export default function App() {
     retry: false,
     enabled: !!(config.smsAgentId || config.callAgentId || config.agentPhone),
   });
-  // Persona name ("Cimo") > dashboard name ("Test Agents…") > fallback
   const agentName = agentInfo?.persona_name || agentInfo?.call_agent_name || agentInfo?.sms_agent_name || "—";
+
+  const envMeta: Record<string, { label: string; dot: string; tone: string }> = {
+    live: { label: "Production", dot: "bg-[#22C55E]", tone: "text-[#15803D] bg-[#F0FDF4] border-[#BBF7D0]" },
+    beta: { label: "Beta",       dot: "bg-[#F59E0B]", tone: "text-[#B45309] bg-[#FFF7ED] border-[#FED7AA]" },
+    dev:  { label: "Dev",        dot: "bg-[#3B82F6]", tone: "text-[#1D4ED8] bg-[#EFF6FF] border-[#BFDBFE]" },
+  };
+  const em = envMeta[config.environment] ?? envMeta.live;
+  const current = NAV.find(n => n.id === activeTab)!;
 
   return (
     <AgentNameContext.Provider value={agentName}>
-    <div className="flex h-screen bg-[#FAFAF8] overflow-hidden">
-      <Sidebar config={config} onChange={setConfig} agentName={agentName} />
+      <div className="flex h-screen bg-canvas overflow-hidden text-ink-900">
+        <Sidebar
+          config={config}
+          onChange={setConfig}
+          agentName={agentName}
+          nav={NAV}
+          activeTab={activeTab}
+          onNavigate={(id) => setActiveTab(id as TabId)}
+        />
 
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        {/* Top header bar */}
-        <header className="bg-white border-b border-[#EAEAEA] px-8 py-5 flex items-center justify-between flex-shrink-0">
-          <div className="flex items-center gap-4">
-            <div className="w-10 h-10 rounded-xl overflow-hidden flex items-center justify-center flex-shrink-0">
-              <img
-                src="/adit-logo.svg"
-                alt="ADIT"
-                className="w-10 h-10 object-contain"
-                onError={e => {
-                  const t = e.currentTarget;
-                  t.onerror = null;
-                  t.style.display = "none";
-                  (t.parentElement as HTMLElement).innerHTML =
-                    '<div class="w-10 h-10 bg-brand-500 rounded-xl flex items-center justify-center text-white font-extrabold text-xl shadow-sm">a</div>';
-                }}
-              />
+        <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+          {/* Topbar */}
+          <header className="bg-canvas-raised/80 backdrop-blur border-b border-line px-8 h-[68px] flex items-center justify-between flex-shrink-0">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2.5">
+                <h1 className="text-[17px] font-extrabold text-ink-900 leading-none truncate">{current.label}</h1>
+                <span className={`pill ${em.tone} !text-[11px]`}>
+                  <span className={`w-[6px] h-[6px] rounded-full ${em.dot}`} />
+                  {em.label}
+                </span>
+              </div>
+              <p className="text-[12.5px] text-ink-400 mt-1">{current.sub}</p>
             </div>
-            <div>
-              <div className="text-xl font-extrabold text-[#111] leading-tight tracking-tight">Agent QA Platform</div>
-              <div className="text-[13px] text-[#ADADAD] mt-0.5">AI Front Desk · Real calls & SMS, exactly like a patient</div>
+            <div className="flex items-center gap-4">
+              <StopAllButton />
+              <div className="h-8 w-px bg-line" />
+              <div className="flex items-center gap-2.5">
+                <div className="text-right leading-tight">
+                  <div className="text-[12.5px] font-semibold text-ink-700 max-w-[160px] truncate">{agentName}</div>
+                  <div className="text-[11px] text-ink-400">AI Front Desk agent</div>
+                </div>
+                <div className="w-9 h-9 rounded-full bg-gradient-to-br from-brand-400 to-brand-600 flex items-center justify-center text-white font-bold text-[14px] shadow-sm">
+                  {agentName !== "—" ? agentName.charAt(0).toUpperCase() : "A"}
+                </div>
+              </div>
             </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <StopAllButton />
-            <div className="text-right">
-              <div className="text-[13.5px] font-semibold text-[#333]">{agentName}</div>
-              <div className="text-[11.5px] text-[#ADADAD]">Test QA · AI Agent</div>
-            </div>
-          </div>
-        </header>
+          </header>
 
-        {/* Tab bar */}
-        <nav className="bg-white border-b border-[#EAEAEA] px-8 flex-shrink-0">
-          <div className="flex">
-            {TABS.map(tab => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`px-5 py-3 text-[14px] font-medium border-b-2 transition-colors -mb-px ${
-                  activeTab === tab.id
-                    ? "border-brand-500 text-[#111] font-bold"
-                    : "border-transparent text-[#888] hover:text-[#333]"
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-        </nav>
-
-        {/* Page content */}
-        <main className="flex-1 overflow-auto px-8 py-8">
-          <div className="max-w-[1160px] mx-auto">
-            {activeTab === "debug"       && <DebugSuite config={config} onResults={() => {}} />}
-            {activeTab === "simulations" && <SimulationsHub config={config} appConfig={appConfig} />}
-            {activeTab === "chain"       && <E2EChain config={config} />}
-            {activeTab === "dashboard"   && <Dashboard />}
-          </div>
-        </main>
+          {/* Page content */}
+          <main className="flex-1 overflow-auto px-8 py-8">
+            <div className="max-w-[1180px] mx-auto animate-fade-in" key={activeTab}>
+              {activeTab === "simulations" && <SimulationsHub config={config} appConfig={appConfig} />}
+              {activeTab === "chain"       && <E2EChain config={config} />}
+              {activeTab === "debug"       && <DebugSuite config={config} onResults={() => {}} />}
+              {activeTab === "dashboard"   && <Dashboard />}
+            </div>
+          </main>
+        </div>
       </div>
-    </div>
     </AgentNameContext.Provider>
   );
 }
