@@ -258,8 +258,65 @@ def _extract_ehr_calls(messages: list) -> list:
             out.append({
                 "name": i["name"], "ok": ok, "business_ok": biz,
                 "latency_ms": int(lat), "result": content[:200],
+                "msg_id": m.get("message_id", ""),
             })
     return out
+
+
+_seen_ehr_msg_ids: set = set()
+
+
+def _ingest_ehr(calls: list, env: str, scenario_id: str = "", session_id: str = "") -> None:
+    """Add new EHR call records to the global store, deduped by Retell message_id,
+    so the per-session fetch and the background Retell sync never double-count."""
+    for c in calls:
+        mid = c.get("msg_id") or f"{session_id}:{c['name']}:{c['latency_ms']}"
+        if mid in _seen_ehr_msg_ids:
+            continue
+        _seen_ehr_msg_ids.add(mid)
+        rec = {"ts": time.time(), "session_id": session_id, "env": env,
+               "scenario_id": scenario_id,
+               "name": c["name"], "ok": c["ok"], "business_ok": c["business_ok"],
+               "latency_ms": c["latency_ms"], "result": c["result"]}
+        EHR_CALLS.append(rec)
+        try:
+            import supa
+            supa.record_ehr_call(rec)
+        except Exception:
+            pass
+
+
+def _ehr_sync_loop() -> None:
+    """Continuously ingest EHR tool-calls from recent Retell chats in BOTH
+    workspaces, so the dashboard reflects real agent activity regardless of
+    whether a conversation went through a platform session (or finished after
+    our turn cap). Deduped by message_id."""
+    srv = _sim()
+    workspaces = [
+        ("prod", "https://frontdeskchatagent.adit.com"),
+        ("beta", "https://betafrontdeskchatagent.adit.com"),
+    ]
+    while True:
+        time.sleep(25)
+        for env, api_base in workspaces:
+            try:
+                key = srv._resolve_retell_key(api_base)
+                hdrs = {"Authorization": f"Bearer {key}"}
+                r = httpx.get("https://api.retellai.com/list-chat", headers=hdrs, timeout=15)
+                if r.status_code != 200:
+                    continue
+                # only chats from the last ~30 min (bounded work)
+                cutoff = (time.time() - 1800) * 1000
+                recent = [c for c in r.json() if c.get("start_timestamp", 0) >= cutoff]
+                for c in sorted(recent, key=lambda x: x.get("start_timestamp", 0), reverse=True)[:15]:
+                    full = httpx.get(f"https://api.retellai.com/get-chat/{c['chat_id']}",
+                                     headers=hdrs, timeout=15)
+                    if full.status_code != 200:
+                        continue
+                    calls = _extract_ehr_calls(full.json().get("message_with_tool_calls"))
+                    _ingest_ehr(calls, env, session_id=c["chat_id"])
+            except Exception:
+                pass
 
 
 def _fetch_ehr_calls(session: RealSession) -> None:
@@ -296,16 +353,8 @@ def _fetch_ehr_calls(session: RealSession) -> None:
         if not msgs:
             return
         calls = _extract_ehr_calls(msgs)
-        session.ehr_calls = calls
-        for c in calls:
-            rec = {"ts": time.time(), "session_id": session.session_id, "env": session.env,
-                   "scenario_id": session.scenario_id, **c}
-            EHR_CALLS.append(rec)
-            try:
-                import supa
-                supa.record_ehr_call(rec)
-            except Exception:
-                pass
+        session.ehr_calls = calls                                   # full list for the session card
+        _ingest_ehr(calls, session.env, session.scenario_id, session.session_id)  # deduped global
         session.log(f"EHR: {len(calls)} function call(s) extracted from Retell")
     except Exception as exc:
         session.log(f"EHR fetch failed: {exc}")
@@ -663,6 +712,7 @@ def _ensure_watchdog() -> None:
         _watchdog_started = True
         threading.Thread(target=_watchdog_loop, daemon=True).start()
         threading.Thread(target=_rc_poll_loop, daemon=True).start()
+        threading.Thread(target=_ehr_sync_loop, daemon=True).start()
 
 
 # ── Call orchestration ────────────────────────────────────────────────────────
@@ -1322,6 +1372,32 @@ def real_api_metrics():
         "operations": operations,
         "recent": recent,
     }
+
+
+@router.post("/api/real/ehr-sync")
+def real_ehr_sync():
+    """Pull EHR tool-calls from recent Retell chats right now (both workspaces).
+    The background loop does this every 25s; this triggers an immediate pass."""
+    srv = _sim()
+    before = len(EHR_CALLS)
+    for env, api_base in (("prod", "https://frontdeskchatagent.adit.com"),
+                          ("beta", "https://betafrontdeskchatagent.adit.com")):
+        try:
+            key = srv._resolve_retell_key(api_base)
+            hdrs = {"Authorization": f"Bearer {key}"}
+            r = httpx.get("https://api.retellai.com/list-chat", headers=hdrs, timeout=15)
+            if r.status_code != 200:
+                continue
+            cutoff = (time.time() - 6 * 3600) * 1000   # last 6h on manual trigger
+            recent = [c for c in r.json() if c.get("start_timestamp", 0) >= cutoff]
+            for c in sorted(recent, key=lambda x: x.get("start_timestamp", 0), reverse=True)[:25]:
+                full = httpx.get(f"https://api.retellai.com/get-chat/{c['chat_id']}", headers=hdrs, timeout=15)
+                if full.status_code == 200:
+                    _ingest_ehr(_extract_ehr_calls(full.json().get("message_with_tool_calls")),
+                                env, session_id=c["chat_id"])
+        except Exception:
+            pass
+    return {"ingested": len(EHR_CALLS) - before, "total": len(EHR_CALLS)}
 
 
 @router.get("/api/real/ehr-metrics")
