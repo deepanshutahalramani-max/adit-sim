@@ -434,6 +434,7 @@ export interface RealSession {
   first_sms_latency_s: number;
   avg_reply_latency_s: number;
   ehr_calls?: { name: string; ok: boolean; business_ok: boolean; latency_ms: number; result: string }[];
+  issues?: { severity: string; title: string; detail: string }[];
   error: string;
   created_at: number;
   updated_at: number;
@@ -582,6 +583,7 @@ export interface EhrMetrics {
     name: string; label: string; count: number; success: number;
     failures: number; success_rate: number; avg_ms: number;
   }[];
+  issues?: { severity: string; title: string; detail: string; env: string; scenario_id: string; ago_s: number }[];
   recent: {
     ts: number; name: string; ok: boolean; business_ok: boolean;
     latency_ms: number; result: string; env: string; scenario_id: string; ago_s: number;

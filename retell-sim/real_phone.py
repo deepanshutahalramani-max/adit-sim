@@ -257,18 +257,90 @@ def _extract_ehr_calls(messages: list) -> list:
             lat = max(0, m.get("created_timestamp", 0) - i["ts"])
             out.append({
                 "name": i["name"], "ok": ok, "business_ok": biz,
-                "latency_ms": int(lat), "result": content[:200],
-                "msg_id": m.get("message_id", ""),
+                "latency_ms": int(lat), "result": content[:300],
+                "args": i["args"], "msg_id": m.get("message_id", ""),
             })
     return out
 
 
+def _diagnose_ehr(calls: list) -> list:
+    """Inspect an EHR call sequence and explain WHY it failed — the QA platform's
+    root-cause layer. Detects the param-mismatch / patient-type-flip failures."""
+    import json as _json
+
+    def parse(a):
+        try:
+            return _json.loads(a) if isinstance(a, str) else (a or {})
+        except Exception:
+            return {}
+
+    issues: list = []
+    last_slot_args = None          # most recent get_available_slot / get_rescheduling_slots params
+    patient_existed = False
+    booking_fails = 0
+
+    for c in calls:
+        name, a = c["name"], parse(c.get("args"))
+        if name in ("get_available_slot", "get_rescheduling_slots"):
+            last_slot_args = a
+        elif name == "create_new_patient" and "already exists" in (c.get("result", "").lower()):
+            patient_existed = True
+        elif name == "book_appointment" and not c["business_ok"]:
+            booking_fails += 1
+            if last_slot_args:
+                gs, bs = last_slot_args.get("service_name"), a.get("service_name")
+                gt, bt = last_slot_args.get("patient_type"), a.get("patient_type")
+                if gs and bs and gs != bs:
+                    issues.append({
+                        "severity": "high",
+                        "title": "Service mismatch: slots fetched vs appointment booked",
+                        "detail": f"get_available_slot used service '{gs}' but book_appointment used "
+                                  f"'{bs}'. The held slot isn't valid for a different service, so the "
+                                  f"booking is rejected as 'slot no longer available'.",
+                    })
+                if gt and bt and gt != bt:
+                    issues.append({
+                        "severity": "high",
+                        "title": "Patient-type mismatch: slot lookup vs booking",
+                        "detail": f"Availability was fetched for a '{gt}' patient but the appointment "
+                                  f"was booked as '{bt}' — different patient types map to different "
+                                  f"services/slots.",
+                    })
+
+    if patient_existed:
+        issues.append({
+            "severity": "medium",
+            "title": "New patient already existed in the EHR",
+            "detail": "create_new_patient returned an existing record, so the agent switched "
+                      "new → existing. New vs existing patients have different services, which "
+                      "invalidates slots fetched under the original (new-patient) service.",
+        })
+    if booking_fails >= 3:
+        issues.append({
+            "severity": "high",
+            "title": f"book_appointment failed {booking_fails}× without re-checking availability",
+            "detail": "The agent kept retrying against slots that were never valid for the chosen "
+                      "service/type, instead of re-calling get_available_slot for the corrected service.",
+        })
+
+    # de-dup by title, keep first (highest-context) occurrence
+    seen, out = set(), []
+    for i in issues:
+        if i["title"] not in seen:
+            seen.add(i["title"])
+            out.append(i)
+    return out
+
+
 _seen_ehr_msg_ids: set = set()
+_seen_issue_keys: set = set()
+EHR_ISSUES: deque = deque(maxlen=500)
 
 
 def _ingest_ehr(calls: list, env: str, scenario_id: str = "", session_id: str = "") -> None:
     """Add new EHR call records to the global store, deduped by Retell message_id,
-    so the per-session fetch and the background Retell sync never double-count."""
+    so the per-session fetch and the background Retell sync never double-count.
+    Also runs root-cause diagnostics on the (full) call sequence for this chat."""
     for c in calls:
         mid = c.get("msg_id") or f"{session_id}:{c['name']}:{c['latency_ms']}"
         if mid in _seen_ehr_msg_ids:
@@ -284,6 +356,15 @@ def _ingest_ehr(calls: list, env: str, scenario_id: str = "", session_id: str = 
             supa.record_ehr_call(rec)
         except Exception:
             pass
+
+    # Diagnose the full sequence for this chat (deduped per chat+issue)
+    for issue in _diagnose_ehr(calls):
+        key = f"{session_id}:{issue['title']}"
+        if key in _seen_issue_keys:
+            continue
+        _seen_issue_keys.add(key)
+        EHR_ISSUES.append({"ts": time.time(), "session_id": session_id, "env": env,
+                           "scenario_id": scenario_id, **issue})
 
 
 def _ehr_sync_loop() -> None:
@@ -354,8 +435,12 @@ def _fetch_ehr_calls(session: RealSession) -> None:
             return
         calls = _extract_ehr_calls(msgs)
         session.ehr_calls = calls                                   # full list for the session card
+        session.issues = _diagnose_ehr(calls)                       # root-cause findings for the card
         _ingest_ehr(calls, session.env, session.scenario_id, session.session_id)  # deduped global
-        session.log(f"EHR: {len(calls)} function call(s) extracted from Retell")
+        note = f"EHR: {len(calls)} function call(s)"
+        if session.issues:
+            note += f" — {len(session.issues)} issue(s) diagnosed"
+        session.log(note)
     except Exception as exc:
         session.log(f"EHR fetch failed: {exc}")
 
@@ -437,6 +522,7 @@ class RealSession:
     first_sms_latency_s: float = 0.0   # call end → first AI SMS
     awaiting_reply_since: float = 0.0  # set when patient sends; cleared on agent reply
     ehr_calls: list = field(default_factory=list)  # EHR tool calls pulled from Retell
+    issues: list = field(default_factory=list)     # auto-diagnosed root-cause findings
     error: str = ""
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
@@ -1432,10 +1518,12 @@ def real_ehr_metrics():
         })
     functions.sort(key=lambda x: x["count"], reverse=True)
     recent = [{**c, "ago_s": round(time.time() - c["ts"])} for c in list(calls)[-50:][::-1]]
+    issues = [{**i, "ago_s": round(time.time() - i["ts"])} for i in list(EHR_ISSUES)[::-1]]
     return {
         "total": len(calls),
         "total_failures": sum(1 for c in calls if not c["business_ok"]),
         "functions": functions,
+        "issues": issues,
         "recent": recent,
     }
 

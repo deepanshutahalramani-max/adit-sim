@@ -197,6 +197,26 @@ export function RealSessionCard({ s, compact }: { s: RealSession; compact?: bool
         </div>
       )}
 
+      {/* Auto-diagnosed root-cause findings */}
+      {(s.issues?.length ?? 0) > 0 && (
+        <div className="mt-3 space-y-2">
+          {s.issues!.map((iss, i) => (
+            <div key={i} className={`rounded-xl border px-3.5 py-2.5 ${
+              iss.severity === "high" ? "border-[#FECACA] bg-[#FEF2F2]" : "border-[#FED7AA] bg-[#FFF7ED]"
+            }`}>
+              <div className="flex items-center gap-2">
+                <span className="text-[13px]">🔎</span>
+                <span className={`text-[12.5px] font-bold ${iss.severity === "high" ? "text-[#B91C1C]" : "text-[#B45309]"}`}>
+                  {iss.title}
+                </span>
+                <span className={`pill !py-0 !text-[10px] ${iss.severity === "high" ? "pill-bad" : "pill-warn"}`}>{iss.severity}</span>
+              </div>
+              <div className="text-[11.5px] text-ink-500 mt-1 leading-snug pl-5">{iss.detail}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* EHR / agent API calls — the booking-flow functions, with timing + failures */}
       {expanded && (s.ehr_calls?.length ?? 0) > 0 && (
         <div className="mt-4">

@@ -353,6 +353,33 @@ export function EhrApiFlow() {
           value={`${m.total ? Math.round(100 * (m.total - (m.total_failures ?? 0)) / m.total) : 0}%`} />
       </div>
 
+      {/* Auto-diagnosed root causes */}
+      {(m.issues?.length ?? 0) > 0 && (
+        <div className="card card-pad">
+          <div className="text-[13px] font-bold text-ink-900 mb-1">🔎 Issues detected — root cause</div>
+          <div className="text-[11.5px] text-ink-400 mb-3">
+            The platform analyzes the EHR call sequence and explains what went wrong, not just that it failed.
+          </div>
+          <div className="space-y-2">
+            {m.issues!.map((iss, i) => (
+              <div key={i} className={`rounded-xl border px-4 py-3 ${
+                iss.severity === "high" ? "border-[#FECACA] bg-[#FEF2F2]" : "border-[#FED7AA] bg-[#FFF7ED]"
+              }`}>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={`text-[12.5px] font-bold ${iss.severity === "high" ? "text-[#B91C1C]" : "text-[#B45309]"}`}>
+                    {iss.title}
+                  </span>
+                  <span className={`pill !py-0 !text-[10px] ${iss.severity === "high" ? "pill-bad" : "pill-warn"}`}>{iss.severity}</span>
+                  {iss.env && <span className="pill pill-neutral !py-0 !text-[10px] uppercase">{iss.env}</span>}
+                  <span className="text-[10.5px] text-ink-300 ml-auto">{iss.ago_s}s ago</span>
+                </div>
+                <div className="text-[12px] text-ink-500 mt-1 leading-snug">{iss.detail}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Per-function */}
       <div className="card card-pad">
         <div className="text-[13px] font-bold text-ink-900 mb-3">EHR functions — the booking-flow APIs</div>
