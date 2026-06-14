@@ -3240,6 +3240,33 @@ def get_call_events():
 from real_phone import router as real_phone_router
 app.include_router(real_phone_router)
 
+# ── Auth (Google @adit.com) + audit + self-improving feedback ─────────────────
+import auth as _auth
+app.include_router(_auth.router)
+
+# Attribute mutating real-phone actions to the signed-in user for the audit log.
+_AUDIT_ACTIONS = {
+    "/api/real/trigger": "trigger",
+    "/api/real/run-suite": "run_suite",
+    "/api/real/manual/start": "manual_start",
+    "/api/real/stop-all": "stop_all",
+}
+
+
+@app.middleware("http")
+async def _audit_mw(request, call_next):
+    response = await call_next(request)
+    try:
+        if request.method == "POST":
+            action = _AUDIT_ACTIONS.get(request.url.path)
+            if action:
+                u = _auth.user_from_request(request)
+                _auth.record_action(u["email"] if u else "anonymous", action,
+                                    detail=request.url.path)
+    except Exception:
+        pass
+    return response
+
 
 # ── Serve built React frontend ─────────────────────────────────────────────────
 # Mount the entire dist directory with html=True so Starlette handles SPA routing:

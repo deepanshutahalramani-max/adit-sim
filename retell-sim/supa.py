@@ -34,9 +34,19 @@ One-time schema (run in the Supabase SQL editor):
     ts timestamptz, session_id text, env text, scenario_id text,
     name text, ok boolean, business_ok boolean, latency_ms int, result text
   );
+  create table if not exists qa_audit (
+    id bigint generated always as identity primary key,
+    ts timestamptz, email text, action text, detail text, env text
+  );
+  create table if not exists qa_comments (
+    id bigint generated always as identity primary key,
+    ts timestamptz, email text, target_type text, target_id text,
+    comment text, refined_analysis text
+  );
   create index if not exists qa_api_calls_ts on qa_api_calls(ts);
   create index if not exists qa_ehr_calls_ts on qa_ehr_calls(ts);
   create index if not exists qa_sessions_created on qa_sessions(created_at);
+  create index if not exists qa_audit_ts on qa_audit(ts);
 """
 from __future__ import annotations
 
@@ -138,6 +148,24 @@ def record_ehr_call(rec: dict) -> None:
         "result": rec.get("result"),
     }
     threading.Thread(target=_post, args=("qa_ehr_calls", [row]), daemon=True).start()
+
+
+def record_audit(email: str, action: str, detail: str = "", env: str = "") -> None:
+    if not configured():
+        return
+    row = {"ts": _iso(__import__("time").time()), "email": email,
+           "action": action, "detail": detail[:300], "env": env}
+    threading.Thread(target=_post, args=("qa_audit", [row]), daemon=True).start()
+
+
+def record_comment(email: str, target_type: str, target_id: str,
+                   comment: str, refined: str = "") -> None:
+    if not configured():
+        return
+    row = {"ts": _iso(__import__("time").time()), "email": email,
+           "target_type": target_type, "target_id": target_id,
+           "comment": comment, "refined_analysis": refined}
+    threading.Thread(target=_post, args=("qa_comments", [row]), daemon=True).start()
 
 
 def flush() -> None:

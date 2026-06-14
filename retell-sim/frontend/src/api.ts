@@ -5,10 +5,17 @@ import type {
 
 const BASE = "/api";
 
+/** Google ID token (set by the auth gate) — attached so the backend can
+ *  verify the user and attribute audit actions. */
+export function authHeader(): Record<string, string> {
+  const t = localStorage.getItem("adit_id_token");
+  return t ? { "X-Id-Token": t } : {};
+}
+
 async function post<T>(path: string, body: unknown): Promise<T> {
   const r = await fetch(`${BASE}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeader() },
     body: JSON.stringify(body),
   });
   if (!r.ok) {
@@ -16,6 +23,38 @@ async function post<T>(path: string, body: unknown): Promise<T> {
     throw new Error(err.detail ?? r.statusText);
   }
   return r.json();
+}
+
+async function getJson<T>(path: string): Promise<T> {
+  const r = await fetch(`${BASE}${path}`, { headers: { ...authHeader() } });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(err.detail ?? r.statusText);
+  }
+  return r.json();
+}
+
+/* ── Auth ── */
+export interface AuthUser { email: string; name: string; picture?: string; is_admin: boolean; }
+export async function fetchAuthConfig(): Promise<{ enabled: boolean; google_client_id: string; allowed_domain: string }> {
+  return (await fetch(`${BASE}/auth/config`)).json();
+}
+export async function authMe(): Promise<AuthUser> { return post("/auth/me", {}); }
+
+/* ── Admin ── */
+export async function fetchAdminUsage(): Promise<{
+  users: { email: string; actions: number; simulations: number; last_seen: number; first_seen: number }[];
+  totals: { users: number; actions: number; sessions: number };
+}> { return getJson("/admin/usage"); }
+
+export async function fetchAdminAudit(): Promise<{
+  audit: { ts: number; email: string; action: string; detail: string; ago_s: number }[];
+}> { return getJson("/admin/audit"); }
+
+/* ── Self-improving feedback (LLM re-analysis) ── */
+export async function reanalyzeFeedback(params: { session_id?: string; issue_title?: string; comment: string }):
+  Promise<{ refined_analysis: string; comment: string; author: string }> {
+  return post("/feedback/reanalyze", params);
 }
 
 export async function fetchConfig(): Promise<AppConfig> {

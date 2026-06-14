@@ -6,8 +6,57 @@
  */
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { fetchRealConfig, fetchRealSessions, fetchRealInsights, fetchApiMetrics, fetchEhrMetrics } from "../api";
+import { fetchRealConfig, fetchRealSessions, fetchRealInsights, fetchApiMetrics, fetchEhrMetrics, reanalyzeFeedback } from "../api";
 import { RealSessionCard, REAL_TRIGGERS, fmtPhone } from "./RealSessionCard";
+
+/* ── Self-improving feedback: comment on an issue → LLM re-analysis ─────────── */
+function IssueFeedback({ issueTitle, sessionId }: { issueTitle: string; sessionId?: string }) {
+  const [open, setOpen] = useState(false);
+  const [comment, setComment] = useState("");
+  const [refined, setRefined] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const submit = async () => {
+    if (!comment.trim()) return;
+    setBusy(true); setErr("");
+    try {
+      const r = await reanalyzeFeedback({ issue_title: issueTitle, session_id: sessionId, comment });
+      setRefined(r.refined_analysis);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Re-analysis failed");
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="mt-2">
+      {!open ? (
+        <button onClick={() => setOpen(true)} className="text-[11.5px] font-semibold text-brand-600 hover:text-brand-700">
+          💬 Add a comment / re-analyze
+        </button>
+      ) : (
+        <div className="space-y-2">
+          <textarea value={comment} onChange={e => setComment(e.target.value)} rows={2}
+            placeholder="Add your insight (e.g. 'this is a prompt bug — agent must re-fetch slots after the patient-type flip'). The platform re-reads the conversation with your note."
+            className="field !text-[12px] resize-none" />
+          <div className="flex gap-2">
+            <button onClick={submit} disabled={busy || !comment.trim()} className="btn-primary btn-sm">
+              {busy ? "Re-analyzing…" : "🤖 Re-analyze with my note"}
+            </button>
+            <button onClick={() => setOpen(false)} className="btn-ghost btn-sm">Cancel</button>
+          </div>
+          {err && <div className="text-[11.5px] text-[#B91C1C]">{err}</div>}
+          {refined && (
+            <div className="rounded-lg border border-brand-200 bg-brand-50 px-3 py-2.5">
+              <div className="text-[10.5px] font-bold uppercase tracking-wide text-brand-700 mb-1">Refined analysis</div>
+              <div className="text-[12px] text-ink-700 leading-snug">{refined}</div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function fmtCooldown(s: number): string {
   if (s <= 0) return "ready";
@@ -374,6 +423,7 @@ export function EhrApiFlow() {
                   <span className="text-[10.5px] text-ink-300 ml-auto">{iss.ago_s}s ago</span>
                 </div>
                 <div className="text-[12px] text-ink-500 mt-1 leading-snug">{iss.detail}</div>
+                <IssueFeedback issueTitle={iss.title} sessionId={iss.scenario_id} />
               </div>
             ))}
           </div>
