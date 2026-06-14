@@ -1060,11 +1060,53 @@ def real_trigger(req: RealTriggerRequest):
     return {"session": _session_dict(session)}
 
 
+def _supa_session_dict(r: dict) -> dict:
+    """Shape a persisted qa_sessions row like a live session for the UI cards."""
+    turns = r.get("transcript") or []
+    return {
+        "session_id": r.get("session_id"), "trigger_type": r.get("trigger_type", ""),
+        "patient_number": r.get("patient_number", ""), "practice_number": r.get("practice_number", ""),
+        "env": r.get("env", ""), "scenario_id": r.get("scenario_id", ""),
+        "scenario_label": r.get("scenario_label", ""), "goal": "", "mode": r.get("mode", "auto"),
+        "patient_name": r.get("patient_name", ""), "status": r.get("status", ""),
+        "outcome": r.get("outcome", ""), "failure_type": r.get("failure_type", ""),
+        "call_sid": "", "call_status": "", "turns": turns, "events": [],
+        "score": r.get("score") or 0, "judge_reason": r.get("judge_reason", ""),
+        "suite_id": r.get("suite_id", ""), "first_sms_latency_s": r.get("first_sms_latency_s") or 0,
+        "avg_reply_latency_s": r.get("avg_reply_latency_s") or 0,
+        "recording_sid": r.get("recording_sid", ""), "ehr_calls": [], "issues": [],
+        "created_at": supa_epoch(r.get("created_at")), "updated_at": supa_epoch(r.get("ended_at")),
+        "cooldown_remaining_s": 0,
+        "recording_url": f"/api/real/recording/{r.get('recording_sid')}" if r.get("recording_sid") else "",
+    }
+
+
+def supa_epoch(iso):
+    try:
+        import supa
+        return supa.epoch(iso)
+    except Exception:
+        return 0.0
+
+
 @router.get("/api/real/sessions")
 def real_sessions():
     with _SESSIONS_LOCK:
-        items = sorted(REAL_SESSIONS.values(), key=lambda s: s.created_at, reverse=True)
-        return {"sessions": [_session_dict(s) for s in items[:80]]}
+        live = sorted(REAL_SESSIONS.values(), key=lambda s: s.created_at, reverse=True)
+        live_dicts = [_session_dict(s) for s in live]
+    live_ids = {d["session_id"] for d in live_dicts}
+    # Merge in persisted history from Supabase (deduped — live takes precedence)
+    history: list = []
+    try:
+        import supa
+        if supa.configured():
+            history = [_supa_session_dict(r) for r in supa.fetch_sessions()
+                       if r.get("session_id") not in live_ids]
+    except Exception:
+        history = []
+    merged = live_dicts + history
+    merged.sort(key=lambda d: d.get("created_at", 0), reverse=True)
+    return {"sessions": merged[:200]}
 
 
 @router.get("/api/real/session/{session_id}")
@@ -1449,11 +1491,27 @@ def _pct(vals: list, p: float) -> float:
     return round(vals[min(len(vals) - 1, int(len(vals) * p))], 1)
 
 
+def _all_api_calls() -> list:
+    """Complete API-call history: from Supabase if configured (survives deploys),
+    else the in-memory buffer."""
+    try:
+        import supa
+        if supa.configured():
+            return [{"ts": supa.epoch(r.get("ts")), "provider": r.get("provider", ""),
+                     "operation": r.get("operation", ""), "latency_ms": r.get("latency_ms") or 0,
+                     "ok": r.get("ok", True), "cost": r.get("cost") or 0.0,
+                     "session_id": r.get("session_id", ""), "env": r.get("env", ""),
+                     "detail": r.get("detail", "")} for r in supa.fetch_api_calls()]
+    except Exception:
+        pass
+    with _API_LOCK:
+        return list(API_CALLS)
+
+
 @router.get("/api/real/api-metrics")
 def real_api_metrics():
     """Performance + spend of every meaningful API call the platform makes."""
-    with _API_LOCK:
-        calls = list(API_CALLS)
+    calls = _all_api_calls()
     if not calls:
         return {"total": 0, "providers": {}, "operations": [], "recent": [], "total_cost": 0.0}
 
@@ -1486,7 +1544,8 @@ def real_api_metrics():
         operations.append(d)
     operations.sort(key=lambda x: x["count"], reverse=True)
 
-    recent = [{**r, "ago_s": round(time.time() - r["ts"])} for r in list(calls)[-40:][::-1]]
+    recent = [{**r, "ago_s": round(time.time() - r["ts"])}
+              for r in sorted(calls, key=lambda x: x["ts"], reverse=True)[:40]]
     return {
         "total": len(calls),
         "total_cost": round(sum(r["cost"] for r in calls), 4),
@@ -1528,8 +1587,19 @@ def real_ehr_metrics():
     """Per-EHR-function call metrics pulled from the Retell agent's tool-call logs —
     the create_new_patient / get_available_slot / book_appointment / modify /
     create_task flow. Shows volume, business success vs failure, and latency."""
-    with _API_LOCK:
-        calls = list(EHR_CALLS)
+    calls = None
+    try:
+        import supa
+        if supa.configured():
+            calls = [{"ts": supa.epoch(r.get("ts")), "name": r.get("name", ""),
+                      "ok": r.get("ok", True), "business_ok": r.get("business_ok", True),
+                      "latency_ms": r.get("latency_ms") or 0, "result": r.get("result", ""),
+                      "env": r.get("env", "")} for r in supa.fetch_ehr_calls()]
+    except Exception:
+        calls = None
+    if calls is None:
+        with _API_LOCK:
+            calls = list(EHR_CALLS)
     if not calls:
         return {"total": 0, "functions": [], "recent": []}
 
@@ -1554,7 +1624,8 @@ def real_ehr_metrics():
             "avg_ms": round(sum(lat) / len(lat)) if lat else 0,
         })
     functions.sort(key=lambda x: x["count"], reverse=True)
-    recent = [{**c, "ago_s": round(time.time() - c["ts"])} for c in list(calls)[-50:][::-1]]
+    recent = [{**c, "ago_s": round(time.time() - c["ts"])}
+              for c in sorted(calls, key=lambda x: x["ts"], reverse=True)[:50]]
     issues = [{**i, "ago_s": round(time.time() - i["ts"])} for i in list(EHR_ISSUES)[::-1]]
     return {
         "total": len(calls),
@@ -1565,9 +1636,33 @@ def real_ehr_metrics():
     }
 
 
+def _sessions_for_insights() -> list:
+    """All terminal sessions for scoring — from Supabase (full history) if
+    configured, else in-memory. Returns objects exposing .status/.outcome/.env/
+    .trigger_type/.scenario_id/.score/.first_sms_latency_s/.failure_type/.turns."""
+    try:
+        import supa
+        if supa.configured():
+            from types import SimpleNamespace
+            out = []
+            for r in supa.fetch_sessions():
+                turns = [SimpleNamespace(role=t.get("role"), latency_s=t.get("latency_s", 0) or 0)
+                         for t in (r.get("transcript") or [])]
+                out.append(SimpleNamespace(
+                    status=r.get("status", ""), outcome=r.get("outcome", ""), env=r.get("env", ""),
+                    trigger_type=r.get("trigger_type", ""), scenario_id=r.get("scenario_id", ""),
+                    scenario_label=r.get("scenario_label", ""), score=r.get("score") or 0,
+                    first_sms_latency_s=r.get("first_sms_latency_s") or 0,
+                    failure_type=r.get("failure_type", ""), turns=turns))
+            return out
+    except Exception:
+        pass
+    return list(REAL_SESSIONS.values())
+
+
 @router.get("/api/real/insights")
 def real_insights():
-    all_terminal = [s for s in REAL_SESSIONS.values() if s.status in ("completed", "failed")]
+    all_terminal = [s for s in _sessions_for_insights() if s.status in ("completed", "failed")]
     # EHR-not-connected sessions aren't valid tests (practice has no system access)
     # → keep them visible but EXCLUDE from pass/fail and quality scoring.
     not_testable = [s for s in all_terminal if s.outcome == "ehr_not_connected"]

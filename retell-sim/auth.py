@@ -122,13 +122,26 @@ async def auth_me(request: Request):
 
 # ── Endpoints: admin (usage + audit) ─────────────────────────────────────────
 
+def _audit_rows() -> list:
+    """Full audit history from Supabase if configured, else in-memory."""
+    try:
+        import supa
+        if supa.configured():
+            return [{"ts": supa.epoch(r.get("ts")), "email": r.get("email", ""),
+                     "action": r.get("action", ""), "detail": r.get("detail", ""),
+                     "env": r.get("env", "")} for r in supa.fetch_audit()]
+    except Exception:
+        pass
+    return list(AUDIT)
+
+
 @router.get("/api/admin/usage")
 def admin_usage(request: Request):
     require_admin(request)
     # Per-user usage rolled up from the audit log + real-phone sessions
     import real_phone as rp
     by_user: dict[str, dict] = {}
-    for a in AUDIT:
+    for a in _audit_rows():
         u = by_user.setdefault(a["email"], {"email": a["email"], "actions": 0,
                                             "simulations": 0, "last_seen": 0, "first_seen": a["ts"]})
         u["actions"] += 1
@@ -150,7 +163,8 @@ def admin_usage(request: Request):
 @router.get("/api/admin/audit")
 def admin_audit(request: Request, limit: int = 200):
     require_admin(request)
-    rows = [{**a, "ago_s": round(time.time() - a["ts"])} for a in list(AUDIT)[-limit:][::-1]]
+    src = sorted(_audit_rows(), key=lambda a: a["ts"], reverse=True)[:limit]
+    rows = [{**a, "ago_s": round(time.time() - a["ts"])} for a in src]
     return {"audit": rows}
 
 

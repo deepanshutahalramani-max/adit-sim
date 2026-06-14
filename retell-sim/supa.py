@@ -180,16 +180,39 @@ def flush() -> None:
             threading.Thread(target=_post, args=("qa_api_calls", batch), daemon=True).start()
 
 
-def fetch_sessions(limit: int = 200) -> list[dict]:
+def _fetch(table: str, limit: int, order: str = "ts.desc") -> list[dict]:
     if not configured():
         return []
     try:
-        r = httpx.get(f"{SUPABASE_URL}/rest/v1/qa_sessions",
-                      headers=_headers(),
-                      params={"select": "*", "order": "created_at.desc", "limit": str(limit)},
-                      timeout=10)
-        if r.status_code == 200:
-            return r.json()
+        r = httpx.get(f"{SUPABASE_URL}/rest/v1/{table}", headers=_headers(),
+                      params={"select": "*", "order": order, "limit": str(limit)}, timeout=12)
+        return r.json() if r.status_code == 200 else []
     except Exception:
-        pass
-    return []
+        return []
+
+
+def fetch_sessions(limit: int = 500) -> list[dict]:
+    return _fetch("qa_sessions", limit, order="created_at.desc")
+
+
+def fetch_api_calls(limit: int = 5000) -> list[dict]:
+    return _fetch("qa_api_calls", limit)
+
+
+def fetch_ehr_calls(limit: int = 5000) -> list[dict]:
+    return _fetch("qa_ehr_calls", limit)
+
+
+def fetch_audit(limit: int = 5000) -> list[dict]:
+    return _fetch("qa_audit", limit)
+
+
+def epoch(iso: str | None) -> float:
+    """Parse a Supabase timestamptz string back to epoch seconds."""
+    if not iso:
+        return 0.0
+    try:
+        s = iso.replace("Z", "+00:00")
+        return datetime.fromisoformat(s).timestamp()
+    except Exception:
+        return 0.0
