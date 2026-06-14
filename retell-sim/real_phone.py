@@ -59,6 +59,37 @@ PRACTICE_NUMBERS = {
 }
 _TW_BASE = "https://api.twilio.com/2010-04-01"
 
+
+def _normalize_number(num: str) -> str:
+    """Normalize a destination number to E.164, raising a clear 400 if invalid —
+    so a typo surfaces as a friendly message, not a raw Twilio 400."""
+    import re
+    raw = (num or "").strip()
+    cleaned = re.sub(r"[^\d+]", "", raw)
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="Enter a destination number to call / text.")
+    if not cleaned.startswith("+"):
+        digits = re.sub(r"\D", "", cleaned)
+        if len(digits) == 10:            # bare US 10-digit → add +1
+            cleaned = "+1" + digits
+        elif len(digits) == 11 and digits.startswith("1"):
+            cleaned = "+" + digits
+        else:
+            cleaned = "+" + digits
+    digits = cleaned[1:]
+    if not digits.isdigit():
+        raise HTTPException(status_code=400, detail=f"'{raw}' isn't a valid phone number.")
+    # US (+1) must be exactly 10 digits after the country code
+    if digits.startswith("1") and len(digits) != 11:
+        raise HTTPException(
+            status_code=400,
+            detail=f"'{raw}' isn't a valid US number. Use +1 followed by exactly 10 digits, "
+                   f"e.g. +13215202959 (you entered {len(digits) - 1} digits after +1).")
+    if not (11 <= len(digits) <= 15):
+        raise HTTPException(status_code=400,
+                            detail=f"'{raw}' isn't a valid E.164 number (needs 11–15 digits).")
+    return cleaned
+
 MAX_SMS_TURNS          = 16        # safety cap on auto-replies per session
 INCOMPLETE_HOLD_S      = 12        # silence before hanging up an incomplete call
 MISSED_CANCEL_S        = 1         # cancel ASAP after ringing starts (true missed call)
@@ -1020,6 +1051,8 @@ def real_trigger(req: RealTriggerRequest):
     if req.trigger_type not in VALID_TRIGGERS:
         raise HTTPException(status_code=400, detail=f"Unknown trigger_type: {req.trigger_type}")
     practice = (req.practice_number or PRACTICE_NUMBERS.get(req.env, "")).strip()
+    if req.env == "custom" or req.practice_number:
+        practice = _normalize_number(practice)   # friendly error on a bad custom number
     if not practice:
         raise HTTPException(status_code=400, detail=f"No practice number configured for env '{req.env}'.")
     session = _start_session(req.trigger_type, practice, req.scenario_id, req.env,
@@ -1145,6 +1178,8 @@ class ManualStartRequest(BaseModel):
 def manual_start(req: ManualStartRequest):
     _require_twilio()
     practice = (req.practice_number or PRACTICE_NUMBERS.get(req.env, "")).strip()
+    if req.env == "custom" or req.practice_number:
+        practice = _normalize_number(practice)   # friendly error on a bad custom number
     if not practice:
         raise HTTPException(status_code=400, detail=f"No practice number for env '{req.env}'.")
     if req.trigger_type == "inbound_sms" and not req.message.strip():
@@ -1358,6 +1393,8 @@ class SuiteRequest(BaseModel):
 def real_run_suite(req: SuiteRequest):
     _require_twilio()
     practice = (req.practice_number or PRACTICE_NUMBERS.get(req.env, "")).strip()
+    if req.env == "custom" or req.practice_number:
+        practice = _normalize_number(practice)   # friendly error on a bad custom number
     if not practice:
         raise HTTPException(status_code=400, detail=f"No practice number configured for env '{req.env}'.")
     srv = _sim()
