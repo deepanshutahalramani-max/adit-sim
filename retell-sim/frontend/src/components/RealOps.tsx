@@ -399,9 +399,10 @@ export function EhrApiFlow() {
           {m.recent.map((r, i) => (
             <div key={i} className="flex items-center gap-3 text-[12px] py-1 border-b border-line-soft last:border-0">
               <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${r.business_ok ? "bg-[#22C55E]" : "bg-[#EF4444]"}`} />
-              <span className="font-mono font-semibold text-ink-700 w-[170px] flex-shrink-0">{r.name}</span>
+              <span className="font-mono font-semibold text-ink-700 w-[160px] flex-shrink-0">{r.name}</span>
               {r.env && <span className="pill pill-neutral !py-0 !text-[10px] uppercase">{r.env}</span>}
-              <span className={`font-medium ${r.business_ok ? "text-[#15803D]" : "text-[#B91C1C]"}`}>{r.business_ok ? "ok" : "fail"}</span>
+              <span className={`font-medium w-[36px] ${r.business_ok ? "text-[#15803D]" : "text-[#B91C1C]"}`}>{r.business_ok ? "ok" : "fail"}</span>
+              <span className="text-ink-500 font-medium w-[56px] flex-shrink-0">⏱ {r.latency_ms}ms</span>
               <span className="text-ink-300 truncate flex-1">{r.result}</span>
               <span className="text-ink-300 flex-shrink-0">{r.ago_s}s</span>
             </div>

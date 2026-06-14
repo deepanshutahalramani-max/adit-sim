@@ -197,6 +197,34 @@ export function RealSessionCard({ s, compact }: { s: RealSession; compact?: bool
         </div>
       )}
 
+      {/* EHR / agent API calls — the booking-flow functions, with timing + failures */}
+      {expanded && (s.ehr_calls?.length ?? 0) > 0 && (
+        <div className="mt-4">
+          <div className="text-[11.5px] font-bold text-[#ADADAD] uppercase tracking-wide mb-2">
+            EHR API calls ({s.ehr_calls!.length}) — agent → ADIT
+          </div>
+          <div className="space-y-1.5">
+            {s.ehr_calls!.map((c, i) => (
+              <div key={i} className={`rounded-lg border px-3 py-2 ${
+                c.business_ok ? "border-line bg-canvas-raised" : "border-[#FECACA] bg-[#FEF2F2]"
+              }`}>
+                <div className="flex items-center gap-2 text-[12.5px]">
+                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${c.business_ok ? "bg-[#22C55E]" : "bg-[#EF4444]"}`} />
+                  <span className="font-mono font-semibold text-ink-700">{c.name}</span>
+                  <span className={`text-[11px] font-bold ${c.business_ok ? "text-[#15803D]" : "text-[#B91C1C]"}`}>
+                    {c.business_ok ? "success" : "FAILED"}
+                  </span>
+                  <span className="ml-auto text-[11px] text-ink-400 font-medium">⏱ {c.latency_ms}ms</span>
+                </div>
+                {!c.business_ok && c.result && (
+                  <div className="text-[11px] text-[#B91C1C] mt-1 pl-3.5 leading-snug">{c.result}</div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {expanded && (
         <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div>

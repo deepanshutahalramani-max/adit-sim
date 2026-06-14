@@ -433,6 +433,7 @@ export interface RealSession {
   suite_id: string;
   first_sms_latency_s: number;
   avg_reply_latency_s: number;
+  ehr_calls?: { name: string; ok: boolean; business_ok: boolean; latency_ms: number; result: string }[];
   error: string;
   created_at: number;
   updated_at: number;
