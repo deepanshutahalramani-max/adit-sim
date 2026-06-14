@@ -863,7 +863,7 @@ def _run_journey(suite: SuiteRun) -> None:
             suite.pinned_number = session.patient_number
         _wait_terminal(session)
         suite.done += 1
-        time.sleep(15)  # gap between real conversations
+        time.sleep(30)  # gap between real conversations — lets trailing SMS drain
 
 
 def _suite_worker(suite: SuiteRun, q) -> None:
@@ -1108,6 +1108,15 @@ def _handle_agent_message(session: RealSession, body: str, from_number: str) -> 
     RingCentral poller, so both providers behave identically.
     Runs in a worker thread (contains an LLM call + a human-typing sleep), so
     many conversations can progress concurrently without blocking each other."""
+    # Journey phases reuse ONE number for identity continuity. The AI's closing
+    # SMS from the previous phase can land after that phase ended, while the next
+    # phase's session is already active — it would be mis-attributed and (worse)
+    # match a completion keyword and end the new phase instantly. For call
+    # triggers the legit follow-up SMS only arrives AFTER the call ends, so any
+    # SMS before call_ended_at is a stray from a prior conversation — drop it.
+    if session.trigger_type in ("missed_call", "incomplete_call") and not session.call_ended_at:
+        session.log(f"Ignored stray SMS before call ended: \"{body[:50]}\"")
+        return
     now = time.time()
     latency = round(now - session.awaiting_reply_since, 1) if session.awaiting_reply_since else 0.0
     session.turns.append(RealTurn("agent", body, "sms", latency_s=latency))
