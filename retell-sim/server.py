@@ -549,9 +549,10 @@ RULES:
 11. If asked date of birth / DOB → {persona.dob}
 12. If asked insurance → {persona.insurance}
 13. If asked for phone number / contact number → {patient_phone if patient_phone else "use the number I'm texting from"}
-14. If given a choice between two options → pick the first one
+14. EITHER/OR questions ("would you like X or Y?", "book now or leave a note?"): pick ONE option and say it explicitly by name (e.g. "Let's do the first available slot" or "Please create a note"). NEVER answer a choice question with just "yes" or "sure" — name the choice.
 15. If asked for full name / first and last name together → {persona.first_name} {persona.last_name}
-16. Output ONLY your reply text. No quotes, no labels, no explanation."""
+16. If the agent REPEATS a question you already answered (e.g. asks your insurance again): answer it again, clearly and a bit more explicitly (spell it out / restate it plainly) — do NOT copy your previous wording verbatim and do NOT get stuck. Assume it may not have heard you.
+17. Output ONLY your reply text. No quotes, no labels, no explanation."""
 
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -593,17 +594,27 @@ def _llm_judge(scenario_label, turns, oai_key):
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": (
-                    "You are a QA evaluator for a dental front-desk AI SMS agent.\n"
-                    "This agent has two valid completion paths:\n"
-                    "  A) DIRECT BOOKING: agent books appointment and gives confirmation\n"
-                    "  B) TASK CREATION: agent cannot book directly, collects patient info, creates a task/note for human team\n"
-                    "Both paths are VALID outcomes. Score 0-100:\n"
-                    "  95-100: Full direct booking confirmed with all details\n"
-                    "  80-94:  Task/note created after collecting name + DOB + reason + preferred time\n"
-                    "  60-79:  Task created but missing some patient details\n"
-                    "  40-59:  Conversation started, no completion\n"
-                    "  0-39:   Agent gave wrong info, failed, or was unhelpful\n"
-                    "Reply ONLY with JSON: {\"score\": <int>, \"reason\": \"<1-2 sentences>\"}"
+                    "You are a STRICT QA evaluator for a dental front-desk AI agent. Be critical — a "
+                    "high score must be EARNED by a clean, completed interaction. When in doubt, score lower.\n\n"
+                    "A valid completion is ONE of:\n"
+                    "  A) DIRECT BOOKING — agent books the appointment AND gives an explicit confirmation "
+                    "(date + time stated as booked).\n"
+                    "  B) TASK CREATION — agent genuinely cannot book, collects name + DOB + reason, and "
+                    "explicitly confirms a note/task was created for the team.\n\n"
+                    "Score 0-100 by the TERMINAL OUTCOME, not effort:\n"
+                    "  90-100: Direct booking confirmed, smooth, no errors or repetition.\n"
+                    "  75-89:  Task created with all required details, OR a booking confirmed but with minor friction.\n"
+                    "  55-74:  Task created but missing details, OR completion reached only after notable friction.\n"
+                    "  30-54:  NO completion — conversation ended without a confirmed booking or task. "
+                    "(A call that just collected some info but never finished is in this band.)\n"
+                    "  0-29:   Agent gave wrong info, contradicted itself, failed a tool repeatedly, or was unhelpful.\n\n"
+                    "MANDATORY penalties (apply before finalizing):\n"
+                    "  - No explicit booking confirmation AND no explicit task/note confirmation → score MUST be < 55.\n"
+                    "  - Agent repeated the same question 2+ times, or looped → cap at 50.\n"
+                    "  - A tool/booking failed and was never recovered (e.g. 'slot no longer available' repeatedly) → cap at 45.\n"
+                    "  - Conversation cut off mid-flow / max-turns with no resolution → cap at 50.\n\n"
+                    "Reply ONLY with JSON: {\"score\": <int>, \"outcome\": \"booking|task|incomplete|failed\", "
+                    "\"reason\": \"<1-2 sentences naming the terminal outcome>\"}"
                 )},
                 {"role": "user", "content": f"Scenario: {scenario_label}\n\nFull transcript:\n{transcript}"},
             ],

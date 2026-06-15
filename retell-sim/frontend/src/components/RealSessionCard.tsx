@@ -189,6 +189,21 @@ export function RealSessionCard({ s, compact }: { s: RealSession; compact?: bool
           {s.events[s.events.length - 1]?.msg}
         </div>
       )}
+      {s.triage && (
+        <div className="mt-2 text-[12px] text-[#92600A] bg-[#FFF7ED] border border-[#FED7AA] rounded-lg px-3 py-2">
+          <span className="font-bold">Why it failed:</span> {s.triage}
+        </div>
+      )}
+      {(s.issues?.length ?? 0) > 0 && (
+        <div className="mt-2 space-y-1.5">
+          {s.issues!.map((iss, i) => (
+            <div key={i} className="text-[12px] bg-[#FEF2F2] border border-[#FECACA] rounded-lg px-3 py-2">
+              <span className="font-bold text-[#991B1B]">⚠ {iss.title}</span>
+              <div className="text-[#7C2D12] mt-0.5 leading-snug">{iss.detail}</div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {s.recording_url && (
         <div className="mt-3 flex items-center gap-3">

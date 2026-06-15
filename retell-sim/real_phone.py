@@ -110,18 +110,21 @@ EHR_NOT_CONNECTED_KWS = [
 ]
 
 # Stable identity per Twilio number — ADIT builds one consistent patient record per number.
+# Last name is the shared tag "QATest" so practice staff can instantly spot and bulk-delete
+# QA test patients in the EHR (test-data hygiene). First name + DOB stay distinct per number.
+QA_LAST_NAME = "QATest"
 NUMBER_IDENTITIES: dict[str, dict] = {
     TWILIO_NUMBERS[0] if len(TWILIO_NUMBERS) > 0 else "+10000000001":
-        {"first": "Jamie", "last": "Chen", "dob": "April 12, 1990", "insurance": "Delta Dental PPO"},
+        {"first": "Jamie", "last": QA_LAST_NAME, "dob": "April 12, 1990", "insurance": "Delta Dental PPO"},
     TWILIO_NUMBERS[1] if len(TWILIO_NUMBERS) > 1 else "+10000000002":
-        {"first": "Maria", "last": "Garcia", "dob": "July 23, 1985", "insurance": "Cigna PPO"},
+        {"first": "Maria", "last": QA_LAST_NAME, "dob": "July 23, 1985", "insurance": "Cigna PPO"},
     TWILIO_NUMBERS[2] if len(TWILIO_NUMBERS) > 2 else "+10000000003":
-        {"first": "Robert", "last": "Lee", "dob": "June 20, 1978", "insurance": "Aetna"},
+        {"first": "Robert", "last": QA_LAST_NAME, "dob": "June 20, 1978", "insurance": "Aetna"},
     TWILIO_NUMBERS[3] if len(TWILIO_NUMBERS) > 3 else "+10000000004":
-        {"first": "Sarah", "last": "Johnson", "dob": "November 8, 1995", "insurance": "MetLife PPO"},
+        {"first": "Sarah", "last": QA_LAST_NAME, "dob": "November 8, 1995", "insurance": "MetLife PPO"},
     # RingCentral company number — used for PROD SMS conversations (A2P-exempt path)
     os.environ.get("RINGCENTRAL_NUMBER", "+18324464448"):
-        {"first": "David", "last": "Kim", "dob": "March 15, 1982", "insurance": "United Concordia"},
+        {"first": "David", "last": QA_LAST_NAME, "dob": "March 15, 1982", "insurance": "United Concordia"},
 }
 
 # ── RingCentral SMS provider ──────────────────────────────────────────────────
@@ -442,6 +445,7 @@ def _fetch_ehr_calls(session: RealSession) -> None:
         hdrs = {"Authorization": f"Bearer {key}"}
 
         msgs = None
+        record_found = False
         if session.trigger_type == "inbound_call":
             r = httpx.post("https://api.retellai.com/v2/list-calls", headers=hdrs,
                            json={"limit": 30, "sort_order": "descending"}, timeout=15)
@@ -450,6 +454,7 @@ def _fetch_ehr_calls(session: RealSession) -> None:
                 if digits in str(c.get("from_number", "")) and \
                    c.get("start_timestamp", 0) / 1000 >= session.created_at - 120:
                     msgs = c.get("transcript_with_tool_calls") or c.get("message_with_tool_calls")
+                    record_found = True
                     break
         else:
             r = httpx.get("https://api.retellai.com/list-chat", headers=hdrs, timeout=15)
@@ -460,10 +465,35 @@ def _fetch_ehr_calls(session: RealSession) -> None:
                 if digits in str(dv.get("patient_phone_number", "")) and \
                    c.get("start_timestamp", 0) / 1000 >= session.created_at - 120:
                     msgs = c.get("message_with_tool_calls")
+                    record_found = True
                     break
+
+        # ── Failure triage (#31): cross-reference Retell to explain WHY it failed ──
+        if session.status == "failed":
+            agent_msgs = sum(1 for m in (msgs or []) if m.get("role") == "agent")
+            if not record_found:
+                session.triage = ("No Retell session found for this number — the AI never engaged. "
+                                  "Likely the 24h cooldown, or the trigger (call/SMS) didn't reach ADIT.")
+            elif agent_msgs and session.failure_type == "no_followup_sms":
+                session.triage = ("Retell DID run a session and the agent spoke, but its messages never "
+                                  "reached our number — ADIT/carrier did not deliver them (delivery gap).")
+            elif session.failure_type == "reply_timeout":
+                session.triage = ("Retell session exists but the agent stopped responding mid-conversation "
+                                  "(agent-side stall), not a delivery issue.")
+            else:
+                session.triage = "Retell session found; failure appears agent-side (see transcript)."
 
         if not msgs:
             return
+
+        # ── Voice grading (#32): replace garbled Twilio STT with Retell's clean
+        # transcript so the judge + the displayed conversation use accurate text ──
+        if session.trigger_type == "inbound_call":
+            clean = _retell_turns(msgs)
+            if clean:
+                session.turns = clean
+                session.log("Voice transcript replaced with Retell's clean version")
+
         calls = _extract_ehr_calls(msgs)
         session.ehr_calls = calls                                   # full list for the session card
         session.issues = _diagnose_ehr(calls)                       # root-cause findings for the card
@@ -474,6 +504,23 @@ def _fetch_ehr_calls(session: RealSession) -> None:
         session.log(note)
     except Exception as exc:
         session.log(f"EHR fetch failed: {exc}")
+
+
+def _retell_turns(msgs: list) -> list:
+    """Build clean RealTurn objects from Retell's message log (role agent/user
+    with content), skipping tool-call entries — used to grade voice on the real
+    transcript instead of our Twilio speech-to-text."""
+    out: list = []
+    for m in msgs or []:
+        role = m.get("role")
+        content = (m.get("content") or "").strip()
+        if not content:
+            continue
+        if role == "agent":
+            out.append(RealTurn("agent", content, "voice"))
+        elif role == "user":
+            out.append(RealTurn("patient", content, "voice"))
+    return out
 
 
 # Persistent-ish state (survives within a deploy; Railway FS is ephemeral across deploys)
@@ -554,6 +601,7 @@ class RealSession:
     awaiting_reply_since: float = 0.0  # set when patient sends; cleared on agent reply
     ehr_calls: list = field(default_factory=list)  # EHR tool calls pulled from Retell
     issues: list = field(default_factory=list)     # auto-diagnosed root-cause findings
+    triage: str = ""                               # failure triage (Retell cross-reference)
     error: str = ""
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)

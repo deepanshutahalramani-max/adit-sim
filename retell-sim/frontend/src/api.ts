@@ -474,6 +474,8 @@ export interface RealSession {
   avg_reply_latency_s: number;
   ehr_calls?: { name: string; ok: boolean; business_ok: boolean; latency_ms: number; result: string }[];
   issues?: { severity: string; title: string; detail: string }[];
+  triage?: string;
+  issues?: { severity: string; title: string; detail: string }[];
   error: string;
   created_at: number;
   updated_at: number;
