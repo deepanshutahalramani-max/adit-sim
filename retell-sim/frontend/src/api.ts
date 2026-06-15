@@ -385,7 +385,7 @@ export async function setRegisteredPatient(data: {
 
 export async function extractContextFromImage(
   screenshot: File,
-  openaiKey: string,
+  openaiKey = "",
 ): Promise<{ context: string }> {
   const fd = new FormData();
   fd.append("screenshot", screenshot);
@@ -542,6 +542,7 @@ export async function triggerReal(params: {
   scenario_id?: string;
   patient_number?: string;
   opener?: string;
+  extra_context?: string;
 }): Promise<{ session: RealSession; cooldown_warning_s: number }> {
   return post("/real/trigger", params);
 }
@@ -565,6 +566,7 @@ export async function runRealSuite(params: {
   env?: string;
   practice_number?: string;
   kind?: string;
+  extra_context?: string;
 }): Promise<SuiteRun> {
   return post("/real/run-suite", params);
 }

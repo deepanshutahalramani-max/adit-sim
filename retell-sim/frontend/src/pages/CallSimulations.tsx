@@ -8,7 +8,7 @@
 import { useState } from "react";
 import type { Config, AppConfig } from "../types";
 import { RealRunPanel } from "../components/RealRunPanel";
-import { IdentityBoard } from "../components/RealOps";
+import { IdentityBoard, ContextInput } from "../components/RealOps";
 import { realEnv, destNumber, envGuard } from "./Simulations";
 
 interface Props {
@@ -19,6 +19,7 @@ interface Props {
 export function CallSimulations({ config, appConfig }: Props) {
   const scenarios = appConfig?.scenarios ?? [];
   const [selected, setSelected] = useState<string[]>([]);
+  const [ctx, setCtx] = useState("");
   const env = realEnv(config.environment)!;
   const dest = destNumber(config);
 
@@ -71,11 +72,15 @@ export function CallSimulations({ config, appConfig }: Props) {
           Calls run sequentially, one per patient number, and appear live below with the transcript
           as it happens and the recording when done.
         </div>
+        <div className="mb-4">
+          <ContextInput value={ctx} onChange={setCtx} />
+        </div>
         <RealRunPanel
           env={env}
           practiceNumber={dest}
           kind="suite"
           scenarioIds={selected}
+          extraContext={ctx}
           allowedTriggers={["inbound_call"]}
           buttonLabel={`🎙️ Call ${selected.length} scenario${selected.length === 1 ? "" : "s"}`}
           disabled={selected.length === 0}

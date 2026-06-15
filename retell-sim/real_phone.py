@@ -582,6 +582,7 @@ class RealSession:
     goal: str
     persona_idx: int
     scenario_label: str = ""
+    extra_context: str = ""      # optional reviewer-supplied scenario context (text/screenshot-derived)
     mode: str = "auto"           # auto (AI drives patient) | manual (human drives patient)
     patient_name: str = ""       # identity used (from NUMBER_IDENTITIES)
     status: str = "starting"     # starting | calling | waiting_for_sms | in_conversation | completed | failed
@@ -782,7 +783,8 @@ def _patient_reply(session: RealSession, agent_msg: str) -> tuple[str, bool]:
     return _timed("openai", "patient_reply",
                   lambda: srv.smart_patient_reply(
                       agent_msg, persona, history, session.goal, oai_key,
-                      patient_phone=session.patient_number),
+                      patient_phone=session.patient_number,
+                      extra_context=session.extra_context),
                   session_id=session.session_id, env=session.env, cost=_COST["openai.patient"])
 
 
@@ -987,7 +989,7 @@ VALID_TRIGGERS = ("missed_call", "incomplete_call", "inbound_sms", "inbound_call
 def _start_session(trigger_type: str, practice: str, scenario_id: str, env: str,
                    patient_number: str = "", opener: str = "", suite_id: str = "",
                    mode: str = "auto", goal_override: str = "",
-                   label_override: str = "") -> RealSession:
+                   label_override: str = "", extra_context: str = "") -> RealSession:
     _ensure_watchdog()
     cfg = _resolve_scenario(scenario_id)
     srv = _sim()
@@ -1029,6 +1031,7 @@ def _start_session(trigger_type: str, practice: str, scenario_id: str, env: str,
         patient_name=f"{ident.get('first', '')} {ident.get('last', '')}".strip(),
         suite_id=suite_id,
         mode=mode,
+        extra_context=extra_context,
     )
     with _SESSIONS_LOCK:
         REAL_SESSIONS[session.session_id] = session
@@ -1091,6 +1094,7 @@ class RealTriggerRequest(BaseModel):
     scenario_id: str = "new-patient-cleaning"
     patient_number: str = ""
     opener: str = ""
+    extra_context: str = ""
 
 
 @router.post("/api/real/trigger")
@@ -1104,7 +1108,7 @@ def real_trigger(req: RealTriggerRequest):
     if not practice:
         raise HTTPException(status_code=400, detail=f"No practice number configured for env '{req.env}'.")
     session = _start_session(req.trigger_type, practice, req.scenario_id, req.env,
-                             req.patient_number, req.opener)
+                             req.patient_number, req.opener, extra_context=req.extra_context)
     return {"session": _session_dict(session)}
 
 
@@ -1328,6 +1332,7 @@ class SuiteRun:
     opener: str = ""               # repro override
     goal: str = ""                 # repro override
     label: str = ""                # repro override
+    extra_context: str = ""        # reviewer-supplied scenario context for the AI patient
     started_at: float = field(default_factory=time.time)
     finished_at: float = 0.0
 
@@ -1366,7 +1371,8 @@ def _run_journey(suite: SuiteRun) -> None:
         try:
             with _PICK_LOCK:
                 session = _start_session(suite.trigger_type, suite.practice_number, sid, suite.env,
-                                         patient_number=suite.pinned_number, suite_id=suite.suite_id)
+                                         patient_number=suite.pinned_number, suite_id=suite.suite_id,
+                                         extra_context=suite.extra_context)
         except Exception:
             continue
         suite.session_ids.append(session.session_id)
@@ -1423,7 +1429,8 @@ def _suite_worker(suite: SuiteRun, q) -> None:
                                                  suite.env, patient_number=pinned,
                                                  suite_id=suite.suite_id,
                                                  opener=suite.opener, goal_override=suite.goal,
-                                                 label_override=suite.label)
+                                                 label_override=suite.label,
+                                                 extra_context=suite.extra_context)
                     break
                 except HTTPException:
                     time.sleep(5)
@@ -1477,6 +1484,7 @@ class SuiteRequest(BaseModel):
     goal: str = ""          # repro: custom patient goal (e.g. "Reproduce: <root cause>")
     label: str = ""         # repro: display label
     repeat: int = 1         # repro: how many runs
+    extra_context: str = "" # reviewer-supplied scenario context for the AI patient
 
 
 @router.post("/api/real/run-suite")
@@ -1509,6 +1517,7 @@ def real_run_suite(req: SuiteRequest):
         opener=req.opener if req.kind == "repro" else "",
         goal=req.goal if req.kind == "repro" else "",
         label=req.label if req.kind == "repro" else "",
+        extra_context=req.extra_context,
     )
     SUITES[suite.suite_id] = suite
     threading.Thread(target=_run_suite, args=(suite,), daemon=True).start()

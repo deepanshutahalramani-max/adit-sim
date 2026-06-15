@@ -19,6 +19,7 @@ interface Props {
   goal?: string;                     // repro kind
   label?: string;                    // repro kind
   repeat?: number;                   // repro kind
+  extraContext?: string;             // reviewer-supplied scenario context for the AI patient
   buttonLabel?: string;
   /** Triggers selectable for SMS flows; pass ["inbound_call"] for voice. */
   allowedTriggers?: string[];
@@ -27,7 +28,7 @@ interface Props {
 }
 
 export function RealRunPanel({
-  env, practiceNumber, kind, scenarioIds, opener, goal, label, repeat,
+  env, practiceNumber, kind, scenarioIds, opener, goal, label, repeat, extraContext,
   buttonLabel, allowedTriggers, disabled, disabledReason,
 }: Props) {
   const qc = useQueryClient();
@@ -60,6 +61,7 @@ export function RealRunPanel({
       goal: kind === "repro" ? goal : undefined,
       label: kind === "repro" ? label : undefined,
       repeat: kind === "repro" ? repeat : undefined,
+      extra_context: extraContext || undefined,
     }),
     onSuccess: r => {
       setSuiteId(r.suite_id);

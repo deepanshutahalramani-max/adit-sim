@@ -9,7 +9,7 @@ import { useState } from "react";
 import type { Config, AppConfig } from "../types";
 import { RealRunPanel } from "../components/RealRunPanel";
 import { RealManualConsole } from "../components/RealManualConsole";
-import { IdentityBoard } from "../components/RealOps";
+import { IdentityBoard, ContextInput } from "../components/RealOps";
 
 /** Map sidebar environment to real-phone env */
 export function realEnv(environment: string): "beta" | "prod" | "custom" | null {
@@ -56,6 +56,7 @@ export function Simulations({ config, appConfig }: Props) {
   const scenarios = appConfig?.scenarios ?? [];
   const [subTab, setSubTab] = useState<SubTab>("ai");
   const [selected, setSelected] = useState<string[]>([]);
+  const [ctx, setCtx] = useState("");
   const env = realEnv(config.environment)!;
   const dest = destNumber(config);
 
@@ -125,11 +126,15 @@ export function Simulations({ config, appConfig }: Props) {
               Each scenario runs as a real call/SMS conversation with the {env === "custom" ? "number you entered" : "practice number"} —
               results register in the agent's system.
             </div>
+            <div className="mb-4">
+              <ContextInput value={ctx} onChange={setCtx} />
+            </div>
             <RealRunPanel
               env={env}
               practiceNumber={dest}
               kind="suite"
               scenarioIds={selected}
+              extraContext={ctx}
               allowedTriggers={["incomplete_call", "missed_call", "inbound_sms"]}
               buttonLabel={`📱 Run ${selected.length} scenario${selected.length === 1 ? "" : "s"}`}
               disabled={selected.length === 0}

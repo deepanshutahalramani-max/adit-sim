@@ -4,10 +4,60 @@
  *   <SessionsExplorer/> filterable history of every real-phone session
  *   <RealInsights/>     engineering performance metrics dashboard
  */
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { fetchRealConfig, fetchRealSessions, fetchRealInsights, fetchApiMetrics, fetchEhrMetrics, reanalyzeFeedback, fetchTrends } from "../api";
+import { fetchRealConfig, fetchRealSessions, fetchRealInsights, fetchApiMetrics, fetchEhrMetrics, reanalyzeFeedback, fetchTrends, extractContextFromImage } from "../api";
 import { RealSessionCard, REAL_TRIGGERS, fmtPhone } from "./RealSessionCard";
+
+/* ── Scenario context: free-text + screenshot OCR for the AI patient ───────── */
+export function ContextInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const onFile = async (f: File) => {
+    setBusy(true); setErr("");
+    try {
+      const { context } = await extractContextFromImage(f);
+      onChange(value ? `${value.trim()}\n\n[From screenshot]\n${context}` : context);
+    } catch (e) {
+      setErr((e as Error).message || "Could not read the screenshot.");
+    } finally {
+      setBusy(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  };
+
+  return (
+    <div className="bg-[#FAFAF9] border border-[#EAEAEA] rounded-xl p-3.5">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[11px] font-bold text-[#ADADAD] uppercase tracking-wide">
+          Scenario context <span className="text-[#CFCFCF] normal-case font-medium">(optional)</span>
+        </span>
+        <button
+          onClick={() => fileRef.current?.click()}
+          disabled={busy}
+          className="text-[11.5px] font-semibold text-[#1456A0] hover:text-[#0E3F77] disabled:opacity-40"
+        >
+          {busy ? "Reading screenshot…" : "📎 Add screenshot"}
+        </button>
+        <input ref={fileRef} type="file" accept="image/*" className="hidden"
+          onChange={e => { const f = e.target.files?.[0]; if (f) onFile(f); }} />
+      </div>
+      <textarea
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        rows={3}
+        placeholder="Tell the AI patient who they are and what they want — e.g. 'Anxious new patient, United Concordia insurance, tooth pain, wants the earliest morning slot this week.' Or drop a screenshot and we'll read it."
+        className="w-full text-[12.5px] leading-relaxed text-[#333] bg-white border border-[#EAEAEA] rounded-lg px-3 py-2 resize-none focus:outline-none focus:border-brand-500"
+      />
+      {err && <div className="text-[11.5px] text-[#991B1B] mt-1.5">{err}</div>}
+      <div className="text-[11px] text-[#ADADAD] mt-1.5">
+        The patient brain uses this to stay in character — it does not change scheduling logic.
+      </div>
+    </div>
+  );
+}
 
 /* ── Self-improving feedback: comment on an issue → LLM re-analysis ─────────── */
 function IssueFeedback({ issueTitle, sessionId }: { issueTitle: string; sessionId?: string }) {
