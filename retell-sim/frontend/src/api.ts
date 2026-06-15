@@ -636,6 +636,16 @@ export async function fetchEhrMetrics(): Promise<EhrMetrics> {
   return r.json();
 }
 
+export interface Trends {
+  days: { date: string; total: number; passed: number; pass_rate: number; avg_score: number }[];
+  suites: { suite_id: string; env: string; created: string; total: number; passed: number; pass_rate: number; avg_score: number }[];
+}
+
+export async function fetchTrends(): Promise<Trends> {
+  const r = await fetch(`${BASE}/real/trends`);
+  return r.json();
+}
+
 export async function manualStart(params: {
   env?: string;
   practice_number?: string;

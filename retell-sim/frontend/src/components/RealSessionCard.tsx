@@ -1,7 +1,42 @@
 import { useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { stopRealSession } from "../api";
+import { stopRealSession, reanalyzeFeedback } from "../api";
 import type { RealSession } from "../api";
+
+/* ── Self-improving feedback: comment → LLM re-analysis (shared endpoint) ─────── */
+function FeedbackBox({ s }: { s: RealSession }) {
+  const [comment, setComment] = useState("");
+  const [results, setResults] = useState<{ comment: string; refined: string; author: string }[]>([]);
+  const send = useMutation({
+    mutationFn: () => reanalyzeFeedback({ session_id: s.session_id, comment }),
+    onSuccess: r => { setResults(prev => [...prev, { comment, refined: r.refined_analysis, author: r.author }]); setComment(""); },
+  });
+  return (
+    <div className="mt-4 border-t border-line pt-3">
+      <div className="section-label mb-2">💬 Reviewer feedback → AI re-analysis</div>
+      {results.map((c, i) => (
+        <div key={i} className="mb-2 text-[12px]">
+          <div className="bg-canvas-sunken rounded-lg px-3 py-1.5"><b className="text-ink-700">{c.author}:</b> {c.comment}</div>
+          {c.refined && (
+            <div className="mt-1 bg-[#F5F3FF] border border-[#DDD6FE] rounded-lg px-3 py-2 text-[#5B21B6] leading-snug">
+              <b>Refined analysis:</b> {c.refined}
+            </div>
+          )}
+        </div>
+      ))}
+      <div className="flex gap-2 mt-1">
+        <input value={comment} onChange={e => setComment(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter" && comment.trim()) send.mutate(); }}
+          placeholder="Add a comment — the platform re-reads it with the transcript (e.g. 'service mismatch, fix the prompt')"
+          className="field !py-2 flex-1 text-[12.5px]" />
+        <button onClick={() => send.mutate()} disabled={!comment.trim() || send.isPending}
+          className="btn-primary btn-sm whitespace-nowrap">
+          {send.isPending ? "Analyzing…" : "Re-analyze"}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 /* ── Live call audio (Twilio media stream relayed over WebSocket) ──────────── */
 
@@ -304,6 +339,8 @@ export function RealSessionCard({ s, compact }: { s: RealSession; compact?: bool
           </div>
         </div>
       )}
+
+      {expanded && !active && <FeedbackBox s={s} />}
     </div>
   );
 }

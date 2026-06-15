@@ -6,17 +6,18 @@
  */
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { BarChart3, Activity, Stethoscope, FolderClock } from "lucide-react";
-import { RealInsights, SessionsExplorer, ApiPerformance, EhrApiFlow } from "../components/RealOps";
+import { BarChart3, Activity, Stethoscope, FolderClock, TrendingUp } from "lucide-react";
+import { RealInsights, SessionsExplorer, ApiPerformance, EhrApiFlow, TrendsView } from "../components/RealOps";
 import { fetchRealConfig } from "../api";
 
-type Section = "overview" | "ehr" | "api" | "sessions";
+type Section = "overview" | "trends" | "ehr" | "api" | "sessions";
 
 const SECTIONS = [
-  { id: "overview", label: "Overview",   icon: BarChart3 },
-  { id: "ehr",      label: "EHR APIs",   icon: Stethoscope },
+  { id: "overview", label: "Overview",    icon: BarChart3 },
+  { id: "trends",   label: "Trends",      icon: TrendingUp },
+  { id: "ehr",      label: "EHR APIs",    icon: Stethoscope },
   { id: "api",      label: "Infra & Cost", icon: Activity },
-  { id: "sessions", label: "Sessions",   icon: FolderClock },
+  { id: "sessions", label: "Sessions",    icon: FolderClock },
 ] as const;
 
 export function Dashboard() {
@@ -48,6 +49,7 @@ export function Dashboard() {
       </div>
 
       {section === "overview" && <RealInsights />}
+      {section === "trends"   && <TrendsView />}
       {section === "ehr"      && <EhrApiFlow />}
       {section === "api"      && <ApiPerformance />}
       {section === "sessions" && <SessionsExplorer />}

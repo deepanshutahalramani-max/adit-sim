@@ -6,7 +6,7 @@
  */
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { fetchRealConfig, fetchRealSessions, fetchRealInsights, fetchApiMetrics, fetchEhrMetrics, reanalyzeFeedback } from "../api";
+import { fetchRealConfig, fetchRealSessions, fetchRealInsights, fetchApiMetrics, fetchEhrMetrics, reanalyzeFeedback, fetchTrends } from "../api";
 import { RealSessionCard, REAL_TRIGGERS, fmtPhone } from "./RealSessionCard";
 
 /* ── Self-improving feedback: comment on an issue → LLM re-analysis ─────────── */
@@ -62,6 +62,68 @@ export function fmtCooldown(s: number): string {
   if (s <= 0) return "ready";
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+/* ── Trends & run comparison ─────────────────────────────────────────────────── */
+export function TrendsView() {
+  const { data: t } = useQuery({ queryKey: ["trends"], queryFn: fetchTrends, refetchInterval: 15000 });
+  if (!t || (t.days?.length ?? 0) === 0) {
+    return (
+      <div className="text-[13px] text-ink-400 italic card card-pad text-center py-10 border-dashed">
+        No trend data yet — run a few suites and pass-rate / score over time will appear here (needs Supabase).
+      </div>
+    );
+  }
+  const maxRate = 100;
+  return (
+    <div className="space-y-5">
+      {/* Daily trend */}
+      <div className="card card-pad">
+        <div className="text-[13px] font-bold text-ink-900 mb-3">Pass rate over time (daily)</div>
+        <div className="flex items-end gap-2 h-[160px]">
+          {t.days.map(d => (
+            <div key={d.date} className="flex-1 flex flex-col items-center justify-end gap-1 group">
+              <div className="text-[10px] text-ink-400">{d.pass_rate}%</div>
+              <div className="w-full rounded-t-md bg-brand-500/80 group-hover:bg-brand-500 transition-colors"
+                   style={{ height: `${Math.max(4, (d.pass_rate / maxRate) * 120)}px` }}
+                   title={`${d.date}: ${d.passed}/${d.total} passed · avg ${d.avg_score}`} />
+              <div className="text-[9px] text-ink-300 rotate-0">{d.date.slice(5)}</div>
+            </div>
+          ))}
+        </div>
+        <div className="text-[11px] text-ink-400 mt-2">Bar = daily pass rate · hover for counts + avg judge score.</div>
+      </div>
+
+      {/* Run-over-run comparison */}
+      <div className="card card-pad">
+        <div className="text-[13px] font-bold text-ink-900 mb-3">Recent suites — run-over-run</div>
+        <table className="w-full text-[12.5px]">
+          <thead>
+            <tr className="text-left text-ink-400 border-b border-line">
+              <th className="pb-2 font-semibold">Suite</th>
+              <th className="pb-2 font-semibold">Env</th>
+              <th className="pb-2 font-semibold">Scenarios</th>
+              <th className="pb-2 font-semibold">Passed</th>
+              <th className="pb-2 font-semibold">Pass rate</th>
+              <th className="pb-2 font-semibold text-right">Avg score</th>
+            </tr>
+          </thead>
+          <tbody>
+            {t.suites.map(s => (
+              <tr key={s.suite_id} className="border-b border-line-soft">
+                <td className="py-2 font-mono text-ink-700">{s.suite_id}</td>
+                <td className="py-2 uppercase text-ink-500">{s.env}</td>
+                <td className="py-2">{s.total}</td>
+                <td className="py-2">{s.passed}</td>
+                <td className={`py-2 font-bold ${s.pass_rate >= 80 ? "text-[#15803D]" : s.pass_rate >= 50 ? "text-[#B45309]" : "text-[#B91C1C]"}`}>{s.pass_rate}%</td>
+                <td className="py-2 text-right">{s.avg_score || "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
 
 const SCENARIO_LABELS: Record<string, string> = {

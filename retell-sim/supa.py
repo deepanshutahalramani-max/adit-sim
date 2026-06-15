@@ -141,6 +141,23 @@ def record_api_call(rec: dict) -> None:
             threading.Thread(target=_post, args=("qa_api_calls", batch), daemon=True).start()
 
 
+def record_comment(email: str, target_type: str, target_id: str,
+                    comment: str, refined: str = "") -> None:
+    """Persist a human comment + its LLM-refined analysis (self-improving loop)."""
+    if not configured():
+        return
+    row = {
+        "ts": _iso(__import__("time").time()), "email": email,
+        "target_type": target_type, "target_id": target_id,
+        "comment": comment, "refined_analysis": refined,
+    }
+    threading.Thread(target=_post, args=("qa_comments", [row]), daemon=True).start()
+
+
+def fetch_comments(limit: int = 500) -> list[dict]:
+    return _fetch("qa_comments", limit)
+
+
 def record_ehr_call(rec: dict) -> None:
     """Persist one EHR/agent function-call telemetry row."""
     if not configured():

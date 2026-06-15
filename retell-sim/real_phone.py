@@ -1708,6 +1708,45 @@ def _sessions_for_insights() -> list:
     return list(REAL_SESSIONS.values())
 
 
+@router.get("/api/real/trends")
+def real_trends():
+    """Pass-rate / score / volume over time from Supabase, plus a per-suite
+    comparison — so prompt/config changes can be tracked run-over-run."""
+    try:
+        import supa
+        rows = supa.fetch_sessions(1500) if supa.configured() else []
+    except Exception:
+        rows = []
+    from collections import defaultdict
+    by_day: dict = defaultdict(lambda: {"total": 0, "passed": 0, "scores": []})
+    by_suite: dict = defaultdict(lambda: {"total": 0, "passed": 0, "scores": [], "env": "", "created": ""})
+    for r in rows:
+        if r.get("outcome") == "ehr_not_connected":
+            continue
+        passed = r.get("outcome") in ("booking_confirmed", "task_created")
+        score = r.get("score") or 0
+        d = (r.get("created_at") or "")[:10]
+        if d:
+            b = by_day[d]; b["total"] += 1; b["passed"] += int(passed)
+            if score: b["scores"].append(score)
+        sid = r.get("suite_id") or ""
+        if sid:
+            b = by_suite[sid]; b["total"] += 1; b["passed"] += int(passed)
+            b["env"] = r.get("env", ""); b["created"] = r.get("created_at", "")
+            if score: b["scores"].append(score)
+
+    def pack(d: dict) -> dict:
+        return {"total": d["total"], "passed": d["passed"],
+                "pass_rate": round(100 * d["passed"] / d["total"]) if d["total"] else 0,
+                "avg_score": round(sum(d["scores"]) / len(d["scores"])) if d["scores"] else 0}
+
+    days = [{"date": d, **pack(by_day[d])} for d in sorted(by_day)[-30:]]
+    suites = sorted(([{"suite_id": k, "env": v["env"], "created": v["created"], **pack(v)}
+                      for k, v in by_suite.items()]),
+                    key=lambda x: x["created"], reverse=True)[:15]
+    return {"days": days, "suites": suites}
+
+
 @router.get("/api/real/insights")
 def real_insights():
     all_terminal = [s for s in _sessions_for_insights() if s.status in ("completed", "failed")]
