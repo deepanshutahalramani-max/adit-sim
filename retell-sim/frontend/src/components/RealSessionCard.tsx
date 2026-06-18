@@ -297,7 +297,9 @@ export function RealSessionCard({ s, compact }: { s: RealSession; compact?: bool
                   <span className={`text-[11px] font-bold ${c.business_ok ? "text-[#15803D]" : "text-[#B91C1C]"}`}>
                     {c.business_ok ? "success" : "FAILED"}
                   </span>
-                  <span className="ml-auto text-[11px] text-ink-400 font-medium">⏱ {c.latency_ms}ms</span>
+                  <span className="ml-auto text-[11px] text-ink-400 font-medium" title={c.latency_ms > 0 ? "Time between Retell's tool-call invocation and result" : "Per-call timing not reported by Retell for this turn"}>
+                    ⏱ {c.latency_ms > 0 ? `${c.latency_ms}ms` : "—"}
+                  </span>
                 </div>
                 {!c.business_ok && c.result && (
                   <div className="text-[11px] text-[#B91C1C] mt-1 pl-3.5 leading-snug">{c.result}</div>

@@ -271,6 +271,15 @@ def _business_ok(name: str, content: str, successful: bool) -> bool:
     return True
 
 
+def _msg_ts_ms(m: dict) -> float:
+    """Normalize a Retell message timestamp to milliseconds. Voice transcripts use
+    `time_sec` (float seconds, relative to call start); other shapes may use
+    `created_timestamp` (ms epoch). Returns 0 if neither is present."""
+    if m.get("time_sec") is not None:
+        return float(m.get("time_sec") or 0) * 1000.0
+    return float(m.get("created_timestamp") or 0)
+
+
 def _extract_ehr_calls(messages: list) -> list:
     """Turn Retell message_with_tool_calls into ordered EHR call records."""
     inv: dict[str, dict] = {}
@@ -280,7 +289,7 @@ def _extract_ehr_calls(messages: list) -> list:
         if role == "tool_call_invocation" and m.get("name") in EHR_FUNCTIONS:
             inv[m.get("tool_call_id")] = {
                 "name": m.get("name"),
-                "ts": m.get("created_timestamp", 0),
+                "ts": _msg_ts_ms(m),
                 "args": m.get("arguments", ""),
             }
         elif role == "tool_call_result" and m.get("tool_call_id") in inv:
@@ -288,7 +297,7 @@ def _extract_ehr_calls(messages: list) -> list:
             content = m.get("content", "")
             ok = bool(m.get("successful", True))
             biz = _business_ok(i["name"], content, ok)
-            lat = max(0, m.get("created_timestamp", 0) - i["ts"])
+            lat = max(0, _msg_ts_ms(m) - i["ts"]) if i["ts"] else 0
             out.append({
                 "name": i["name"], "ok": ok, "business_ok": biz,
                 "latency_ms": int(lat), "result": content[:300],

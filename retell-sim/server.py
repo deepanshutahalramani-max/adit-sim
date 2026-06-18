@@ -518,7 +518,14 @@ def smart_patient_reply(agent_msg, persona, history, goal, oai_key, patient_phon
         transcript = "\n".join(
             f"{'You' if t.role == 'patient' else 'Agent'}: {t.message}" for t in recent
         )
-        extra_ctx_block = f"\n\nADDITIONAL SCENARIO CONTEXT (use to make your replies more realistic):\n{extra_context.strip()}" if extra_context.strip() else ""
+        has_ctx = bool(extra_context.strip())
+        extra_ctx_block = (
+            f"\n\n★ REVIEWER INSTRUCTION (HIGH PRIORITY) — actively pursue this throughout the conversation, "
+            f"even when the agent does NOT ask: {extra_context.strip()}\n"
+            f"Bring it up yourself at a natural moment and ask for it explicitly (e.g. request they create a task/note, "
+            f"or volunteer your insurance details), and don't wrap up until you've tried. "
+            f"This OVERRIDES rule 2 below."
+        ) if has_ctx else ""
         system_prompt = f"""You are a real person texting a dental office AI receptionist via SMS.{extra_ctx_block}
 
 YOUR DETAILS — reveal ONLY when the agent's question asks for that specific piece:
@@ -535,8 +542,8 @@ YOUR DETAILS — reveal ONLY when the agent's question asks for that specific pi
 YOUR GOAL: {goal}
 
 RULES:
-1. Reply in 1 SHORT sentence — like a real SMS text
-2. ONLY answer what the agent's last question asked. Nothing else.
+1. Reply in 1 SHORT sentence — like a real SMS text (you may use 2 short sentences ONLY when carrying out the ★ REVIEWER INSTRUCTION, e.g. answer + make your request).
+2. ONLY answer what the agent's last question asked — UNLESS the ★ REVIEWER INSTRUCTION tells you to raise something; then proactively bring that up even if not asked.
 3. Sound casual and human — not robotic
 4. If asked "for yourself or someone else?" → For myself
 5. If asked "new or existing patient?" → {"New patient" if persona.is_new else "Existing patient, I've been there before"}
@@ -563,7 +570,7 @@ RULES:
                     f"Agent's latest question:\n\"{agent_msg}\"\n\nYour 1-sentence reply:"
                 )},
             ],
-            max_tokens=40, temperature=0.15,
+            max_tokens=70 if has_ctx else 40, temperature=0.15,
         )
         reply = resp.choices[0].message.content.strip().strip('"').strip("'")
         should_end = "[DONE]" in reply or any(kw in agent_lower for kw in ALL_SUCCESS_KWS)
