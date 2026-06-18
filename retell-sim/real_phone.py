@@ -905,39 +905,68 @@ def _call_common(session: RealSession, extra: dict) -> dict:
                   detail=session.trigger_type)
 
 
-def _run_missed_call(session: RealSession) -> None:
+MISSED_CALL_ATTEMPTS = 3   # the AI answers fast; answer timing jitters, so a retry usually lands a true miss
+
+
+def _cancel_call(session: RealSession, where: str) -> None:
+    """Cancel the in-flight call (idempotent). Used by both the ring-callback
+    and the poll loop — whichever sees 'ringing' first wins the race."""
+    if not session.call_sid:
+        return
+    try:
+        _tw_post(f"/Calls/{session.call_sid}.json", {"Status": "canceled"})
+        session.log(f"Cancelled during ring ({where}) → missed call created")
+    except Exception:
+        pass  # already answered/terminal — the poll loop handles that case
+
+
+def _run_missed_call(session: RealSession, attempt: int = 1) -> None:
     try:
         call = _call_common(session, {
             "Twiml": "<Response><Pause length='2'/><Hangup/></Response>",
         })
         session.call_sid = call.get("sid", "")
         session.status = "calling"
-        session.log("Call placed — cancelling the instant it rings (true missed call)")
+        if attempt == 1:
+            session.log("Call placed — cancelling the instant it rings (true missed call)")
+        else:
+            session.log(f"Retrying missed call (attempt {attempt}/{MISSED_CALL_ATTEMPTS}) — "
+                        f"racing to cancel before the AI answers")
 
-        # Poll FAST and cancel the moment it starts ringing, so the AI never
-        # answers. The old 1s poll + extra sleep let the practice→Retell forward
-        # pick up first, turning missed calls into incomplete calls.
-        deadline = time.time() + 30
-        cancelled = False
+        # Cancel the moment it rings so the AI never answers. Two cancel paths
+        # race: the 'ringing' StatusCallback (twilio_call_status) fires a cancel
+        # the instant Twilio reports ringing — faster than any poll — and this
+        # tight poll is the backstop. No initial sleep, 0.15s cadence.
+        deadline = time.time() + 25
+        result = "ended"    # "missed" | "answered" | "ended"
         while time.time() < deadline:
-            time.sleep(0.4)
             st = _tw_get(f"/Calls/{session.call_sid}.json").get("status", "")
             session.call_status = st
             if st == "ringing":
-                _tw_post(f"/Calls/{session.call_sid}.json", {"Status": "canceled"})
-                session.log("Cancelled during first ring → missed call created")
-                cancelled = True
+                _cancel_call(session, "poll")
+            elif st == "canceled":
+                result = "missed"
                 break
-            if st == "in-progress":
-                # Answered faster than we could cancel — end immediately, but be
-                # honest that this landed as an incomplete call, not a missed one.
+            elif st == "in-progress":
+                # Answered faster than we could cancel — end it immediately.
                 _tw_post(f"/Calls/{session.call_sid}.json", {"Status": "completed"})
-                session.log("⚠ Answered before cancel — registered as INCOMPLETE call, not missed")
-                cancelled = True
+                result = "answered"
                 break
-            if st in ("completed", "busy", "failed", "no-answer", "canceled"):
+            elif st in ("completed", "busy", "failed", "no-answer"):
                 session.log(f"Call ended: {st}")
+                result = "missed" if st in ("no-answer", "busy") else "ended"
                 break
+            time.sleep(0.15)
+
+        # The AI beat us to the answer — retry; the ring race is winnable on a
+        # later attempt because answer latency varies call to call.
+        if result == "answered" and attempt < MISSED_CALL_ATTEMPTS:
+            session.log(f"⚠ Answered before cancel — retrying for a true missed call "
+                        f"({attempt}/{MISSED_CALL_ATTEMPTS})")
+            time.sleep(2)
+            return _run_missed_call(session, attempt + 1)
+        if result == "answered":
+            session.log("⚠ Answered before cancel on every attempt — registered as INCOMPLETE call, not missed")
 
         session.call_ended_at = time.time()
         session.status = "waiting_for_sms"
@@ -1991,6 +2020,11 @@ async def twilio_call_status(request: Request, session_id: str = ""):
     if s:
         s.call_status = status
         s.log(f"Call status: {status}")
+        # Fastest possible missed-call cancel: the instant Twilio pushes 'ringing',
+        # cancel before the AI can answer (beats the poll loop's round-trip). Run in
+        # a thread so the sync Twilio call never blocks the webhook event loop.
+        if s.trigger_type == "missed_call" and status == "ringing":
+            threading.Thread(target=_cancel_call, args=(s, "ring-callback"), daemon=True).start()
         if status in ("completed", "failed", "busy", "no-answer") and not s.call_ended_at:
             s.call_ended_at = time.time()
         if s.trigger_type == "inbound_call" and status in ("completed", "failed", "busy", "no-answer"):
