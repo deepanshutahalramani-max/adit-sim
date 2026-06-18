@@ -465,6 +465,7 @@ export interface RealSession {
   recording_sid: string;
   recording_url: string;
   recording_duration_s: number;
+  retell_id?: string;
   turns: RealTurn[];
   events: { ts: number; msg: string }[];
   score: number;
@@ -475,7 +476,6 @@ export interface RealSession {
   ehr_calls?: { name: string; ok: boolean; business_ok: boolean; latency_ms: number; result: string }[];
   issues?: { severity: string; title: string; detail: string }[];
   triage?: string;
-  issues?: { severity: string; title: string; detail: string }[];
   error: string;
   created_at: number;
   updated_at: number;
@@ -498,6 +498,8 @@ export interface SuiteRun {
   passed?: number;
   failed?: number;
   total?: number;
+  concurrency?: number;
+  repeat?: number;
 }
 
 export interface RealConfig {
@@ -505,6 +507,7 @@ export interface RealConfig {
   patient_numbers: {
     number: string;
     identity: { first?: string; last?: string; dob?: string; insurance?: string };
+    provider?: string;
     busy: boolean;
     cooldowns: Record<string, number>;
     booked: Record<string, boolean>;
@@ -567,6 +570,8 @@ export async function runRealSuite(params: {
   practice_number?: string;
   kind?: string;
   extra_context?: string;
+  repeat?: number;
+  concurrency?: number;
 }): Promise<SuiteRun> {
   return post("/real/run-suite", params);
 }

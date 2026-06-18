@@ -3,6 +3,12 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { stopRealSession, reanalyzeFeedback } from "../api";
 import type { RealSession } from "../api";
 
+/** Deep-link to this session's Retell record: voice → call-history, SMS/chat → chat-history. */
+function retellUrl(s: RealSession): string {
+  const kind = s.trigger_type === "inbound_call" ? "call" : "chat";
+  return `https://dashboard.retellai.com/${kind}-history?history=${s.retell_id}`;
+}
+
 /* ── Self-improving feedback: comment → LLM re-analysis (shared endpoint) ─────── */
 function FeedbackBox({ s }: { s: RealSession }) {
   const [comment, setComment] = useState("");
@@ -207,6 +213,13 @@ export function RealSessionCard({ s, compact }: { s: RealSession; compact?: bool
               className="text-[11.5px] font-semibold px-2.5 py-1 rounded-full border border-[#FECACA] bg-[#FEF2F2] text-[#991B1B] hover:bg-[#FEE2E2]">
               Stop
             </button>
+          )}
+          {s.retell_id && (
+            <a href={retellUrl(s)} target="_blank" rel="noopener noreferrer"
+              title="Open this conversation in the Retell dashboard"
+              className="text-[11.5px] font-semibold px-2.5 py-1 rounded-full border border-[#C7D2FE] bg-[#EEF2FF] text-[#3730A3] hover:bg-[#E0E7FF]">
+              View in Retell ↗
+            </a>
           )}
           <button onClick={() => setExpanded(e => !e)} className="text-[13px] text-[#888] hover:text-[#333] px-1">
             {expanded ? "▾" : "▸"}

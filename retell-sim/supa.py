@@ -21,8 +21,11 @@ One-time schema (run in the Supabase SQL editor):
     score int, judge_reason text,
     turns int, first_sms_latency_s real, avg_reply_latency_s real,
     recording_sid text, suite_id text, mode text,
+    retell_id text,
     transcript jsonb
   );
+  -- If qa_sessions already exists from an earlier deploy, add the new column:
+  --   alter table qa_sessions add column if not exists retell_id text;
   create table if not exists qa_api_calls (
     id bigint generated always as identity primary key,
     ts timestamptz, provider text, operation text,
@@ -118,6 +121,7 @@ def record_session(s: dict) -> None:
         "first_sms_latency_s": s.get("first_sms_latency_s"),
         "avg_reply_latency_s": s.get("avg_reply_latency_s"),
         "recording_sid": s.get("recording_sid"), "suite_id": s.get("suite_id"),
+        "retell_id": s.get("retell_id"),
         "mode": s.get("mode"),
         "transcript": s.get("turns", []),
     }

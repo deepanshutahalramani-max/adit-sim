@@ -7,7 +7,7 @@
  */
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { runRealSuite, fetchRealSuites, fetchRealSessions } from "../api";
+import { runRealSuite, fetchRealSuites, fetchRealSessions, fetchRealConfig } from "../api";
 import { RealSessionCard, REAL_TRIGGERS } from "./RealSessionCard";
 
 interface Props {
@@ -36,6 +36,20 @@ export function RealRunPanel({
   const [trigger, setTrigger] = useState<string>(triggers[0]?.id ?? "incomplete_call");
   const [suiteId, setSuiteId] = useState("");
   const [msg, setMsg] = useState("");
+  const [runs, setRuns] = useState(1);          // runs per scenario (suite kind)
+  const [concurrency, setConcurrency] = useState(0);  // 0 = auto (= effective max)
+
+  const { data: cfg } = useQuery({ queryKey: ["realConfig"], queryFn: fetchRealConfig, refetchInterval: 30_000 });
+
+  // Effective simultaneous cap = patient-number pool, but PROD SMS is single-number (RingCentral).
+  const twilioPool = (cfg?.patient_numbers ?? []).filter(p => p.provider === "twilio").length || 4;
+  const isProdSms = env === "prod" && trigger !== "inbound_call";
+  const effectiveMax = isProdSms ? 1 : twilioPool;
+
+  const scenarioCount = scenarioIds?.length ?? 0;
+  const maxRuns = scenarioCount > 0 ? Math.max(1, Math.floor(20 / scenarioCount)) : 20;
+  const runsClamped = Math.min(Math.max(1, runs), maxRuns);
+  const concDisplay = concurrency > 0 ? Math.min(concurrency, effectiveMax) : effectiveMax;
 
   const { data: suites } = useQuery({
     queryKey: ["realSuites"], queryFn: fetchRealSuites,
@@ -60,7 +74,8 @@ export function RealRunPanel({
       opener: kind === "repro" ? opener : undefined,
       goal: kind === "repro" ? goal : undefined,
       label: kind === "repro" ? label : undefined,
-      repeat: kind === "repro" ? repeat : undefined,
+      repeat: kind === "suite" ? runsClamped : (kind === "repro" ? repeat : undefined),
+      concurrency: kind === "suite" ? concDisplay : undefined,
       extra_context: extraContext || undefined,
     }),
     onSuccess: r => {
@@ -71,7 +86,8 @@ export function RealRunPanel({
     onError: (e: Error) => setMsg(`❌ ${e.message}`),
   });
 
-  const totalScenarios = kind === "journey" ? 3 : kind === "repro" ? (repeat ?? 1) : (scenarioIds?.length ?? 0);
+  const totalScenarios = kind === "journey" ? 3 : kind === "repro" ? (repeat ?? 1) : scenarioCount * runsClamped;
+  const queued = Math.max(0, totalScenarios - effectiveMax);
 
   return (
     <div className="space-y-4">
@@ -90,6 +106,35 @@ export function RealRunPanel({
                 {t.icon} {t.label}
               </button>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Repeat + concurrency (suite kind only) */}
+      {kind === "suite" && (
+        <div className="bg-[#FAFAF9] border border-[#EAEAEA] rounded-xl p-3.5">
+          <div className="flex items-end gap-5 flex-wrap">
+            <label className="flex flex-col gap-1.5">
+              <span className="text-[11px] font-bold text-[#ADADAD] uppercase tracking-wide">Runs per scenario</span>
+              <input
+                type="number" min={1} max={maxRuns} value={runsClamped}
+                onChange={e => setRuns(Math.min(Math.max(1, parseInt(e.target.value) || 1), maxRuns))}
+                className="w-24 text-[13px] text-[#111] bg-white border border-[#EAEAEA] rounded-lg px-3 py-2 focus:outline-none focus:border-brand-500"
+              />
+            </label>
+            <label className="flex flex-col gap-1.5">
+              <span className="text-[11px] font-bold text-[#ADADAD] uppercase tracking-wide">Run concurrently</span>
+              <input
+                type="number" min={1} max={effectiveMax} value={concDisplay}
+                onChange={e => setConcurrency(Math.min(Math.max(1, parseInt(e.target.value) || 1), effectiveMax))}
+                className="w-24 text-[13px] text-[#111] bg-white border border-[#EAEAEA] rounded-lg px-3 py-2 focus:outline-none focus:border-brand-500"
+              />
+            </label>
+            <div className="text-[12px] text-[#666] leading-snug flex-1 min-w-[220px]">
+              <span className="font-semibold text-[#333]">{totalScenarios} total run{totalScenarios === 1 ? "" : "s"}.</span>{" "}
+              Up to <b>{effectiveMax}</b> run at once{isProdSms ? " (PROD SMS uses one number)" : " (limited by patient numbers)"}
+              {queued > 0 ? <> — the remaining <b>{queued}</b> queue and start automatically as numbers free up.</> : "."}
+            </div>
           </div>
         </div>
       )}

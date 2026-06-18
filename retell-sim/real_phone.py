@@ -454,6 +454,7 @@ def _fetch_ehr_calls(session: RealSession) -> None:
                 if digits in str(c.get("from_number", "")) and \
                    c.get("start_timestamp", 0) / 1000 >= session.created_at - 120:
                     msgs = c.get("transcript_with_tool_calls") or c.get("message_with_tool_calls")
+                    session.retell_id = c.get("call_id", "")   # for the dashboard deep-link
                     record_found = True
                     break
         else:
@@ -465,6 +466,7 @@ def _fetch_ehr_calls(session: RealSession) -> None:
                 if digits in str(dv.get("patient_phone_number", "")) and \
                    c.get("start_timestamp", 0) / 1000 >= session.created_at - 120:
                     msgs = c.get("message_with_tool_calls")
+                    session.retell_id = c.get("chat_id", "")   # for the dashboard deep-link
                     record_found = True
                     break
 
@@ -593,6 +595,7 @@ class RealSession:
     call_ended_at: float = 0.0
     recording_sid: str = ""
     recording_duration_s: int = 0
+    retell_id: str = ""          # Retell call_id (voice) or chat_id (SMS) → dashboard deep-link
     turns: list = field(default_factory=list)
     events: list = field(default_factory=list)
     score: int = 0
@@ -1126,7 +1129,8 @@ def _supa_session_dict(r: dict) -> dict:
         "score": r.get("score") or 0, "judge_reason": r.get("judge_reason", ""),
         "suite_id": r.get("suite_id", ""), "first_sms_latency_s": r.get("first_sms_latency_s") or 0,
         "avg_reply_latency_s": r.get("avg_reply_latency_s") or 0,
-        "recording_sid": r.get("recording_sid", ""), "ehr_calls": [], "issues": [],
+        "recording_sid": r.get("recording_sid", ""), "retell_id": r.get("retell_id", ""),
+        "ehr_calls": [], "issues": [],
         "created_at": supa_epoch(r.get("created_at")), "updated_at": supa_epoch(r.get("ended_at")),
         "cooldown_remaining_s": 0,
         "recording_url": f"/api/real/recording/{r.get('recording_sid')}" if r.get("recording_sid") else "",
@@ -1333,6 +1337,8 @@ class SuiteRun:
     goal: str = ""                 # repro override
     label: str = ""                # repro override
     extra_context: str = ""        # reviewer-supplied scenario context for the AI patient
+    concurrency: int = 0           # max simultaneous sessions (0 = auto = patient-number pool)
+    repeat: int = 1                # runs per scenario (display/telemetry)
     started_at: float = field(default_factory=time.time)
     finished_at: float = 0.0
 
@@ -1460,9 +1466,13 @@ def _run_suite(suite: SuiteRun) -> None:
         is_prod_sms = (suite.practice_number == PRACTICE_NUMBERS.get("prod", "")
                        and suite.trigger_type != "inbound_call" and _rc_configured())
         if is_prod_sms:
-            n_workers = 1
+            n_workers = 1                          # single RingCentral number
         else:
-            n_workers = min(len(TWILIO_NUMBERS), max(1, len(suite.scenario_ids)))
+            pool = len(TWILIO_NUMBERS)
+            want = suite.concurrency or pool       # 0 → auto = full pool
+            # Never exceed the physical pool — a number can't run two sessions at once.
+            # Surplus runs queue and auto-start as numbers free up.
+            n_workers = max(1, min(want, pool, len(suite.scenario_ids)))
         threads = [threading.Thread(target=_suite_worker, args=(suite, q), daemon=True)
                    for _ in range(n_workers)]
         for t in threads:
@@ -1483,7 +1493,8 @@ class SuiteRequest(BaseModel):
     opener: str = ""        # repro: custom first patient message
     goal: str = ""          # repro: custom patient goal (e.g. "Reproduce: <root cause>")
     label: str = ""         # repro: display label
-    repeat: int = 1         # repro: how many runs
+    repeat: int = 1         # runs per scenario (repro + suite); total runs capped at 20
+    concurrency: int = 0    # max simultaneous sessions (0 = auto = patient-number pool)
     extra_context: str = "" # reviewer-supplied scenario context for the AI patient
 
 
@@ -1497,15 +1508,22 @@ def real_run_suite(req: SuiteRequest):
         raise HTTPException(status_code=400, detail=f"No practice number configured for env '{req.env}'.")
     srv = _sim()
 
+    runs = 1
     if req.kind == "journey":
         ids = ["new-patient-cleaning", "reschedule", "cancel"]
     elif req.kind == "repro":
         ids = ["new-patient-cleaning"] * max(1, min(req.repeat, 5))
     else:
-        ids = req.scenario_ids or list(srv.SCENARIOS.keys())
-        bad = [i for i in ids if i not in srv.SCENARIOS]
+        base = req.scenario_ids or list(srv.SCENARIOS.keys())
+        bad = [i for i in base if i not in srv.SCENARIOS]
         if bad:
             raise HTTPException(status_code=400, detail=f"Unknown scenarios: {bad}")
+        # "Runs per scenario": run the whole selection N times (parallel, pool-limited).
+        runs = max(1, min(req.repeat, 20))
+        ids = base * runs
+        if len(ids) > 20:
+            raise HTTPException(status_code=400,
+                                detail=f"Too many runs: {len(ids)} ({len(base)} scenario(s) × {runs}). Max 20 per launch.")
 
     suite = SuiteRun(
         suite_id=uuid.uuid4().hex[:10],
@@ -1518,6 +1536,8 @@ def real_run_suite(req: SuiteRequest):
         goal=req.goal if req.kind == "repro" else "",
         label=req.label if req.kind == "repro" else "",
         extra_context=req.extra_context,
+        concurrency=max(0, req.concurrency),
+        repeat=runs,
     )
     SUITES[suite.suite_id] = suite
     threading.Thread(target=_run_suite, args=(suite,), daemon=True).start()
