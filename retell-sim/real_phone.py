@@ -952,11 +952,11 @@ def _call_common(session: RealSession, extra: dict) -> dict:
                   detail=session.trigger_type)
 
 
-# A missed call = let it actually ring/connect for a brief window, then cut it —
-# like a caller who hangs up right after it rings. Too short (0s) and the practice
-# never registers an inbound call; longer than this and it looks like a real call.
-# One tunable knob.
-MISSED_RING_HOLD_S = 3.0
+# A missed call = let it actually ring for a few seconds, then hang up — like a
+# caller who gives up. Validated manually: ringing the practice and hanging up at
+# ~5s registers as a missed call and triggers the follow-up SMS to the caller. Too
+# short (0s) and the practice never registers an inbound call. One tunable knob.
+MISSED_RING_HOLD_S = 5.0
 
 
 def _run_missed_call(session: RealSession) -> None:
