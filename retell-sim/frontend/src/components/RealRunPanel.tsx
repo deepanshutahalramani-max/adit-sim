@@ -34,7 +34,7 @@ export function RealRunPanel({
   const qc = useQueryClient();
   const triggers = REAL_TRIGGERS.filter(t => !allowedTriggers || allowedTriggers.includes(t.id));
   const [trigger, setTrigger] = useState<string>(triggers[0]?.id ?? "incomplete_call");
-  const [suiteId, setSuiteId] = useState("");
+  const [launchedIds, setLaunchedIds] = useState<string[]>([]);  // every run started from this panel
   const [msg, setMsg] = useState("");
   const [runs, setRuns] = useState(1);          // runs per scenario (suite kind)
   const [concurrency, setConcurrency] = useState(0);  // 0 = auto (= effective max)
@@ -53,15 +53,20 @@ export function RealRunPanel({
 
   const { data: suites } = useQuery({
     queryKey: ["realSuites"], queryFn: fetchRealSuites,
-    refetchInterval: suiteId ? 4000 : 10000,
+    refetchInterval: launchedIds.length ? 4000 : 10000,
   });
   const { data: sess } = useQuery({
     queryKey: ["realSessions"], queryFn: fetchRealSessions,
-    refetchInterval: suiteId ? 3000 : 10000,
+    refetchInterval: launchedIds.length ? 3000 : 10000,
   });
 
-  const mySuite = suites?.suites?.find(s => s.suite_id === suiteId);
-  const mySessions = (sess?.sessions ?? []).filter(s => s.suite_id === suiteId);
+  // Every run launched from this panel stays visible — launching another never
+  // hides the previous one (it keeps running and remains on screen).
+  const myRuns = (suites?.suites ?? []).filter(s => launchedIds.includes(s.suite_id));
+  const mySessions = (sess?.sessions ?? [])
+    .filter(s => launchedIds.includes(s.suite_id))
+    .sort((a, b) => (b.created_at ?? 0) - (a.created_at ?? 0));
+  const anyMineRunning = myRuns.some(s => s.status === "running");
 
   // How many patient numbers are FREE right now — you can launch more runs as long
   // as at least one is free (the backend queues the rest as numbers free up).
@@ -85,7 +90,7 @@ export function RealRunPanel({
       extra_context: extraContext || undefined,
     }),
     onSuccess: r => {
-      setSuiteId(r.suite_id);
+      setLaunchedIds(prev => prev.includes(r.suite_id) ? prev : [r.suite_id, ...prev]);
       qc.invalidateQueries({ queryKey: ["realSuites"] });
       setMsg("");
     },
@@ -153,7 +158,7 @@ export function RealRunPanel({
           className="bg-brand-500 hover:bg-brand-600 disabled:opacity-40 text-white font-bold text-[13.5px] px-6 py-2.5 rounded-xl shadow-sm"
         >
           {launch.isPending ? "Launching…"
-            : mySuite?.status === "running" ? (buttonLabel ?? `📱 Run more (${totalScenarios})`)
+            : anyMineRunning ? (buttonLabel ?? `📱 Run more (${totalScenarios})`)
             : buttonLabel ?? `📱 Run over Real Phone (${totalScenarios})`}
         </button>
         <span className="text-[11.5px] text-[#888]">
@@ -170,28 +175,28 @@ export function RealRunPanel({
         {msg && <span className="text-[12.5px] font-medium text-[#991B1B] w-full">{msg}</span>}
       </div>
 
-      {/* Suite progress */}
-      {mySuite && (
-        <div className="bg-white border border-[#EAEAEA] rounded-xl px-4 py-2.5 flex items-center gap-4 text-[12.5px] flex-wrap">
+      {/* Progress — one row per run launched from this panel (none are ever hidden) */}
+      {myRuns.map(run => (
+        <div key={run.suite_id} className="bg-white border border-[#EAEAEA] rounded-xl px-4 py-2.5 flex items-center gap-4 text-[12.5px] flex-wrap">
           <span className="font-bold text-[#333]">
-            {mySuite.kind === "journey" ? "🧭 Journey" : mySuite.kind === "repro" ? "🔁 Repro" : "🧪 Suite"} {mySuite.suite_id}
+            {run.kind === "journey" ? "🧭 Journey" : run.kind === "repro" ? "🔁 Repro" : "🧪 Suite"} {run.suite_id}
           </span>
-          <span className="text-[#888]">{mySuite.env.toUpperCase()} · {mySuite.trigger_type.replace(/_/g, " ")}</span>
-          {mySuite.status === "running" ? (
+          <span className="text-[#888]">{run.env.toUpperCase()} · {run.trigger_type.replace(/_/g, " ")}</span>
+          {run.status === "running" ? (
             <span className="text-[#1456A0] font-semibold">
               <span className="inline-block w-[6px] h-[6px] bg-current rounded-full mr-1.5 animate-pulse" />
-              {mySuite.done ?? 0} of {mySuite.total ?? totalScenarios} done
+              {run.done ?? 0} of {run.total ?? run.scenario_ids?.length ?? 0} done
             </span>
           ) : (
             <span className="font-semibold">
-              <span className="text-[#166534]">{mySuite.passed ?? 0} passed</span>{" · "}
-              <span className="text-[#991B1B]">{mySuite.failed ?? 0} failed</span>
+              <span className="text-[#166534]">{run.passed ?? 0} passed</span>{" · "}
+              <span className="text-[#991B1B]">{run.failed ?? 0} failed</span>
             </span>
           )}
         </div>
-      )}
+      ))}
 
-      {/* Live session cards for this run */}
+      {/* Live session cards across every run from this panel */}
       {mySessions.map(s => <RealSessionCard key={s.session_id} s={s} compact />)}
     </div>
   );
