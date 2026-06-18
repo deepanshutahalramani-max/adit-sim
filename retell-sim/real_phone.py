@@ -127,6 +127,27 @@ NUMBER_IDENTITIES: dict[str, dict] = {
         {"first": "David", "last": QA_LAST_NAME, "dob": "March 15, 1982", "insurance": "United Concordia"},
 }
 
+# Pool of first names for NEW-patient runs. A new-patient test must NOT reuse a
+# name+DOB the EHR already has, or the agent recognizes them as an existing
+# patient. We mint a fresh (first name, DOB) each run — last name stays QATest so
+# test records remain easy to clean up.
+_NEW_FIRST_NAMES = [
+    "Olivia", "Liam", "Emma", "Noah", "Ava", "Ethan", "Sophia", "Mason", "Isabella",
+    "Lucas", "Mia", "Logan", "Charlotte", "Jackson", "Amelia", "Aiden", "Harper",
+    "Elijah", "Evelyn", "Grayson", "Abigail", "Carter", "Emily", "Owen", "Ella", "Wyatt",
+]
+_MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July",
+                "August", "September", "October", "November", "December"]
+
+
+def _fresh_new_patient() -> tuple[str, str]:
+    """A unique (first name, DOB) for a brand-new patient — huge combo space so
+    the EHR never already has this person."""
+    import random
+    first = random.choice(_NEW_FIRST_NAMES)
+    dob = f"{random.choice(_MONTH_NAMES)} {random.randint(1, 28)}, {random.randint(1960, 2003)}"
+    return first, dob
+
 # ── RingCentral SMS provider ──────────────────────────────────────────────────
 # PROD practice carrier blocks SMS from unregistered Twilio numbers (A2P 30034).
 # The company RingCentral number delivers fine, so PROD SMS conversations run
@@ -483,8 +504,11 @@ def _fetch_ehr_calls(session: RealSession) -> None:
         if session.status == "failed":
             agent_msgs = sum(1 for m in (msgs or []) if m.get("role") == "agent")
             if not record_found:
-                session.triage = ("No Retell session found for this number — the AI never engaged. "
-                                  "Likely the 24h cooldown, or the trigger (call/SMS) didn't reach ADIT.")
+                session.triage = (
+                    "No Retell session found for this number — the AI never engaged. The SMS Agent "
+                    "will NOT start a new engagement while an earlier conversation with this number is "
+                    "still active. Fix: finish that conversation, click Takeover in the ADIT app, or "
+                    "wait for the 24-hour window — then retry. (Could also be the trigger not reaching ADIT.)")
             elif agent_msgs and session.failure_type == "no_followup_sms":
                 session.triage = ("Retell DID run a session and the agent spoke, but its messages never "
                                   "reached our number — ADIT/carrier did not deliver them (delivery gap).")
@@ -596,6 +620,8 @@ class RealSession:
     extra_context: str = ""      # optional reviewer-supplied scenario context (text/screenshot-derived)
     mode: str = "auto"           # auto (AI drives patient) | manual (human drives patient)
     patient_name: str = ""       # identity used (from NUMBER_IDENTITIES)
+    dyn_first: str = ""          # new-patient runs: fresh unique first name (so EHR sees a NEW patient)
+    dyn_dob: str = ""            # new-patient runs: fresh unique DOB
     status: str = "starting"     # starting | calling | waiting_for_sms | in_conversation | completed | failed
     outcome: str = ""            # booking_confirmed | task_created | incomplete | error
     failure_type: str = ""       # no_followup_sms | reply_timeout | error | max_turns | ""
@@ -780,10 +806,17 @@ def _persona_for(session: RealSession):
     ident = NUMBER_IDENTITIES.get(session.patient_number)
     if not ident:
         return base
-    is_new = base.is_new and not _is_booked(session.patient_number, session.practice_number)
+    # New-patient runs carry a fresh per-session identity (set in _start_session)
+    # so the EHR sees a brand-new person; existing-patient runs use the number's
+    # stable identity so they're found.
+    if session.dyn_first:
+        return srv.PatientPersona(
+            session.dyn_first, QA_LAST_NAME, session.dyn_dob, ident["insurance"],
+            base.reason, base.preferred_day, base.preferred_time, True,
+        )
     return srv.PatientPersona(
         ident["first"], ident["last"], ident["dob"], ident["insurance"],
-        base.reason, base.preferred_day, base.preferred_time, is_new,
+        base.reason, base.preferred_day, base.preferred_time, False,
     )
 
 
@@ -868,6 +901,11 @@ def _watchdog_loop() -> None:
         for s in list(REAL_SESSIONS.values()):
             try:
                 if s.status == "waiting_for_sms" and now - s.updated_at > FOLLOWUP_SMS_TIMEOUT_S:
+                    s.triage = (
+                        "No follow-up SMS — the SMS Agent won't start a new engagement while an "
+                        "earlier conversation with this number is still active. To re-engage: finish "
+                        "that conversation, click Takeover in the ADIT app, or wait for the 24-hour "
+                        "window to elapse — then retry. (Could also be the trigger not reaching ADIT.)")
                     _finish(s, "failed", "error",
                             f"No AI follow-up SMS within {FOLLOWUP_SMS_TIMEOUT_S}s of the "
                             f"{s.trigger_type.replace('_', ' ')} — agent did not engage",
@@ -1059,6 +1097,15 @@ def _start_session(trigger_type: str, practice: str, scenario_id: str, env: str,
         raise HTTPException(status_code=503, detail="All patient numbers are busy — try again shortly.")
 
     ident = NUMBER_IDENTITIES.get(patient, {})
+    # New-patient scenarios mint a fresh name+DOB each run (so the agent treats
+    # them as genuinely new); existing-patient scenarios keep the number's stable
+    # identity so they ARE recognized.
+    if base.is_new:
+        dyn_first, dyn_dob = _fresh_new_patient()
+        disp_name = f"{dyn_first} {QA_LAST_NAME}"
+    else:
+        dyn_first, dyn_dob = "", ""
+        disp_name = f"{ident.get('first', '')} {ident.get('last', '')}".strip()
     session = RealSession(
         session_id=uuid.uuid4().hex[:12],
         trigger_type=trigger_type,
@@ -1069,7 +1116,9 @@ def _start_session(trigger_type: str, practice: str, scenario_id: str, env: str,
         goal=goal_override or cfg["goal"],
         persona_idx=cfg.get("persona_idx", 0),
         scenario_label=label_override or cfg.get("label", scenario_id),
-        patient_name=f"{ident.get('first', '')} {ident.get('last', '')}".strip(),
+        patient_name=disp_name,
+        dyn_first=dyn_first,
+        dyn_dob=dyn_dob,
         suite_id=suite_id,
         mode=mode,
         extra_context=extra_context,
