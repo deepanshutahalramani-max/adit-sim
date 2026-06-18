@@ -952,71 +952,45 @@ def _call_common(session: RealSession, extra: dict) -> dict:
                   detail=session.trigger_type)
 
 
-# Seconds to let the call ring before cancelling. The AI answers fast (~1s), so to
-# land a genuine MISSED call (not an answered/incomplete one) we cancel on the first
-# ring — a brief ring is enough for ADIT to log the missed call. Kept tunable in one
-# place in case ADIT needs a longer ring to register. 0 = cancel on first ring.
-MISSED_RING_HOLD_S = 0.0
-
-
-def _cancel_call(session: RealSession, where: str) -> None:
-    """Cancel the in-flight call (idempotent). Used by both the ring-callback
-    and the poll loop — whichever sees 'ringing' first wins the race."""
-    if not session.call_sid:
-        return
-    try:
-        _tw_post(f"/Calls/{session.call_sid}.json", {"Status": "canceled"})
-        session.log(f"Cancelled after ringing ({where}) → missed call created")
-    except Exception:
-        pass  # already answered/terminal — the poll loop handles that case
+# A missed call = let it actually ring/connect for a brief window, then cut it —
+# like a caller who hangs up right after it rings. Too short (0s) and the practice
+# never registers an inbound call; longer than this and it looks like a real call.
+# One tunable knob.
+MISSED_RING_HOLD_S = 3.0
 
 
 def _run_missed_call(session: RealSession) -> None:
     try:
+        # Long pause so that IF the far end answers, our side just stays silent —
+        # we end the call ourselves after the brief ring window below.
         call = _call_common(session, {
-            "Twiml": "<Response><Pause length='2'/><Hangup/></Response>",
+            "Twiml": "<Response><Pause length='30'/><Hangup/></Response>",
         })
         session.call_sid = call.get("sid", "")
         session.status = "calling"
-        _hold_note = f"after ~{MISSED_RING_HOLD_S:g}s of ringing" if MISSED_RING_HOLD_S else "the moment it rings"
-        session.log(f"Single call placed — cancelling {_hold_note} (true missed call). "
-                    f"One attempt only — repeated calls suppress the AI's follow-up SMS.")
+        session.log(f"Single call placed — letting it ring ~{MISSED_RING_HOLD_S:g}s, then cutting "
+                    f"(missed call: rang, then hung up). One attempt only — repeated calls suppress "
+                    f"the AI's follow-up SMS.")
 
-        # ONE call only. Placing several back-to-back calls makes ADIT treat it as
-        # spam / resets the engagement, so no follow-up SMS is sent. Let it ring
-        # MISSED_RING_HOLD_S (so it registers as a real missed call) then cancel
-        # before the AI answers. The poll watches state; the ring-callback also
-        # cancels after the same hold (twilio_call_status).
-        deadline = time.time() + 30
-        ring_started = 0.0
-        result = "ended"    # "missed" | "answered" | "ended"
-        while time.time() < deadline:
+        # Let it ring/connect for the hold window so the practice registers a real
+        # inbound call, then cut it — exactly a caller hanging up right after it rings.
+        time.sleep(MISSED_RING_HOLD_S)
+
+        # End the call: cancel if it's still ringing/queued, else hang up the
+        # answered call. (Twilio only cancels queued/ringing calls; in-progress
+        # calls must be 'completed'.)
+        try:
             st = _tw_get(f"/Calls/{session.call_sid}.json").get("status", "")
+        except Exception:
+            st = ""
+        end_status = "canceled" if st in ("queued", "initiated", "ringing") else "completed"
+        try:
+            r = _tw_post(f"/Calls/{session.call_sid}.json", {"Status": end_status})
+            session.call_status = r.get("status", end_status)
+        except Exception:
             session.call_status = st
-            if st == "ringing":
-                if not ring_started:
-                    ring_started = time.time()
-                if time.time() - ring_started >= MISSED_RING_HOLD_S:
-                    _cancel_call(session, "poll")
-            elif st == "canceled":
-                result = "missed"
-                break
-            elif st == "in-progress":
-                # AI answered before our hold elapsed — end it; this is an
-                # INCOMPLETE call, not a missed one. We do NOT re-dial (that would
-                # suppress the follow-up SMS).
-                _tw_post(f"/Calls/{session.call_sid}.json", {"Status": "completed"})
-                result = "answered"
-                break
-            elif st in ("completed", "busy", "failed", "no-answer"):
-                session.log(f"Call ended: {st}")
-                result = "missed" if st in ("no-answer", "busy") else "ended"
-                break
-            time.sleep(0.2)
-
-        if result == "answered":
-            session.log("⚠ The AI answered before the ring-hold elapsed — this registered as an INCOMPLETE "
-                        "call, not a missed one. Not re-dialed (repeated calls suppress the follow-up SMS).")
+        session.log(f"Cut the call after ~{MISSED_RING_HOLD_S:g}s (was {st or 'unknown'} → {session.call_status}) "
+                    f"— missed call registered")
 
         session.call_ended_at = time.time()
         session.status = "waiting_for_sms"
@@ -2081,14 +2055,6 @@ async def twilio_call_status(request: Request, session_id: str = ""):
     if s:
         s.call_status = status
         s.log(f"Call status: {status}")
-        # Missed-call cancel via the pushed 'ringing' event: let it ring the same
-        # hold the poll uses (so ADIT logs a real missed call), then cancel before
-        # the AI answers. Threaded so the sleep never blocks the webhook event loop.
-        if s.trigger_type == "missed_call" and status == "ringing":
-            def _delayed_cancel(sess):
-                time.sleep(MISSED_RING_HOLD_S)
-                _cancel_call(sess, "ring-callback")
-            threading.Thread(target=_delayed_cancel, args=(s,), daemon=True).start()
         if status in ("completed", "failed", "busy", "no-answer") and not s.call_ended_at:
             s.call_ended_at = time.time()
         if s.trigger_type == "inbound_call" and status in ("completed", "failed", "busy", "no-answer"):
