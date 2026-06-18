@@ -54,6 +54,7 @@ One-time schema (run in the Supabase SQL editor):
 from __future__ import annotations
 
 import os
+import re
 import threading
 from datetime import datetime, timezone
 
@@ -92,12 +93,27 @@ def _iso(ts: float | None) -> str | None:
     return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
 
 
+_MISSING_COL = re.compile(r"Could not find the '([^']+)' column")
+
+
 def _post(table: str, rows: list[dict]) -> None:
     if not configured() or not rows:
         return
     try:
-        httpx.post(f"{SUPABASE_URL}/rest/v1/{table}",
-                   headers=_headers(), json=rows, timeout=10)
+        # Forward-compatible with pending migrations: if a column doesn't exist
+        # yet (e.g. retell_id before its ALTER TABLE), PostgREST 400s with
+        # PGRST204. Strip that column from every row and retry, so a new field
+        # never breaks persistence of all the other columns.
+        for _ in range(4):
+            r = httpx.post(f"{SUPABASE_URL}/rest/v1/{table}",
+                           headers=_headers(), json=rows, timeout=10)
+            if r.status_code < 400:
+                return
+            m = _MISSING_COL.search(r.text or "")
+            if not m:
+                return  # some other error — drop silently, telemetry never blocks a run
+            col = m.group(1)
+            rows = [{k: v for k, v in row.items() if k != col} for row in rows]
     except Exception:
         pass  # telemetry must never break a test run
 
