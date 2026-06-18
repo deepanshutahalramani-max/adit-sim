@@ -62,7 +62,13 @@ export function RealRunPanel({
 
   const mySuite = suites?.suites?.find(s => s.suite_id === suiteId);
   const mySessions = (sess?.sessions ?? []).filter(s => s.suite_id === suiteId);
-  const anyRunning = suites?.suites?.some(s => s.status === "running") ?? false;
+
+  // How many patient numbers are FREE right now — you can launch more runs as long
+  // as at least one is free (the backend queues the rest as numbers free up).
+  const freeNow = isProdSms
+    ? ((cfg?.patient_numbers ?? []).filter(p => p.provider === "ringcentral").every(p => !p.busy) ? 1 : 0)
+    : (cfg?.patient_numbers ?? []).filter(p => p.provider === "twilio" && !p.busy).length;
+  const noneFree = (cfg?.patient_numbers?.length ?? 0) > 0 && freeNow === 0;
 
   const launch = useMutation({
     mutationFn: () => runRealSuite({
@@ -134,6 +140,7 @@ export function RealRunPanel({
               <span className="font-semibold text-[#333]">{totalScenarios} total run{totalScenarios === 1 ? "" : "s"}.</span>{" "}
               Up to <b>{effectiveMax}</b> run at once{isProdSms ? " (PROD SMS uses one number)" : " (limited by patient numbers)"}
               {queued > 0 ? <> — the remaining <b>{queued}</b> queue and start automatically as numbers free up.</> : "."}
+              {" "}<span className="text-[#888]">{freeNow} free right now{cfg ? "" : "…"}.</span>
             </div>
           </div>
         </div>
@@ -142,18 +149,23 @@ export function RealRunPanel({
       <div className="flex items-center gap-3 flex-wrap">
         <button
           onClick={() => launch.mutate()}
-          disabled={disabled || launch.isPending || anyRunning || totalScenarios === 0}
+          disabled={disabled || launch.isPending || noneFree || totalScenarios === 0}
           className="bg-brand-500 hover:bg-brand-600 disabled:opacity-40 text-white font-bold text-[13.5px] px-6 py-2.5 rounded-xl shadow-sm"
         >
-          {anyRunning && !mySuite ? "Another run in progress…"
-            : mySuite?.status === "running" ? `Running — ${mySuite.done ?? 0}/${mySuite.total ?? totalScenarios} done…`
+          {launch.isPending ? "Launching…"
+            : mySuite?.status === "running" ? (buttonLabel ?? `📱 Run more (${totalScenarios})`)
             : buttonLabel ?? `📱 Run over Real Phone (${totalScenarios})`}
         </button>
         <span className="text-[11.5px] text-[#888]">
           {kind === "journey"
             ? "Journey phases run sequentially on one identity (~5 min each) and appear live below."
-            : "Scenarios run in PARALLEL across the patient numbers — watch them all live below."}
+            : "Scenarios run in PARALLEL across the patient numbers — you can launch more anytime a number is free."}
         </span>
+        {noneFree && (
+          <span className="text-[11.5px] text-[#92600A] w-full">
+            All patient numbers are busy right now — they’ll free up as conversations finish, then you can launch again.
+          </span>
+        )}
         {disabled && disabledReason && <span className="text-[11.5px] text-[#92600A] w-full">{disabledReason}</span>}
         {msg && <span className="text-[12.5px] font-medium text-[#991B1B] w-full">{msg}</span>}
       </div>
