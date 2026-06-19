@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { stopRealSession, reanalyzeFeedback } from "../api";
 import type { RealSession } from "../api";
+import { cleanScenarioLabel } from "../lib/scenarios";
 
 const TRIGGER_ICON: Record<string, typeof Phone> = {
   missed_call: PhoneMissed,
@@ -179,7 +180,7 @@ export function RealSessionCard({ s, compact }: { s: RealSession; compact?: bool
           </span>
           <div className="min-w-0">
             <div className="text-[14.5px] font-semibold text-ink-900 truncate tracking-[-0.01em]">
-              {s.scenario_label || s.scenario_id}
+              {cleanScenarioLabel(s.scenario_label) || s.scenario_id}
               {s.mode === "manual" && <span className="ml-2 align-middle text-[10px] font-bold text-white bg-[#7C3AED] px-1.5 py-0.5 rounded">MANUAL</span>}
             </div>
             <div className="text-[12px] text-ink-400 mt-0.5">

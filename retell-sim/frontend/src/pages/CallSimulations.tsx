@@ -11,6 +11,7 @@ import type { Config, AppConfig } from "../types";
 import { RealRunPanel } from "../components/RealRunPanel";
 import { IdentityBoard, ContextInput } from "../components/RealOps";
 import { realEnv, destNumber, envGuard } from "./Simulations";
+import { scenarioIcon, cleanScenarioLabel } from "../lib/scenarios";
 
 interface Props {
   config: Config;
@@ -54,18 +55,25 @@ export function CallSimulations({ config, appConfig }: Props) {
           </button>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          {scenarios.map(sc => (
-            <label key={sc.id} className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
-              selected.includes(sc.id) ? "border-brand-500 bg-brand-50" : "border-line hover:border-line-strong"
-            }`}>
-              <input type="checkbox" checked={selected.includes(sc.id)}
-                onChange={() => toggleScenario(sc.id)} className="mt-0.5 accent-brand-500" />
-              <div>
-                <div className="text-[13px] font-semibold text-ink-900">{sc.label}</div>
-                <div className="text-[12px] text-ink-500 mt-0.5 leading-snug">{sc.goal}</div>
-              </div>
-            </label>
-          ))}
+          {scenarios.map(sc => {
+            const Icon = scenarioIcon(sc.id);
+            const on = selected.includes(sc.id);
+            return (
+              <label key={sc.id} className={`flex items-start gap-3 p-3.5 rounded-xl border cursor-pointer transition-all ${
+                on ? "border-brand-500 bg-brand-50" : "border-line hover:border-line-strong"
+              }`}>
+                <input type="checkbox" checked={on}
+                  onChange={() => toggleScenario(sc.id)} className="mt-1 accent-brand-500" />
+                <span className={`mt-0.5 flex-shrink-0 ${on ? "text-brand-600" : "text-ink-400"}`}>
+                  <Icon className="w-[18px] h-[18px]" strokeWidth={2} />
+                </span>
+                <div className="min-w-0">
+                  <div className="text-[13px] font-semibold text-ink-900">{cleanScenarioLabel(sc.label)}</div>
+                  <div className="text-[12px] text-ink-500 mt-0.5 leading-snug">{sc.goal}</div>
+                </div>
+              </label>
+            );
+          })}
         </div>
       </div>
 
