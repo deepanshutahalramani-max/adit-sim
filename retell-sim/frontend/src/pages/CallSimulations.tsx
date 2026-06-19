@@ -6,7 +6,7 @@
  * Every call is recorded and playable from the session card / Dashboard.
  */
 import { useState } from "react";
-import { Mic } from "lucide-react";
+import { Mic, Check } from "lucide-react";
 import type { Config, AppConfig } from "../types";
 import { RealRunPanel } from "../components/RealRunPanel";
 import { IdentityBoard, ContextInput } from "../components/RealOps";
@@ -54,24 +54,26 @@ export function CallSimulations({ config, appConfig }: Props) {
             {selected.length === scenarios.length ? "Deselect all" : "Select all"}
           </button>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
           {scenarios.map(sc => {
             const Icon = scenarioIcon(sc.id);
             const on = selected.includes(sc.id);
             return (
-              <label key={sc.id} className={`flex items-start gap-3 p-3.5 rounded-xl border cursor-pointer transition-all ${
-                on ? "border-brand-500 bg-brand-50" : "border-line hover:border-line-strong"
-              }`}>
-                <input type="checkbox" checked={on}
-                  onChange={() => toggleScenario(sc.id)} className="mt-1 accent-brand-500" />
-                <span className={`mt-0.5 flex-shrink-0 ${on ? "text-brand-600" : "text-ink-400"}`}>
+              <button key={sc.id} type="button" onClick={() => toggleScenario(sc.id)}
+                className={`relative flex items-start gap-3 p-3.5 rounded-xl border text-left transition-all ${
+                  on ? "border-brand-500 bg-brand-50" : "border-line hover:border-line-strong hover:bg-canvas"
+                }`}>
+                <span className={`w-9 h-9 rounded-lg grid place-items-center flex-shrink-0 transition-colors ${
+                  on ? "bg-brand-100 text-brand-600" : "bg-canvas-sunken text-ink-400"
+                }`}>
                   <Icon className="w-[18px] h-[18px]" strokeWidth={2} />
                 </span>
-                <div className="min-w-0">
+                <div className="min-w-0 pr-5">
                   <div className="text-[13px] font-semibold text-ink-900">{cleanScenarioLabel(sc.label)}</div>
                   <div className="text-[12px] text-ink-500 mt-0.5 leading-snug">{sc.goal}</div>
                 </div>
-              </label>
+                {on && <Check className="absolute top-3 right-3 w-4 h-4 text-brand-600" strokeWidth={2.5} />}
+              </button>
             );
           })}
         </div>

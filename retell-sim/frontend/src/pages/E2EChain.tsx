@@ -39,10 +39,13 @@ export function E2EChain({ config }: Props) {
           const Icon = p.icon;
           return (
             <div key={p.id} className="card p-4">
-              <div className="section-label mb-2">Phase {i + 1}</div>
-              <div className="flex items-center gap-2 text-[15px] font-semibold text-ink-900 tracking-[-0.01em]">
-                <Icon className="w-[18px] h-[18px] text-brand-500" strokeWidth={2} /> {p.label}
+              <div className="flex items-center gap-2.5 mb-2">
+                <span className="w-8 h-8 rounded-lg bg-canvas-sunken text-ink-500 grid place-items-center flex-shrink-0">
+                  <Icon className="w-[17px] h-[17px]" strokeWidth={2} />
+                </span>
+                <span className="section-label">Phase {i + 1}</span>
               </div>
+              <div className="text-[15px] font-semibold text-ink-900 tracking-[-0.01em]">{p.label}</div>
               <div className="text-[12px] text-ink-500 mt-1 leading-snug">{p.desc}</div>
             </div>
           );
