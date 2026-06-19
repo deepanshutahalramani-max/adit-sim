@@ -5,7 +5,7 @@
  *   <RealInsights/>     engineering performance metrics dashboard
  */
 import { useState, useRef } from "react";
-import { Paperclip } from "lucide-react";
+import { Paperclip, MessageSquarePlus } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { fetchRealConfig, fetchRealSessions, fetchRealInsights, fetchApiMetrics, fetchEhrMetrics, reanalyzeFeedback, fetchTrends, extractContextFromImage } from "../api";
 import { RealSessionCard, REAL_TRIGGERS, fmtPhone } from "./RealSessionCard";
@@ -83,8 +83,8 @@ function IssueFeedback({ issueTitle, sessionId }: { issueTitle: string; sessionI
   return (
     <div className="mt-2">
       {!open ? (
-        <button onClick={() => setOpen(true)} className="text-[11.5px] font-semibold text-brand-600 hover:text-brand-700">
-          💬 Add a comment / re-analyze
+        <button onClick={() => setOpen(true)} className="inline-flex items-center gap-1.5 text-[11.5px] font-semibold text-brand-600 hover:text-brand-700">
+          <MessageSquarePlus className="w-3.5 h-3.5" strokeWidth={2} /> Add a comment / re-analyze
         </button>
       ) : (
         <div className="space-y-2">
@@ -93,7 +93,7 @@ function IssueFeedback({ issueTitle, sessionId }: { issueTitle: string; sessionI
             className="field !text-[12px] resize-none" />
           <div className="flex gap-2">
             <button onClick={submit} disabled={busy || !comment.trim()} className="btn-primary btn-sm">
-              {busy ? "Re-analyzing…" : "🤖 Re-analyze with my note"}
+              {busy ? "Re-analyzing…" : "Re-analyze with my note"}
             </button>
             <button onClick={() => setOpen(false)} className="btn-ghost btn-sm">Cancel</button>
           </div>
@@ -179,14 +179,14 @@ export function TrendsView() {
 }
 
 const SCENARIO_LABELS: Record<string, string> = {
-  "new-patient-cleaning": "🆕 New Patient – Cleaning",
-  "dental-emergency": "🚨 Dental Emergency",
-  "existing-routine": "📅 Existing – Routine",
-  "reschedule": "🔄 Reschedule",
-  "cancel": "❌ Cancel",
-  "insurance-book": "🏥 Insurance → Book",
-  "office-hours-book": "🕐 Office Hours → Book",
-  "post-treatment-followup": "💊 Post-Treatment",
+  "new-patient-cleaning": "New Patient – Cleaning",
+  "dental-emergency": "Dental Emergency",
+  "existing-routine": "Existing – Routine",
+  "reschedule": "Reschedule",
+  "cancel": "Cancel",
+  "insurance-book": "Insurance → Book",
+  "office-hours-book": "Office Hours → Book",
+  "post-treatment-followup": "Post-Treatment",
 };
 
 /* ── Identity board ────────────────────────────────────────────────────────── */
@@ -198,13 +198,17 @@ export function IdentityBoard({ env }: { env: string }) {
     <div className="flex flex-wrap gap-2">
       {cfg.patient_numbers.map(p => (
         <div key={p.number}
-          className={`bg-white border rounded-xl px-3.5 py-2 text-[12px] ${p.busy ? "border-[#B5D4F5]" : "border-[#EAEAEA]"}`}>
-          <span className="font-bold text-[#333]">{p.identity?.first} {p.identity?.last}</span>
-          {p.busy && <span className="ml-1.5 text-[#1456A0] font-semibold">● in session</span>}
-          <span className="block text-[#888] font-mono text-[11px]">{fmtPhone(p.number)}</span>
-          <span className="block text-[10.5px] text-[#ADADAD]">
+          className={`bg-canvas-raised border rounded-xl px-3.5 py-2 text-[12px] ${p.busy ? "border-brand-300 bg-brand-50/40" : "border-line"}`}>
+          <span className="font-semibold text-ink-900">{p.identity?.first} {p.identity?.last}</span>
+          {p.busy && (
+            <span className="ml-1.5 inline-flex items-center gap-1 text-brand-600 font-semibold">
+              <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />in session
+            </span>
+          )}
+          <span className="block text-ink-400 font-mono text-[11px]">{fmtPhone(p.number)}</span>
+          <span className="block text-[10.5px] text-ink-300">
             SMS cooldown: {fmtCooldown(p.cooldowns?.[env] ?? 0)}
-            {p.booked?.[env] ? " · ✓ registered patient" : " · not registered yet"}
+            {p.booked?.[env] ? " · registered patient" : " · not registered yet"}
           </span>
         </div>
       ))}
@@ -240,10 +244,10 @@ export function SessionsExplorer() {
           <option value="completed">Completed</option>
           <option value="failed">Failed</option>
         </select>
-        <span className="text-[12.5px] text-[#888]">{filtered.length} session(s)</span>
+        <span className="text-[12.5px] text-ink-400">{filtered.length} session(s)</span>
       </div>
       {filtered.length === 0 && (
-        <div className="text-[13px] text-[#ADADAD] italic bg-white border border-dashed border-[#EAEAEA] rounded-2xl p-8 text-center">
+        <div className="text-[13px] text-ink-400 italic card border-dashed p-8 text-center">
           No sessions yet — run a simulation and it will appear here.
         </div>
       )}
@@ -382,7 +386,7 @@ export function RealInsights() {
 
   if (!ins || ins.total === 0) {
     return (
-      <div className="text-[13px] text-[#ADADAD] italic bg-white border border-dashed border-[#EAEAEA] rounded-2xl p-8 text-center">
+      <div className="text-[13px] text-ink-400 italic card border-dashed p-8 text-center">
         No completed sessions yet — run a few simulations and engineering metrics will appear here.
       </div>
     );
@@ -519,7 +523,7 @@ export function EhrApiFlow() {
       {/* Auto-diagnosed root causes */}
       {(m.issues?.length ?? 0) > 0 && (
         <div className="card card-pad">
-          <div className="text-[13px] font-bold text-ink-900 mb-1">🔎 Issues detected — root cause</div>
+          <div className="text-[13px] font-semibold text-ink-900 mb-1">Issues detected — root cause</div>
           <div className="text-[11.5px] text-ink-400 mb-3">
             The platform analyzes the EHR call sequence and explains what went wrong, not just that it failed.
           </div>
