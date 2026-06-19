@@ -1,7 +1,18 @@
 import { useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  PhoneMissed, PhoneOff, MessageSquare, Mic, Phone, ChevronDown, Square,
+  ExternalLink, Volume2, Zap, Clock, AlertTriangle, Radio,
+} from "lucide-react";
 import { stopRealSession, reanalyzeFeedback } from "../api";
 import type { RealSession } from "../api";
+
+const TRIGGER_ICON: Record<string, typeof Phone> = {
+  missed_call: PhoneMissed,
+  incomplete_call: PhoneOff,
+  inbound_sms: MessageSquare,
+  inbound_call: Mic,
+};
 
 /** Deep-link to this session's Retell record: voice → call-history, SMS/chat → chat-history. */
 function retellUrl(s: RealSession): string {
@@ -19,7 +30,9 @@ function FeedbackBox({ s }: { s: RealSession }) {
   });
   return (
     <div className="mt-4 border-t border-line pt-3">
-      <div className="section-label mb-2">💬 Reviewer feedback → AI re-analysis</div>
+      <div className="section-label mb-2 inline-flex items-center gap-1.5">
+        <MessageSquare className="w-3 h-3" strokeWidth={2} /> Reviewer feedback → AI re-analysis
+      </div>
       {results.map((c, i) => (
         <div key={i} className="mb-2 text-[12px]">
           <div className="bg-canvas-sunken rounded-lg px-3 py-1.5"><b className="text-ink-700">{c.author}:</b> {c.comment}</div>
@@ -98,14 +111,16 @@ function LiveListen({ sessionId }: { sessionId: string }) {
   return (
     <button
       onClick={() => (listening ? stop() : start())}
-      className={`text-[11.5px] font-bold px-3 py-1 rounded-full border transition-colors ${
+      className={`inline-flex items-center gap-1.5 text-[11.5px] font-semibold px-3 py-1 rounded-full border transition-colors ${
         listening
-          ? "bg-[#FEF2F2] text-[#991B1B] border-[#FECACA] animate-pulse"
-          : "bg-[#1A1A1A] text-white border-[#1A1A1A] hover:bg-[#333]"
+          ? "bg-[#FEF2F2] text-[#B91C1C] border-[#FECACA]"
+          : "bg-ink-900 text-white border-ink-900 hover:bg-ink-700"
       }`}
       title="Hear the call audio live while the conversation is happening"
     >
-      {listening ? "⏹ Stop listening" : "🔴 Listen LIVE"}
+      {listening
+        ? <><Square className="w-3 h-3 fill-current" strokeWidth={0} /> Stop</>
+        : <><Radio className="w-3.5 h-3.5 animate-pulse" strokeWidth={2} /> Listen live</>}
     </button>
   );
 }
@@ -122,17 +137,17 @@ export const REAL_TRIGGERS = [
 ] as const;
 
 export const STATUS_STYLES: Record<string, string> = {
-  starting:        "bg-[#FFF7E6] text-[#92600A] border-[#F5D998]",
-  calling:         "bg-[#EAF3FF] text-[#1456A0] border-[#B5D4F5]",
-  waiting_for_sms: "bg-[#FFF7E6] text-[#92600A] border-[#F5D998]",
-  in_conversation: "bg-[#EAF3FF] text-[#1456A0] border-[#B5D4F5]",
-  completed:       "bg-[#F2FDF4] text-[#166534] border-[#B8EFC8]",
-  failed:          "bg-[#FEF2F2] text-[#991B1B] border-[#FECACA]",
+  starting:        "pill-warn",
+  calling:         "pill-info",
+  waiting_for_sms: "pill-warn",
+  in_conversation: "pill-info",
+  completed:       "pill-ok",
+  failed:          "pill-bad",
 };
 
 export const STATUS_LABEL: Record<string, string> = {
-  starting: "starting", calling: "📞 calling", waiting_for_sms: "⏳ waiting for AI SMS",
-  in_conversation: "💬 conversing", completed: "✓ completed", failed: "✗ failed",
+  starting: "Starting", calling: "Calling", waiting_for_sms: "Waiting for AI SMS",
+  in_conversation: "Conversing", completed: "Completed", failed: "Failed",
 };
 
 export function fmtPhone(n: string): string {
@@ -150,112 +165,94 @@ export function RealSessionCard({ s, compact }: { s: RealSession; compact?: bool
     onSuccess: () => qc.invalidateQueries({ queryKey: ["realSessions"] }),
   });
   const trig = REAL_TRIGGERS.find(t => t.id === s.trigger_type);
+  const TrigIcon = TRIGGER_ICON[s.trigger_type] ?? Phone;
   const active = isActive;
+  const scorePill = s.score >= 80 ? "pill-ok" : s.score >= 60 ? "pill-warn" : "pill-bad";
+  const outcomeOk = ["booking_confirmed", "task_created"].includes(s.outcome);
 
   return (
-    <div className="bg-white border border-[#EAEAEA] rounded-2xl p-5 shadow-sm">
+    <div className="card card-pad">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-3 min-w-0">
-          <span className="text-2xl flex-shrink-0">{trig?.icon ?? "📱"}</span>
+          <span className="flex-shrink-0 w-9 h-9 rounded-full bg-canvas-sunken text-ink-500 grid place-items-center">
+            <TrigIcon className="w-[18px] h-[18px]" strokeWidth={2} />
+          </span>
           <div className="min-w-0">
-            <div className="text-[14.5px] font-bold text-[#111] truncate">
+            <div className="text-[14.5px] font-semibold text-ink-900 truncate tracking-[-0.01em]">
               {s.scenario_label || s.scenario_id}
-              {s.mode === "manual" && <span className="ml-2 text-[10.5px] font-bold text-white bg-[#7C3AED] px-1.5 py-0.5 rounded">MANUAL</span>}
+              {s.mode === "manual" && <span className="ml-2 align-middle text-[10px] font-bold text-white bg-[#7C3AED] px-1.5 py-0.5 rounded">MANUAL</span>}
             </div>
-            <div className="text-[12px] text-[#888] mt-0.5">
-              <span className="font-semibold text-[#555]">{s.patient_name}</span>
+            <div className="text-[12px] text-ink-400 mt-0.5">
+              <span className="font-medium text-ink-500">{s.patient_name}</span>
               {" · "}{fmtPhone(s.patient_number)} → {fmtPhone(s.practice_number)}
               {" · "}<span className="uppercase font-semibold">{s.env}</span>
               {" · "}{trig?.label}
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-1.5 flex-wrap">
           {s.first_sms_latency_s > 0 && (
-            <span className="text-[11px] text-[#888] bg-[#F7F7F5] border border-[#EAEAEA] px-2 py-1 rounded-full"
-                  title="Time from call end to first AI SMS">
-              ⚡ engaged in {s.first_sms_latency_s}s
+            <span className="pill pill-neutral" title="Time from call end to first AI SMS">
+              <Zap className="w-3 h-3" strokeWidth={2} /> {s.first_sms_latency_s}s
             </span>
           )}
           {s.avg_reply_latency_s > 0 && (
-            <span className="text-[11px] text-[#888] bg-[#F7F7F5] border border-[#EAEAEA] px-2 py-1 rounded-full"
-                  title="Average agent reply latency">
-              ⏱ avg reply {s.avg_reply_latency_s}s
+            <span className="pill pill-neutral" title="Average agent reply latency">
+              <Clock className="w-3 h-3" strokeWidth={2} /> {s.avg_reply_latency_s}s
             </span>
           )}
           {s.score > 0 && (
-            <span className={`text-[11.5px] font-bold px-2.5 py-1 rounded-full border ${
-              s.score >= 80 ? "bg-[#F2FDF4] text-[#166534] border-[#B8EFC8]"
-              : s.score >= 60 ? "bg-[#FFF7E6] text-[#92600A] border-[#F5D998]"
-              : "bg-[#FEF2F2] text-[#991B1B] border-[#FECACA]"
-            }`} title={s.judge_reason}>
-              {s.score}/100
-            </span>
+            <span className={`pill ${scorePill}`} title={s.judge_reason}>{s.score}/100</span>
           )}
           {s.outcome && (
-            <span className={`text-[11.5px] font-semibold px-2.5 py-1 rounded-full border ${
-              ["booking_confirmed", "task_created"].includes(s.outcome)
-                ? "bg-[#F2FDF4] text-[#166534] border-[#B8EFC8]"
-                : "bg-[#FFF7E6] text-[#92600A] border-[#F5D998]"
-            }`}>
-              {s.outcome.replace(/_/g, " ")}
-            </span>
+            <span className={`pill ${outcomeOk ? "pill-ok" : "pill-warn"}`}>{s.outcome.replace(/_/g, " ")}</span>
           )}
-          <span className={`text-[11.5px] font-semibold px-2.5 py-1 rounded-full border ${STATUS_STYLES[s.status] ?? STATUS_STYLES.starting}`}>
-            {active && <span className="inline-block w-[6px] h-[6px] bg-current rounded-full mr-1.5 animate-pulse" />}
+          <span className={`pill ${STATUS_STYLES[s.status] ?? STATUS_STYLES.starting}`}>
+            {active && <span className="w-1.5 h-1.5 bg-current rounded-full animate-pulse" />}
             {STATUS_LABEL[s.status] ?? s.status}
           </span>
           {active && s.trigger_type === "inbound_call" && (
             <LiveListen sessionId={s.session_id} />
           )}
           {active && (
-            <button onClick={() => stop.mutate()}
-              className="text-[11.5px] font-semibold px-2.5 py-1 rounded-full border border-[#FECACA] bg-[#FEF2F2] text-[#991B1B] hover:bg-[#FEE2E2]">
-              Stop
+            <button onClick={() => stop.mutate()} className="pill pill-bad hover:bg-[#FEE2E2] transition-colors">
+              <Square className="w-3 h-3 fill-current" strokeWidth={0} /> Stop
             </button>
           )}
           {s.retell_id && (
             <a href={retellUrl(s)} target="_blank" rel="noopener noreferrer"
-              title="Open this conversation in the Retell dashboard"
-              className="text-[11.5px] font-semibold px-2.5 py-1 rounded-full border border-[#C7D2FE] bg-[#EEF2FF] text-[#3730A3] hover:bg-[#E0E7FF]">
-              View in Retell ↗
+              title="Open this conversation in the Retell dashboard" className="pill pill-info hover:opacity-80 transition-opacity">
+              Retell <ExternalLink className="w-3 h-3" strokeWidth={2} />
             </a>
           )}
-          <button onClick={() => setExpanded(e => !e)} className="text-[13px] text-[#888] hover:text-[#333] px-1">
-            {expanded ? "▾" : "▸"}
+          <button onClick={() => setExpanded(e => !e)}
+            className="text-ink-400 hover:text-ink-700 p-1 transition-colors" title={expanded ? "Collapse" : "Expand"}>
+            <ChevronDown className={`w-4 h-4 transition-transform ${expanded ? "rotate-180" : ""}`} strokeWidth={2} />
           </button>
         </div>
       </div>
 
       {s.error && (
-        <div className="mt-3 text-[12.5px] text-[#991B1B] bg-[#FEF2F2] border border-[#FECACA] rounded-lg px-3 py-2">
+        <div className="mt-3 text-[12.5px] text-[#B91C1C] bg-[#FEF2F2] border border-[#FECACA] rounded-xl px-3 py-2">
           {s.error}
         </div>
       )}
       {s.status === "failed" && !s.error && s.events.length > 0 && (
-        <div className="mt-3 text-[12.5px] text-[#991B1B] bg-[#FEF2F2] border border-[#FECACA] rounded-lg px-3 py-2">
+        <div className="mt-3 text-[12.5px] text-[#B91C1C] bg-[#FEF2F2] border border-[#FECACA] rounded-xl px-3 py-2">
           {s.events[s.events.length - 1]?.msg}
         </div>
       )}
       {s.triage && (
-        <div className="mt-2 text-[12px] text-[#92600A] bg-[#FFF7ED] border border-[#FED7AA] rounded-lg px-3 py-2">
-          <span className="font-bold">Why it failed:</span> {s.triage}
-        </div>
-      )}
-      {(s.issues?.length ?? 0) > 0 && (
-        <div className="mt-2 space-y-1.5">
-          {s.issues!.map((iss, i) => (
-            <div key={i} className="text-[12px] bg-[#FEF2F2] border border-[#FECACA] rounded-lg px-3 py-2">
-              <span className="font-bold text-[#991B1B]">⚠ {iss.title}</span>
-              <div className="text-[#7C2D12] mt-0.5 leading-snug">{iss.detail}</div>
-            </div>
-          ))}
+        <div className="mt-2 text-[12px] text-[#B45309] bg-[#FFF7ED] border border-[#FED7AA] rounded-xl px-3 py-2 leading-relaxed">
+          <span className="font-semibold">Why it failed:</span> {s.triage}
         </div>
       )}
 
       {s.recording_url && (
         <div className="mt-3 flex items-center gap-3">
-          <span className="text-[12px] font-semibold text-[#555]">🔊 Call recording ({s.recording_duration_s}s)</span>
+          <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-ink-500">
+            <Volume2 className="w-4 h-4" strokeWidth={2} /> Recording ({s.recording_duration_s}s)
+          </span>
           <audio controls preload="none" src={s.recording_url} className="h-9 flex-1 max-w-[420px]" />
         </div>
       )}
@@ -268,8 +265,8 @@ export function RealSessionCard({ s, compact }: { s: RealSession; compact?: bool
               iss.severity === "high" ? "border-[#FECACA] bg-[#FEF2F2]" : "border-[#FED7AA] bg-[#FFF7ED]"
             }`}>
               <div className="flex items-center gap-2">
-                <span className="text-[13px]">🔎</span>
-                <span className={`text-[12.5px] font-bold ${iss.severity === "high" ? "text-[#B91C1C]" : "text-[#B45309]"}`}>
+                <AlertTriangle className={`w-3.5 h-3.5 flex-shrink-0 ${iss.severity === "high" ? "text-[#B91C1C]" : "text-[#B45309]"}`} strokeWidth={2} />
+                <span className={`text-[12.5px] font-semibold ${iss.severity === "high" ? "text-[#B91C1C]" : "text-[#B45309]"}`}>
                   {iss.title}
                 </span>
                 <span className={`pill !py-0 !text-[10px] ${iss.severity === "high" ? "pill-bad" : "pill-warn"}`}>{iss.severity}</span>
@@ -283,7 +280,7 @@ export function RealSessionCard({ s, compact }: { s: RealSession; compact?: bool
       {/* EHR / agent API calls — the booking-flow functions, with timing + failures */}
       {expanded && (s.ehr_calls?.length ?? 0) > 0 && (
         <div className="mt-4">
-          <div className="text-[11.5px] font-bold text-[#ADADAD] uppercase tracking-wide mb-2">
+          <div className="section-label mb-2">
             EHR API calls ({s.ehr_calls!.length}) — agent → ADIT
           </div>
           <div className="space-y-1.5">
@@ -297,8 +294,8 @@ export function RealSessionCard({ s, compact }: { s: RealSession; compact?: bool
                   <span className={`text-[11px] font-bold ${c.business_ok ? "text-[#15803D]" : "text-[#B91C1C]"}`}>
                     {c.business_ok ? "success" : "FAILED"}
                   </span>
-                  <span className="ml-auto text-[11px] text-ink-400 font-medium" title={c.latency_ms > 0 ? "Time between Retell's tool-call invocation and result" : "Per-call timing not reported by Retell for this turn"}>
-                    ⏱ {c.latency_ms > 0 ? `${c.latency_ms}ms` : "—"}
+                  <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-ink-400 font-medium" title={c.latency_ms > 0 ? "Time between Retell's tool-call invocation and result" : "Per-call timing not reported by Retell for this turn"}>
+                    <Clock className="w-3 h-3" strokeWidth={2} /> {c.latency_ms > 0 ? `${c.latency_ms}ms` : "—"}
                   </span>
                 </div>
                 {!c.business_ok && c.result && (
@@ -313,19 +310,17 @@ export function RealSessionCard({ s, compact }: { s: RealSession; compact?: bool
       {expanded && (
         <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div>
-            <div className="text-[11.5px] font-bold text-[#ADADAD] uppercase tracking-wide mb-2">
-              Conversation ({s.turns.length})
-            </div>
+            <div className="section-label mb-2">Conversation ({s.turns.length})</div>
             {s.turns.length === 0 ? (
-              <div className="text-[12.5px] text-[#ADADAD] italic">No messages yet…</div>
+              <div className="text-[12.5px] text-ink-300 italic">No messages yet…</div>
             ) : (
               <div className="space-y-2 max-h-[340px] overflow-auto pr-1">
                 {s.turns.map((t, i) => (
                   <div key={i} className={`flex ${t.role === "patient" ? "justify-end" : "justify-start"}`}>
-                    <div className={`max-w-[85%] px-3 py-2 rounded-xl text-[13px] leading-snug ${
+                    <div className={`max-w-[85%] px-3 py-2 rounded-2xl text-[13px] leading-snug ${
                       t.role === "patient"
-                        ? "bg-brand-500 text-white rounded-br-sm"
-                        : "bg-[#F4F4F2] text-[#222] rounded-bl-sm"
+                        ? "bg-brand-500 text-white rounded-br-md"
+                        : "bg-canvas-sunken text-ink-700 rounded-bl-md"
                     }`}>
                       <div className="text-[10px] opacity-70 mb-0.5">
                         {t.role === "patient" ? (s.mode === "manual" ? "You" : "Patient (sim)") : "AI Agent"}
@@ -340,14 +335,14 @@ export function RealSessionCard({ s, compact }: { s: RealSession; compact?: bool
             )}
           </div>
           <div>
-            <div className="text-[11.5px] font-bold text-[#ADADAD] uppercase tracking-wide mb-2">Timeline</div>
+            <div className="section-label mb-2">Timeline</div>
             <div className="space-y-1.5 max-h-[340px] overflow-auto pr-1">
               {s.events.map((e, i) => (
                 <div key={i} className="flex gap-2 text-[12px]">
-                  <span className="text-[#ADADAD] flex-shrink-0 font-mono">
+                  <span className="text-ink-300 flex-shrink-0 font-mono">
                     {new Date(e.ts * 1000).toLocaleTimeString()}
                   </span>
-                  <span className="text-[#555]">{e.msg}</span>
+                  <span className="text-ink-500">{e.msg}</span>
                 </div>
               ))}
             </div>
