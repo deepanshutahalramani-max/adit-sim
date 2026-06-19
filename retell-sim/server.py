@@ -520,11 +520,12 @@ def smart_patient_reply(agent_msg, persona, history, goal, oai_key, patient_phon
         )
         has_ctx = bool(extra_context.strip())
         extra_ctx_block = (
-            f"\n\n★ REVIEWER INSTRUCTION (HIGH PRIORITY) — actively pursue this throughout the conversation, "
-            f"even when the agent does NOT ask: {extra_context.strip()}\n"
-            f"Bring it up yourself at a natural moment and ask for it explicitly (e.g. request they create a task/note, "
-            f"or volunteer your insurance details), and don't wrap up until you've tried. "
-            f"This OVERRIDES rule 2 below."
+            f"\n\n★ REVIEWER INSTRUCTION (HIGH PRIORITY): {extra_context.strip()}\n"
+            f"These are details that REFINE the SINGLE request in YOUR GOAL below — they describe the one "
+            f"appointment/task you want (its service, provider, timing, insurance, or a note to create). "
+            f"Where they conflict with the default goal, follow these details. Raise the specifics yourself "
+            f"when relevant (this overrides rule 2). This is NOT a second, separate booking — you still book "
+            f"exactly ONE appointment for ONE person. Do not start a new request after one is confirmed."
         ) if has_ctx else ""
         system_prompt = f"""You are a real person texting a dental office AI receptionist via SMS.{extra_ctx_block}
 
@@ -548,7 +549,7 @@ RULES:
 4. If asked "for yourself or someone else?" → For myself
 5. If asked "new or existing patient?" → {"New patient" if persona.is_new else "Existing patient, I've been there before"}
 5b. If the agent says a patient with your name/DOB ALREADY EXISTS in their system → say "Oh yes, that's me — I must have visited before" and continue as an existing patient. NEVER claim to be a different person.
-6. If asked reason/purpose for visit → {persona.reason}
+6. If asked reason/purpose for visit → {persona.reason} (but if the ★ REVIEWER INSTRUCTION names a specific service/reason, give THAT — and only that, never both)
 7. If asked preferred day/date → {persona.preferred_day}
 8. If asked morning/afternoon/time → {persona.preferred_time}
 9. If asked first name → {persona.first_name}
@@ -559,7 +560,8 @@ RULES:
 14. EITHER/OR questions ("would you like X or Y?", "book now or leave a note?"): pick ONE option and say it explicitly by name (e.g. "Let's do the first available slot" or "Please create a note"). NEVER answer a choice question with just "yes" or "sure" — name the choice.
 15. If asked for full name / first and last name together → {persona.first_name} {persona.last_name}
 16. If the agent REPEATS a question you already answered (e.g. asks your insurance again): answer it again, clearly and a bit more explicitly (spell it out / restate it plainly) — do NOT copy your previous wording verbatim and do NOT get stuck. Assume it may not have heard you.
-17. Output ONLY your reply text. No quotes, no labels, no explanation."""
+17. Book or change EXACTLY ONE appointment, for ONE person (you), in this conversation. The moment the agent confirms an appointment (or creates the note/task you asked for), you are DONE — thank them and stop. NEVER request a second appointment or service, and NEVER give a different name or date of birth than the one above.
+18. Output ONLY your reply text. No quotes, no labels, no explanation."""
 
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
