@@ -474,31 +474,50 @@ def _fetch_ehr_calls(session: RealSession) -> None:
         digits = session.patient_number.lstrip("+")[-10:]
         hdrs = {"Authorization": f"Bearer {key}"}
 
+        def _lookup():
+            """One attempt to find this session's Retell record (the call/chat from
+            this patient number, started around this session). Returns the record or None."""
+            if session.trigger_type == "inbound_call":
+                r = httpx.post("https://api.retellai.com/v2/list-calls", headers=hdrs,
+                               json={"limit": 100, "sort_order": "descending"}, timeout=15)
+                calls = r.json() if r.status_code == 200 else []
+                for c in calls:
+                    if digits in str(c.get("from_number", "")) and \
+                       c.get("start_timestamp", 0) / 1000 >= session.created_at - 240:
+                        return c
+            else:
+                r = httpx.get("https://api.retellai.com/list-chat", headers=hdrs, timeout=15)
+                chats = sorted(r.json() if r.status_code == 200 else [],
+                               key=lambda c: c.get("start_timestamp", 0), reverse=True)
+                for c in chats:
+                    dv = c.get("retell_llm_dynamic_variables", {}) or {}
+                    if digits in str(dv.get("patient_phone_number", "")) and \
+                       c.get("start_timestamp", 0) / 1000 >= session.created_at - 240:
+                        return c
+            return None
+
+        # Retell can lag indexing the record by 10-40s after the call/chat ends, so a
+        # single fetch sometimes misses it (empty EHR panel / no deep-link). Retry a
+        # few times until it appears.
+        rec = None
+        for _attempt in range(5):
+            try:
+                rec = _lookup()
+            except Exception:
+                rec = None
+            if rec is not None:
+                break
+            time.sleep(6)
+
+        record_found = rec is not None
         msgs = None
-        record_found = False
-        if session.trigger_type == "inbound_call":
-            r = httpx.post("https://api.retellai.com/v2/list-calls", headers=hdrs,
-                           json={"limit": 30, "sort_order": "descending"}, timeout=15)
-            calls = r.json() if r.status_code == 200 else []
-            for c in calls:
-                if digits in str(c.get("from_number", "")) and \
-                   c.get("start_timestamp", 0) / 1000 >= session.created_at - 120:
-                    msgs = c.get("transcript_with_tool_calls") or c.get("message_with_tool_calls")
-                    session.retell_id = c.get("call_id", "")   # for the dashboard deep-link
-                    record_found = True
-                    break
-        else:
-            r = httpx.get("https://api.retellai.com/list-chat", headers=hdrs, timeout=15)
-            chats = sorted(r.json() if r.status_code == 200 else [],
-                           key=lambda c: c.get("start_timestamp", 0), reverse=True)
-            for c in chats:
-                dv = c.get("retell_llm_dynamic_variables", {}) or {}
-                if digits in str(dv.get("patient_phone_number", "")) and \
-                   c.get("start_timestamp", 0) / 1000 >= session.created_at - 120:
-                    msgs = c.get("message_with_tool_calls")
-                    session.retell_id = c.get("chat_id", "")   # for the dashboard deep-link
-                    record_found = True
-                    break
+        if rec is not None:
+            if session.trigger_type == "inbound_call":
+                session.retell_id = rec.get("call_id", "")      # for the dashboard deep-link
+                msgs = rec.get("transcript_with_tool_calls") or rec.get("message_with_tool_calls")
+            else:
+                session.retell_id = rec.get("chat_id", "")      # for the dashboard deep-link
+                msgs = rec.get("message_with_tool_calls")
 
         # ── Failure triage (#31): cross-reference Retell to explain WHY it failed ──
         if session.status == "failed":
