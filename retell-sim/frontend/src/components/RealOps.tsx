@@ -5,6 +5,7 @@
  *   <RealInsights/>     engineering performance metrics dashboard
  */
 import { useState, useRef } from "react";
+import { Paperclip } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { fetchRealConfig, fetchRealSessions, fetchRealInsights, fetchApiMetrics, fetchEhrMetrics, reanalyzeFeedback, fetchTrends, extractContextFromImage } from "../api";
 import { RealSessionCard, REAL_TRIGGERS, fmtPhone } from "./RealSessionCard";
@@ -29,17 +30,18 @@ export function ContextInput({ value, onChange }: { value: string; onChange: (v:
   };
 
   return (
-    <div className="bg-[#FAFAF9] border border-[#EAEAEA] rounded-xl p-3.5">
+    <div>
       <div className="flex items-center justify-between mb-2">
-        <span className="text-[11px] font-bold text-[#ADADAD] uppercase tracking-wide">
-          Scenario context <span className="text-[#CFCFCF] normal-case font-medium">(optional)</span>
+        <span className="section-label">
+          Scenario context <span className="text-ink-300 normal-case font-medium tracking-normal">optional</span>
         </span>
         <button
           onClick={() => fileRef.current?.click()}
           disabled={busy}
-          className="text-[11.5px] font-semibold text-[#1456A0] hover:text-[#0E3F77] disabled:opacity-40"
+          className="inline-flex items-center gap-1.5 text-[11.5px] font-semibold text-brand-600 hover:text-brand-700 disabled:opacity-40"
         >
-          {busy ? "Reading screenshot…" : "📎 Add screenshot"}
+          <Paperclip className="w-3.5 h-3.5" strokeWidth={2} />
+          {busy ? "Reading screenshot…" : "Add screenshot"}
         </button>
         <input ref={fileRef} type="file" accept="image/*" className="hidden"
           onChange={e => { const f = e.target.files?.[0]; if (f) onFile(f); }} />
@@ -49,10 +51,10 @@ export function ContextInput({ value, onChange }: { value: string; onChange: (v:
         onChange={e => onChange(e.target.value)}
         rows={3}
         placeholder="Tell the AI patient who they are and what they want — e.g. 'Anxious new patient, United Concordia insurance, tooth pain, wants the earliest morning slot this week.' Or drop a screenshot and we'll read it."
-        className="w-full text-[12.5px] leading-relaxed text-[#333] bg-white border border-[#EAEAEA] rounded-lg px-3 py-2 resize-none focus:outline-none focus:border-brand-500"
+        className="field resize-none !text-[12.5px] leading-relaxed"
       />
-      {err && <div className="text-[11.5px] text-[#991B1B] mt-1.5">{err}</div>}
-      <div className="text-[11px] text-[#ADADAD] mt-1.5">
+      {err && <div className="text-[11.5px] text-[#B91C1C] mt-1.5">{err}</div>}
+      <div className="text-[11px] text-ink-400 mt-1.5">
         The patient brain uses this to stay in character — it does not change scheduling logic.
       </div>
     </div>

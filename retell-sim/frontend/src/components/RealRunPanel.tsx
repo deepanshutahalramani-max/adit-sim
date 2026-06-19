@@ -7,8 +7,16 @@
  */
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { PhoneMissed, PhoneOff, MessageSquare, Mic, Phone, Play, SlidersHorizontal, ChevronDown } from "lucide-react";
 import { runRealSuite, fetchRealSuites, fetchRealSessions, fetchRealConfig } from "../api";
 import { RealSessionCard, REAL_TRIGGERS } from "./RealSessionCard";
+
+const TRIGGER_ICON: Record<string, typeof Phone> = {
+  missed_call: PhoneMissed,
+  incomplete_call: PhoneOff,
+  inbound_sms: MessageSquare,
+  inbound_call: Mic,
+};
 
 interface Props {
   env: string;                       // "beta" | "prod" | "custom"
@@ -38,6 +46,7 @@ export function RealRunPanel({
   const [msg, setMsg] = useState("");
   const [runs, setRuns] = useState(1);          // runs per scenario (suite kind)
   const [concurrency, setConcurrency] = useState(0);  // 0 = auto (= effective max)
+  const [showOpts, setShowOpts] = useState(false);
 
   const { data: cfg } = useQuery({ queryKey: ["realConfig"], queryFn: fetchRealConfig, refetchInterval: 30_000 });
 
@@ -94,103 +103,115 @@ export function RealRunPanel({
       qc.invalidateQueries({ queryKey: ["realSuites"] });
       setMsg("");
     },
-    onError: (e: Error) => setMsg(`❌ ${e.message}`),
+    onError: (e: Error) => setMsg(e.message),
   });
 
   const totalScenarios = kind === "journey" ? 3 : kind === "repro" ? (repeat ?? 1) : scenarioCount * runsClamped;
   const queued = Math.max(0, totalScenarios - effectiveMax);
 
   return (
-    <div className="space-y-4">
-      {/* Trigger picker (only when there is a choice) */}
+    <div className="space-y-5">
+      {/* Trigger picker — segmented control */}
       {triggers.length > 1 && (
         <div>
-          <div className="text-[11px] font-bold text-[#ADADAD] uppercase tracking-wide mb-2">
-            Conversation entry point
-          </div>
-          <div className="flex gap-2 flex-wrap">
-            {triggers.map(t => (
-              <button key={t.id} onClick={() => setTrigger(t.id)} title={t.desc}
-                className={`text-[12.5px] font-semibold px-3.5 py-2 rounded-xl border-2 transition-all ${
-                  trigger === t.id ? "border-brand-500 bg-white shadow-sm text-[#111]" : "border-[#EAEAEA] bg-white text-[#888]"
-                }`}>
-                {t.icon} {t.label}
-              </button>
-            ))}
+          <div className="section-label mb-2">Conversation entry point</div>
+          <div className="inline-flex flex-wrap gap-1 p-1 bg-canvas-sunken rounded-xl border border-line">
+            {triggers.map(t => {
+              const Icon = TRIGGER_ICON[t.id] ?? Phone;
+              const on = trigger === t.id;
+              return (
+                <button key={t.id} onClick={() => setTrigger(t.id)} title={t.desc}
+                  className={`inline-flex items-center gap-2 text-[13px] font-semibold px-3.5 py-2 rounded-lg transition-colors ${
+                    on ? "bg-canvas-raised text-ink-900 shadow-card" : "text-ink-400 hover:text-ink-700"
+                  }`}>
+                  <Icon className="w-4 h-4" strokeWidth={2} /> {t.label}
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
 
-      {/* Repeat + concurrency (suite kind only) */}
+      {/* Advanced options — collapsed by default (progressive disclosure) */}
       {kind === "suite" && (
-        <div className="bg-[#FAFAF9] border border-[#EAEAEA] rounded-xl p-3.5">
-          <div className="flex items-end gap-5 flex-wrap">
-            <label className="flex flex-col gap-1.5">
-              <span className="text-[11px] font-bold text-[#ADADAD] uppercase tracking-wide">Runs per scenario</span>
-              <input
-                type="number" min={1} max={maxRuns} value={runsClamped}
-                onChange={e => setRuns(Math.min(Math.max(1, parseInt(e.target.value) || 1), maxRuns))}
-                className="w-24 text-[13px] text-[#111] bg-white border border-[#EAEAEA] rounded-lg px-3 py-2 focus:outline-none focus:border-brand-500"
-              />
-            </label>
-            <label className="flex flex-col gap-1.5">
-              <span className="text-[11px] font-bold text-[#ADADAD] uppercase tracking-wide">Run concurrently</span>
-              <input
-                type="number" min={1} max={effectiveMax} value={concDisplay}
-                onChange={e => setConcurrency(Math.min(Math.max(1, parseInt(e.target.value) || 1), effectiveMax))}
-                className="w-24 text-[13px] text-[#111] bg-white border border-[#EAEAEA] rounded-lg px-3 py-2 focus:outline-none focus:border-brand-500"
-              />
-            </label>
-            <div className="text-[12px] text-[#666] leading-snug flex-1 min-w-[220px]">
-              <span className="font-semibold text-[#333]">{totalScenarios} total run{totalScenarios === 1 ? "" : "s"}.</span>{" "}
-              Up to <b>{effectiveMax}</b> run at once{isProdSms ? " (PROD SMS uses one number)" : " (limited by patient numbers)"}
-              {queued > 0 ? <> — the remaining <b>{queued}</b> queue and start automatically as numbers free up.</> : "."}
-              {" "}<span className="text-[#888]">{freeNow} free right now{cfg ? "" : "…"}.</span>
+        <div>
+          <button onClick={() => setShowOpts(o => !o)}
+            className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-ink-500 hover:text-ink-900 transition-colors">
+            <SlidersHorizontal className="w-3.5 h-3.5" strokeWidth={2} />
+            Options
+            <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showOpts ? "rotate-180" : ""}`} strokeWidth={2} />
+            <span className="font-normal text-ink-400">
+              · {totalScenarios} run{totalScenarios === 1 ? "" : "s"}, up to {effectiveMax} at once
+            </span>
+          </button>
+          {showOpts && (
+            <div className="mt-3 card p-4 flex items-end gap-5 flex-wrap">
+              <label className="flex flex-col gap-1.5">
+                <span className="section-label">Runs per scenario</span>
+                <input type="number" min={1} max={maxRuns} value={runsClamped}
+                  onChange={e => setRuns(Math.min(Math.max(1, parseInt(e.target.value) || 1), maxRuns))}
+                  className="field !w-24 !py-2" />
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className="section-label">Run concurrently</span>
+                <input type="number" min={1} max={effectiveMax} value={concDisplay}
+                  onChange={e => setConcurrency(Math.min(Math.max(1, parseInt(e.target.value) || 1), effectiveMax))}
+                  className="field !w-24 !py-2" />
+              </label>
+              <p className="text-[12px] text-ink-500 leading-relaxed flex-1 min-w-[220px]">
+                <b className="text-ink-700">{totalScenarios} total run{totalScenarios === 1 ? "" : "s"}.</b>{" "}
+                Up to <b>{effectiveMax}</b> at once{isProdSms ? " (PROD SMS uses one number)" : " (limited by patient numbers)"}
+                {queued > 0 ? <> — the remaining <b>{queued}</b> queue automatically.</> : "."}
+                {" "}<span className="text-ink-400">{freeNow} free now.</span>
+              </p>
             </div>
-          </div>
+          )}
         </div>
       )}
 
+      {/* Primary action */}
       <div className="flex items-center gap-3 flex-wrap">
         <button
           onClick={() => launch.mutate()}
           disabled={disabled || launch.isPending || noneFree || totalScenarios === 0}
-          className="bg-brand-500 hover:bg-brand-600 disabled:opacity-40 text-white font-bold text-[13.5px] px-6 py-2.5 rounded-xl shadow-sm"
-        >
+          className="btn-primary btn-lg">
+          <Play className="w-4 h-4" strokeWidth={2.5} />
           {launch.isPending ? "Launching…"
-            : anyMineRunning ? (buttonLabel ?? `📱 Run more (${totalScenarios})`)
-            : buttonLabel ?? `📱 Run over Real Phone (${totalScenarios})`}
+            : anyMineRunning ? (buttonLabel ?? `Run more (${totalScenarios})`)
+            : buttonLabel ?? `Run over real phone (${totalScenarios})`}
         </button>
-        <span className="text-[11.5px] text-[#888]">
+        <span className="text-[12px] text-ink-400 max-w-sm leading-snug">
           {kind === "journey"
-            ? "Journey phases run sequentially on one identity (~5 min each) and appear live below."
-            : "Scenarios run in PARALLEL across the patient numbers — you can launch more anytime a number is free."}
+            ? "Journey phases run in sequence on one identity (~5 min each), live below."
+            : "Scenarios run in parallel — launch more anytime a number is free."}
         </span>
         {noneFree && (
-          <span className="text-[11.5px] text-[#92600A] w-full">
-            All patient numbers are busy right now — they’ll free up as conversations finish, then you can launch again.
+          <span className="text-[12px] text-[#B45309] w-full">
+            All patient numbers are busy — they’ll free up as conversations finish, then you can launch again.
           </span>
         )}
-        {disabled && disabledReason && <span className="text-[11.5px] text-[#92600A] w-full">{disabledReason}</span>}
-        {msg && <span className="text-[12.5px] font-medium text-[#991B1B] w-full">{msg}</span>}
+        {disabled && disabledReason && <span className="text-[12px] text-[#B45309] w-full">{disabledReason}</span>}
+        {msg && <span className="text-[12.5px] font-medium text-[#B91C1C] w-full">{msg}</span>}
       </div>
 
       {/* Progress — one row per run launched from this panel (none are ever hidden) */}
       {myRuns.map(run => (
-        <div key={run.suite_id} className="bg-white border border-[#EAEAEA] rounded-xl px-4 py-2.5 flex items-center gap-4 text-[12.5px] flex-wrap">
-          <span className="font-bold text-[#333]">
-            {run.kind === "journey" ? "🧭 Journey" : run.kind === "repro" ? "🔁 Repro" : "🧪 Suite"} {run.suite_id}
+        <div key={run.suite_id} className="card flex items-center gap-4 px-4 py-2.5 text-[12.5px] flex-wrap">
+          <span className="font-semibold text-ink-700">
+            {run.kind === "journey" ? "Journey" : run.kind === "repro" ? "Repro" : "Suite"}{" "}
+            <span className="font-mono text-ink-400">{run.suite_id}</span>
           </span>
-          <span className="text-[#888]">{run.env.toUpperCase()} · {run.trigger_type.replace(/_/g, " ")}</span>
+          <span className="text-ink-400">{run.env.toUpperCase()} · {run.trigger_type.replace(/_/g, " ")}</span>
           {run.status === "running" ? (
-            <span className="text-[#1456A0] font-semibold">
-              <span className="inline-block w-[6px] h-[6px] bg-current rounded-full mr-1.5 animate-pulse" />
+            <span className="inline-flex items-center gap-1.5 text-brand-600 font-semibold">
+              <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
               {run.done ?? 0} of {run.total ?? run.scenario_ids?.length ?? 0} done
             </span>
           ) : (
             <span className="font-semibold">
-              <span className="text-[#166534]">{run.passed ?? 0} passed</span>{" · "}
-              <span className="text-[#991B1B]">{run.failed ?? 0} failed</span>
+              <span className="text-[#15803D]">{run.passed ?? 0} passed</span>
+              <span className="text-ink-300"> · </span>
+              <span className="text-[#B91C1C]">{run.failed ?? 0} failed</span>
             </span>
           )}
         </div>

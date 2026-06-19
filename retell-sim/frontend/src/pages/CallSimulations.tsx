@@ -6,6 +6,7 @@
  * Every call is recorded and playable from the session card / Dashboard.
  */
 import { useState } from "react";
+import { Mic } from "lucide-react";
 import type { Config, AppConfig } from "../types";
 import { RealRunPanel } from "../components/RealRunPanel";
 import { IdentityBoard, ContextInput } from "../components/RealOps";
@@ -32,33 +33,36 @@ export function CallSimulations({ config, appConfig }: Props) {
   if (guard) return <>{guard}</>;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <IdentityBoard env={env} />
 
-      <div className="bg-[#EAF3FF] border border-[#B5D4F5] rounded-xl p-4 text-[12.5px] text-[#1456A0]">
-        🎙️ <b>Real voice calls.</b> The platform dials the practice number, the AI Front Desk answers,
-        and an AI patient speaks each turn. Calls are <b>recorded</b> — play them back on the session
-        card below or in the Dashboard. A full call takes 2–5 minutes.
+      <div className="card card-pad flex gap-3 text-[12.5px] text-ink-600 leading-relaxed">
+        <Mic className="w-4 h-4 mt-0.5 flex-shrink-0 text-brand-500" strokeWidth={2} />
+        <p>
+          <b className="text-ink-900">Real voice calls.</b> The platform dials the practice number, the AI Front Desk
+          answers, and an AI patient speaks each turn. Calls are recorded — play them back on the session card below or
+          in the Dashboard. A full call takes 2–5 minutes.
+        </p>
       </div>
 
       {/* Scenario picker */}
-      <div className="bg-white border border-[#EAEAEA] rounded-xl p-5">
+      <div className="card card-pad">
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-[13px] font-semibold text-[#333]">Scenarios</h2>
-          <button onClick={toggleAll} className="text-[12px] text-brand-500 font-medium hover:text-brand-600">
+          <h2 className="section-label">Scenarios</h2>
+          <button onClick={toggleAll} className="text-[12px] text-brand-600 font-semibold hover:text-brand-700">
             {selected.length === scenarios.length ? "Deselect all" : "Select all"}
           </button>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           {scenarios.map(sc => (
-            <label key={sc.id} className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
-              selected.includes(sc.id) ? "border-brand-500 bg-brand-50" : "border-[#E5E5E5] hover:border-[#D0D0D0]"
+            <label key={sc.id} className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
+              selected.includes(sc.id) ? "border-brand-500 bg-brand-50" : "border-line hover:border-line-strong"
             }`}>
               <input type="checkbox" checked={selected.includes(sc.id)}
                 onChange={() => toggleScenario(sc.id)} className="mt-0.5 accent-brand-500" />
               <div>
-                <div className="text-[13px] font-semibold text-[#111]">{sc.label}</div>
-                <div className="text-[12px] text-[#888] mt-0.5 leading-snug">{sc.goal}</div>
+                <div className="text-[13px] font-semibold text-ink-900">{sc.label}</div>
+                <div className="text-[12px] text-ink-500 mt-0.5 leading-snug">{sc.goal}</div>
               </div>
             </label>
           ))}
@@ -66,13 +70,12 @@ export function CallSimulations({ config, appConfig }: Props) {
       </div>
 
       {/* Run real voice calls */}
-      <div className="bg-white border border-[#EAEAEA] rounded-xl p-5">
-        <div className="text-[13px] font-bold text-[#111] mb-1">🎙️ Place real calls</div>
-        <div className="text-[12px] text-[#888] mb-4">
-          Calls run sequentially, one per patient number, and appear live below with the transcript
-          as it happens and the recording when done.
-        </div>
-        <div className="mb-4">
+      <div className="card card-pad">
+        <h2 className="text-[15px] font-semibold text-ink-900 tracking-[-0.01em]">Place real calls</h2>
+        <p className="text-[12.5px] text-ink-500 mt-1 mb-4 leading-relaxed">
+          Calls appear live below with the transcript as it happens and the recording when done.
+        </p>
+        <div className="mb-5">
           <ContextInput value={ctx} onChange={setCtx} />
         </div>
         <RealRunPanel
@@ -82,7 +85,7 @@ export function CallSimulations({ config, appConfig }: Props) {
           scenarioIds={selected}
           extraContext={ctx}
           allowedTriggers={["inbound_call"]}
-          buttonLabel={`🎙️ Call ${selected.length} scenario${selected.length === 1 ? "" : "s"}`}
+          buttonLabel={`Call ${selected.length} scenario${selected.length === 1 ? "" : "s"}`}
           disabled={selected.length === 0}
           disabledReason={selected.length === 0 ? "Select at least one scenario above." : undefined}
         />

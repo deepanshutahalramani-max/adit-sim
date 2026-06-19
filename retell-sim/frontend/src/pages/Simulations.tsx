@@ -6,6 +6,7 @@
  * Manual Chat: you drive the patient side over real SMS through the platform.
  */
 import { useState } from "react";
+import { Bot, PenLine } from "lucide-react";
 import type { Config, AppConfig } from "../types";
 import { RealRunPanel } from "../components/RealRunPanel";
 import { RealManualConsole } from "../components/RealManualConsole";
@@ -30,14 +31,14 @@ export function envGuard(config: Config): JSX.Element | null {
   const env = realEnv(config.environment);
   if (!env) {
     return (
-      <div className="text-[13px] text-[#92600A] bg-[#FFF7E6] border border-[#F5D998] rounded-2xl p-6">
+      <div className="card card-pad text-[13px] text-ink-700">
         Switch to <b>Production</b>, <b>Beta</b>, or <b>Custom</b> in the sidebar to run tests.
       </div>
     );
   }
   if (env === "custom" && !config.customNumber) {
     return (
-      <div className="text-[13px] text-[#92600A] bg-[#FFF7E6] border border-[#F5D998] rounded-2xl p-6">
+      <div className="card card-pad text-[13px] text-ink-700">
         Custom environment selected — enter the <b>number to call / text</b> in the sidebar to begin.
       </div>
     );
@@ -71,48 +72,52 @@ export function Simulations({ config, appConfig }: Props) {
   return (
     <div>
       {/* Sub-tab bar */}
-      <div className="flex border-b border-[#EAEAEA] mb-6">
+      <div className="flex gap-1 border-b border-line mb-6">
         {([
-          { id: "ai",     label: "🤖  AI Simulation" },
-          { id: "manual", label: "✏️  Manual Chat" },
-        ] as const).map(t => (
-          <button
-            key={t.id}
-            onClick={() => setSubTab(t.id)}
-            className={`px-5 py-2.5 text-[13px] font-medium border-b-2 -mb-px transition-colors ${
-              subTab === t.id
-                ? "border-brand-500 text-[#111] font-semibold"
-                : "border-transparent text-[#888] hover:text-[#333]"
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
+          { id: "ai",     label: "AI Simulation", icon: Bot },
+          { id: "manual", label: "Manual Chat",   icon: PenLine },
+        ] as const).map(t => {
+          const Icon = t.icon;
+          return (
+            <button
+              key={t.id}
+              onClick={() => setSubTab(t.id)}
+              className={`inline-flex items-center gap-2 px-4 py-2.5 text-[13px] border-b-2 -mb-px transition-colors ${
+                subTab === t.id
+                  ? "border-brand-500 text-ink-900 font-semibold"
+                  : "border-transparent text-ink-400 hover:text-ink-700 font-medium"
+              }`}
+            >
+              <Icon className="w-4 h-4" strokeWidth={2} />
+              {t.label}
+            </button>
+          );
+        })}
       </div>
 
       {subTab === "ai" && (
-        <div className="space-y-4">
+        <div className="space-y-5">
           {/* Patient test numbers */}
           <IdentityBoard env={env} />
 
           {/* Scenario picker */}
-          <div className="bg-white border border-[#EAEAEA] rounded-xl p-5">
+          <div className="card card-pad">
             <div className="flex items-center justify-between mb-3">
-              <h2 className="text-[13px] font-semibold text-[#333]">Scenarios</h2>
-              <button onClick={toggleAll} className="text-[12px] text-brand-500 font-medium hover:text-brand-600">
+              <h2 className="section-label">Scenarios</h2>
+              <button onClick={toggleAll} className="text-[12px] text-brand-600 font-semibold hover:text-brand-700">
                 {selected.length === scenarios.length ? "Deselect all" : "Select all"}
               </button>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {scenarios.map(sc => (
-                <label key={sc.id} className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
-                  selected.includes(sc.id) ? "border-brand-500 bg-brand-50" : "border-[#E5E5E5] hover:border-[#D0D0D0]"
+                <label key={sc.id} className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
+                  selected.includes(sc.id) ? "border-brand-500 bg-brand-50" : "border-line hover:border-line-strong"
                 }`}>
                   <input type="checkbox" checked={selected.includes(sc.id)}
                     onChange={() => toggleScenario(sc.id)} className="mt-0.5 accent-brand-500" />
                   <div>
-                    <div className="text-[13px] font-semibold text-[#111]">{sc.label}</div>
-                    <div className="text-[12px] text-[#888] mt-0.5 leading-snug">{sc.goal}</div>
+                    <div className="text-[13px] font-semibold text-ink-900">{sc.label}</div>
+                    <div className="text-[12px] text-ink-500 mt-0.5 leading-snug">{sc.goal}</div>
                   </div>
                 </label>
               ))}
@@ -120,13 +125,13 @@ export function Simulations({ config, appConfig }: Props) {
           </div>
 
           {/* Run over real phone */}
-          <div className="bg-white border border-[#EAEAEA] rounded-xl p-5">
-            <div className="text-[13px] font-bold text-[#111] mb-1">📱 Run as real conversations</div>
-            <div className="text-[12px] text-[#888] mb-4">
-              Each scenario runs as a real call/SMS conversation with the {env === "custom" ? "number you entered" : "practice number"} —
-              results register in the agent's system.
-            </div>
-            <div className="mb-4">
+          <div className="card card-pad">
+            <h2 className="text-[15px] font-semibold text-ink-900 tracking-[-0.01em]">Run as real conversations</h2>
+            <p className="text-[12.5px] text-ink-500 mt-1 mb-4 leading-relaxed">
+              Each scenario runs as a real call/SMS with the {env === "custom" ? "number you entered" : "practice number"},
+              so results register in the agent’s system.
+            </p>
+            <div className="mb-5">
               <ContextInput value={ctx} onChange={setCtx} />
             </div>
             <RealRunPanel
@@ -136,7 +141,7 @@ export function Simulations({ config, appConfig }: Props) {
               scenarioIds={selected}
               extraContext={ctx}
               allowedTriggers={["incomplete_call", "missed_call", "inbound_sms"]}
-              buttonLabel={`📱 Run ${selected.length} scenario${selected.length === 1 ? "" : "s"}`}
+              buttonLabel={`Run ${selected.length} scenario${selected.length === 1 ? "" : "s"}`}
               disabled={selected.length === 0}
               disabledReason={selected.length === 0 ? "Select at least one scenario above." : undefined}
             />
