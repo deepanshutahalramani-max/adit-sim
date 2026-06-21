@@ -521,13 +521,15 @@ def smart_patient_reply(agent_msg, persona, history, goal, oai_key, patient_phon
         has_ctx = bool(extra_context.strip())
         extra_ctx_block = (
             f"\n\n★ REVIEWER INSTRUCTION (HIGH PRIORITY): {extra_context.strip()}\n"
-            f"These are details that REFINE the SINGLE request in YOUR GOAL below — they describe the one "
-            f"appointment/task you want (its service, provider, timing, insurance, or a note to create). "
-            f"IMPORTANT — if it names a person (a name and/or date of birth) or an insurance, USE THOSE as "
-            f"YOUR OWN identity for this entire conversation; they REPLACE the default identity below. "
-            f"Where they conflict with the default goal/details, follow these. Raise the specifics yourself "
-            f"when relevant (this overrides rule 2). This is NOT a second, separate booking — you still book "
-            f"exactly ONE appointment for ONE person. Do not start a new request after one is confirmed."
+            f"These are the details for the SINGLE request in YOUR GOAL below (its service, provider, timing, "
+            f"insurance, or a note to create).\n"
+            f"IDENTITY OVERRIDE — if the instruction gives a patient name and/or date of birth (e.g. "
+            f"'book an appointment for Jane Doe, 5 May 1990'), then for THIS ENTIRE conversation YOU ARE that "
+            f"person: introduce yourself with that EXACT name and DOB, and if asked who it's for say 'for "
+            f"myself'. These values REPLACE the default name/DOB/insurance below — do NOT use the default ones. "
+            f"Where the instruction conflicts with the default goal/details, follow the instruction. Raise its "
+            f"specifics yourself when relevant (this overrides rule 2). This is NOT a second, separate booking — "
+            f"you still book exactly ONE appointment for ONE person and stop once it's confirmed."
         ) if has_ctx else ""
         system_prompt = f"""You are a real person texting a dental office AI receptionist via SMS.{extra_ctx_block}
 
