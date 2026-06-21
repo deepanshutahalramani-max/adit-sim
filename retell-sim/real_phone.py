@@ -1121,18 +1121,15 @@ def _start_session(trigger_type: str, practice: str, scenario_id: str, env: str,
         raise HTTPException(status_code=503, detail="All patient numbers are busy — try again shortly.")
 
     ident = NUMBER_IDENTITIES.get(patient, {})
-    # New-patient scenarios mint a fresh name+DOB each run (so the agent treats
-    # them as genuinely new); existing-patient scenarios keep the number's stable
-    # identity so they ARE recognized.
-    # stable_identity=True forces the number's fixed identity even for a new-patient
-    # booking — used for the prior-booking step of cancel/reschedule so the booked
-    # patient EXACTLY matches the one the cancel/reschedule step then acts on.
+    # A standalone new-patient scenario mints a fresh name+DOB each run (so the agent
+    # treats them as genuinely new). Everything else — existing-patient scenarios AND
+    # the prior-booking/journey-book step (stable_identity=True) — uses the number's
+    # stable, already-registered identity. That keeps book→reschedule→cancel on the
+    # SAME person, and books it as an EXISTING patient (no "you're new" vs "you already
+    # exist" contradiction that stalls the setup booking).
     if base.is_new and not stable_identity:
         dyn_first, dyn_dob = _fresh_new_patient()
         disp_name = f"{dyn_first} {QA_LAST_NAME}"
-    elif base.is_new and stable_identity:
-        dyn_first, dyn_dob = ident.get("first", ""), ident.get("dob", "")
-        disp_name = f"{dyn_first} {ident.get('last', '')}".strip()
     else:
         dyn_first, dyn_dob = "", ""
         disp_name = f"{ident.get('first', '')} {ident.get('last', '')}".strip()
@@ -1538,10 +1535,10 @@ def _suite_worker(suite: SuiteRun, q) -> None:
                             prep = _start_session(suite.trigger_type, suite.practice_number,
                                                   "new-patient-cleaning", suite.env,
                                                   patient_number=pinned, suite_id=suite.suite_id,
-                                                  # Book as the number's STABLE identity so the
-                                                  # follow-up cancel/reschedule acts on this exact
-                                                  # patient (not a fresh random one).
+                                                  # Book as the number's STABLE (existing) identity so the
+                                                  # follow-up cancel/reschedule acts on this exact patient.
                                                   stable_identity=True,
+                                                  goal_override="Book a routine cleaning appointment as an existing patient — just get one on the calendar to set up the next step.",
                                                   label_override=f"Setup — book an appointment first (for {sid})")
                         prep.log(f"Setup step for '{sid}' — booking an appointment as {prep.patient_name} so there is one to {sid}")
                         suite.session_ids.append(prep.session_id)
