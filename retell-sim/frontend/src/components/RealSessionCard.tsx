@@ -15,10 +15,12 @@ const TRIGGER_ICON: Record<string, typeof Phone> = {
   inbound_call: Mic,
 };
 
-/** Deep-link to this session's Retell record: voice → call-history, SMS/chat → chat-history. */
+/** Link to Retell: a deep-link to the exact record when known, otherwise the
+ *  matching history list so a failed/uncaptured session can still be found. */
 function retellUrl(s: RealSession): string {
   const kind = s.trigger_type === "inbound_call" ? "call" : "chat";
-  return `https://dashboard.retellai.com/${kind}-history?history=${s.retell_id}`;
+  const base = `https://dashboard.retellai.com/${kind}-history`;
+  return s.retell_id ? `${base}?history=${s.retell_id}` : base;
 }
 
 /* ── Self-improving feedback: comment → LLM re-analysis (shared endpoint) ─────── */
@@ -169,7 +171,8 @@ export function RealSessionCard({ s, compact }: { s: RealSession; compact?: bool
   const TrigIcon = TRIGGER_ICON[s.trigger_type] ?? Phone;
   const active = isActive;
   const scorePill = s.score >= 80 ? "pill-ok" : s.score >= 60 ? "pill-warn" : "pill-bad";
-  const outcomeOk = ["booking_confirmed", "task_created"].includes(s.outcome);
+  const outcomeOk = ["booking_confirmed", "task_created", "cancel_confirmed", "reschedule_confirmed"].includes(s.outcome);
+  const terminal = ["completed", "failed"].includes(s.status);
 
   return (
     <div className="card card-pad">
@@ -220,10 +223,11 @@ export function RealSessionCard({ s, compact }: { s: RealSession; compact?: bool
               <Square className="w-3 h-3 fill-current" strokeWidth={0} /> Stop
             </button>
           )}
-          {s.retell_id && (
+          {(s.retell_id || terminal) && (
             <a href={retellUrl(s)} target="_blank" rel="noopener noreferrer"
-              title="Open this conversation in the Retell dashboard" className="pill pill-info hover:opacity-80 transition-opacity">
-              Retell <ExternalLink className="w-3 h-3" strokeWidth={2} />
+              title={s.retell_id ? "Open this conversation in the Retell dashboard" : "Open Retell history to find this conversation"}
+              className="pill pill-info hover:opacity-80 transition-opacity">
+              {s.retell_id ? "Retell" : "Find in Retell"} <ExternalLink className="w-3 h-3" strokeWidth={2} />
             </a>
           )}
           <button onClick={() => setExpanded(e => !e)}

@@ -152,7 +152,20 @@ TASK_CREATED_KWS = [
     "your request has been sent", "request has been sent",
     "will contact you soon", "will reach out soon",
 ]
-ALL_SUCCESS_KWS = BOOKING_CONFIRMED_KWS + TASK_CREATED_KWS
+# Cancellation / reschedule confirmations — kept flexible (the agent often puts a
+# date/time between "appointment" and the verb, e.g. "your appointment on June 22
+# has been canceled", so adjacent-word phrases miss). These are unambiguous
+# confirmation language, never questions.
+CANCEL_CONFIRMED_KWS = [
+    "has been canceled", "has been cancelled", "is canceled", "is cancelled",
+    "now canceled", "now cancelled", "canceled your appointment", "cancelled your appointment",
+    "cancellation is confirmed", "appointment is now canceled", "appointment is now cancelled",
+]
+RESCHEDULE_CONFIRMED_KWS = [
+    "has been rescheduled", "is now rescheduled", "rescheduled your appointment",
+    "rescheduled to", "moved your appointment", "appointment is now on",
+]
+ALL_SUCCESS_KWS = BOOKING_CONFIRMED_KWS + TASK_CREATED_KWS + CANCEL_CONFIRMED_KWS + RESCHEDULE_CONFIRMED_KWS
 
 # More precise: these must clearly be the agent OFFERING to create a task/note.
 # Keep phrases long enough to avoid false positives on common sentences.

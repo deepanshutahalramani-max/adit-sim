@@ -893,6 +893,10 @@ def _finish(session: RealSession, status: str, outcome: str, note: str = "",
     threading.Thread(target=_judge_and_save, daemon=True).start()
 
 
+# Outcomes that count as a PASS (a meaningful goal was reached).
+PASS_OUTCOMES = ("booking_confirmed", "task_created", "cancel_confirmed", "reschedule_confirmed")
+
+
 def _check_completion(session: RealSession, agent_msg: str) -> bool:
     srv = _sim()
     low = agent_msg.lower()
@@ -902,7 +906,13 @@ def _check_completion(session: RealSession, agent_msg: str) -> bool:
         _finish(session, "completed", "ehr_not_connected",
                 "Agent has no EHR/system access — not a valid test")
         return True
-    if any(kw in low for kw in srv.BOOKING_CONFIRMED_KWS):
+    # Cancel / reschedule are checked first — their confirmations also contain
+    # "appointment", which booking phrases would otherwise swallow.
+    if any(kw in low for kw in srv.CANCEL_CONFIRMED_KWS):
+        _finish(session, "completed", "cancel_confirmed", "Goal reached: appointment canceled")
+    elif any(kw in low for kw in srv.RESCHEDULE_CONFIRMED_KWS):
+        _finish(session, "completed", "reschedule_confirmed", "Goal reached: appointment rescheduled")
+    elif any(kw in low for kw in srv.BOOKING_CONFIRMED_KWS):
         _finish(session, "completed", "booking_confirmed", "Goal reached: booking confirmed")
     elif any(kw in low for kw in srv.TASK_CREATED_KWS):
         _finish(session, "completed", "task_created", "Goal reached: task created")
@@ -1635,7 +1645,7 @@ def real_suites():
         sessions = [REAL_SESSIONS.get(i) for i in s.session_ids]
         sessions = [x for x in sessions if x]
         d["passed"] = sum(1 for x in sessions
-                          if x.status == "completed" and x.outcome in ("booking_confirmed", "task_created"))
+                          if x.status == "completed" and x.outcome in PASS_OUTCOMES)
         d["failed"] = sum(1 for x in sessions if x.status == "failed")
         d["total"] = len(s.scenario_ids)
         out.append(d)
@@ -1835,7 +1845,7 @@ def real_trends():
     for r in rows:
         if r.get("outcome") == "ehr_not_connected":
             continue
-        passed = r.get("outcome") in ("booking_confirmed", "task_created")
+        passed = r.get("outcome") in PASS_OUTCOMES
         score = r.get("score") or 0
         d = (r.get("created_at") or "")[:10]
         if d:
@@ -1882,7 +1892,7 @@ def real_insights():
         first_lat = [s.first_sms_latency_s for s in ts if s.first_sms_latency_s > 0]
         by_trigger[t] = {
             "total": len(ts),
-            "passed": sum(1 for s in ts if s.outcome in ("booking_confirmed", "task_created")),
+            "passed": sum(1 for s in ts if s.outcome in PASS_OUTCOMES),
             "avg_first_sms_latency_s": round(sum(first_lat) / len(first_lat), 1) if first_lat else 0,
             "p95_first_sms_latency_s": pct(first_lat, 0.95),
         }
@@ -1898,7 +1908,7 @@ def real_insights():
     for s in sessions:
         b = by_scenario.setdefault(s.scenario_id, {"total": 0, "passed": 0, "avg_score": 0, "_scores": []})
         b["total"] += 1
-        if s.outcome in ("booking_confirmed", "task_created"):
+        if s.outcome in PASS_OUTCOMES:
             b["passed"] += 1
         if s.score:
             b["_scores"].append(s.score)
@@ -1906,7 +1916,7 @@ def real_insights():
         b["avg_score"] = round(sum(b["_scores"]) / len(b["_scores"])) if b["_scores"] else 0
         del b["_scores"]
 
-    passed = sum(1 for s in sessions if s.outcome in ("booking_confirmed", "task_created"))
+    passed = sum(1 for s in sessions if s.outcome in PASS_OUTCOMES)
     return {
         "total": len(sessions),
         "not_testable": len(not_testable),   # EHR-not-connected, excluded from scoring
@@ -1926,7 +1936,7 @@ def real_insights():
             env: {
                 "total": len([s for s in sessions if s.env == env]),
                 "passed": len([s for s in sessions
-                               if s.env == env and s.outcome in ("booking_confirmed", "task_created")]),
+                               if s.env == env and s.outcome in PASS_OUTCOMES]),
             }
             for env in ("beta", "prod") if any(s.env == env for s in sessions)
         },
@@ -2087,6 +2097,10 @@ def _derive_voice_outcome(s: RealSession) -> str:
     """Classify a finished voice conversation from the full agent transcript."""
     srv = _sim()
     agent_text = " ".join(t.message.lower() for t in s.turns if t.role == "agent")
+    if any(kw in agent_text for kw in srv.CANCEL_CONFIRMED_KWS):
+        return "cancel_confirmed"
+    if any(kw in agent_text for kw in srv.RESCHEDULE_CONFIRMED_KWS):
+        return "reschedule_confirmed"
     if any(kw in agent_text for kw in srv.BOOKING_CONFIRMED_KWS):
         return "booking_confirmed"
     if any(kw in agent_text for kw in srv.TASK_CREATED_KWS):
