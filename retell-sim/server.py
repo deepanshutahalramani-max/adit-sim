@@ -523,7 +523,9 @@ def smart_patient_reply(agent_msg, persona, history, goal, oai_key, patient_phon
             f"\n\n★ REVIEWER INSTRUCTION (HIGH PRIORITY): {extra_context.strip()}\n"
             f"These are details that REFINE the SINGLE request in YOUR GOAL below — they describe the one "
             f"appointment/task you want (its service, provider, timing, insurance, or a note to create). "
-            f"Where they conflict with the default goal, follow these details. Raise the specifics yourself "
+            f"IMPORTANT — if it names a person (a name and/or date of birth) or an insurance, USE THOSE as "
+            f"YOUR OWN identity for this entire conversation; they REPLACE the default identity below. "
+            f"Where they conflict with the default goal/details, follow these. Raise the specifics yourself "
             f"when relevant (this overrides rule 2). This is NOT a second, separate booking — you still book "
             f"exactly ONE appointment for ONE person. Do not start a new request after one is confirmed."
         ) if has_ctx else ""
@@ -552,15 +554,15 @@ RULES:
 6. If asked reason/purpose for visit → {persona.reason} (but if the ★ REVIEWER INSTRUCTION names a specific service/reason, give THAT — and only that, never both)
 7. If asked preferred day/date → {persona.preferred_day}
 8. If asked morning/afternoon/time → {persona.preferred_time}
-9. If asked first name → {persona.first_name}
-10. If asked last name → {persona.last_name}
-11. If asked date of birth / DOB → {persona.dob}
-12. If asked insurance → {persona.insurance}
+9. If asked first name → {persona.first_name} (use the ★ REVIEWER INSTRUCTION's name instead if it gave one)
+10. If asked last name → {persona.last_name} (use the ★ REVIEWER INSTRUCTION's name instead if it gave one)
+11. If asked date of birth / DOB → {persona.dob} (use the ★ REVIEWER INSTRUCTION's DOB instead if it gave one)
+12. If asked insurance → {persona.insurance} (use the ★ REVIEWER INSTRUCTION's insurance instead if it gave one)
 13. If asked for phone number / contact number → {patient_phone if patient_phone else "use the number I'm texting from"}
 14. EITHER/OR questions ("would you like X or Y?", "book now or leave a note?"): pick ONE option and say it explicitly by name (e.g. "Let's do the first available slot" or "Please create a note"). NEVER answer a choice question with just "yes" or "sure" — name the choice.
-15. If asked for full name / first and last name together → {persona.first_name} {persona.last_name}
+15. If asked for full name / first and last name together → the ★ REVIEWER INSTRUCTION's name if it gave one, otherwise {persona.first_name} {persona.last_name}
 16. If the agent REPEATS a question you already answered (e.g. asks your insurance again): answer it again, clearly and a bit more explicitly (spell it out / restate it plainly) — do NOT copy your previous wording verbatim and do NOT get stuck. Assume it may not have heard you.
-17. Book or change EXACTLY ONE appointment, for ONE person (you), in this conversation. The moment the agent confirms an appointment (or creates the note/task you asked for), you are DONE — thank them and stop. NEVER request a second appointment or service, and NEVER give a different name or date of birth than the one above.
+17. Book or change EXACTLY ONE appointment, for ONE person, in this conversation. The moment the agent confirms an appointment (or creates the note/task you asked for), you are DONE — thank them and stop. NEVER request a second appointment or service. Keep ONE consistent identity for the whole conversation — the name/DOB from the ★ REVIEWER INSTRUCTION if it gave one, otherwise the default above — and never switch identities mid-conversation or invent a second person.
 18. Output ONLY your reply text. No quotes, no labels, no explanation."""
 
         resp = client.chat.completions.create(
