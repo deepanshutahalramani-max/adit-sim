@@ -94,7 +94,9 @@ MAX_SMS_TURNS          = 16        # safety cap on auto-replies per session
 INCOMPLETE_HOLD_S      = 12        # silence before hanging up an incomplete call
 MISSED_CANCEL_S        = 1         # cancel ASAP after ringing starts (true missed call)
 COOLDOWN_S             = 24 * 3600
-REPLY_TIMEOUT_S        = 90        # agent must reply within 90s mid-conversation
+REPLY_TIMEOUT_S        = 120       # agent must reply within this mid-conversation (it
+                                   # pauses on EHR lookups); after this we nudge once,
+                                   # then wait REPLY_TIMEOUT_S again before failing
 # AI follow-up SMS after a missed/incomplete call can take 6-7 minutes to arrive
 # on the live practice path — give it 10 minutes before declaring no-engagement.
 FOLLOWUP_SMS_TIMEOUT_S = 600
@@ -657,6 +659,7 @@ class RealSession:
     suite_id: str = ""
     first_sms_latency_s: float = 0.0   # call end → first AI SMS
     awaiting_reply_since: float = 0.0  # set when patient sends; cleared on agent reply
+    nudged: bool = False               # sent one "still there?" nudge for the current stall
     ehr_calls: list = field(default_factory=list)  # EHR tool calls pulled from Retell
     issues: list = field(default_factory=list)     # auto-diagnosed root-cause findings
     triage: str = ""                               # failure triage (Retell cross-reference)
@@ -942,9 +945,23 @@ def _watchdog_loop() -> None:
                 elif (s.status == "in_conversation" and s.mode == "auto"
                       and s.awaiting_reply_since
                       and now - s.awaiting_reply_since > REPLY_TIMEOUT_S):
-                    _finish(s, "failed", "incomplete",
-                            f"Agent did not reply within {REPLY_TIMEOUT_S}s — conversation ended",
-                            failure_type="reply_timeout")
+                    if not s.nudged and s.trigger_type != "inbound_call":
+                        # The SMS agent often pauses on EHR lookups. Before giving up,
+                        # send one gentle nudge (a real patient would) — it also
+                        # re-prompts a momentarily-stalled agent.
+                        try:
+                            _send_patient_sms(s, "Hi, are you still there?")
+                            s.turns.append(RealTurn("patient", "Hi, are you still there?", "sms"))
+                        except Exception:
+                            pass
+                        s.nudged = True
+                        s.awaiting_reply_since = now
+                        s.log(f"No agent reply in {REPLY_TIMEOUT_S}s — sent one nudge, waiting again")
+                    else:
+                        _finish(s, "failed", "incomplete",
+                                f"Agent did not reply within {REPLY_TIMEOUT_S}s"
+                                + (" (after a nudge)" if s.nudged else "") + " — conversation ended",
+                                failure_type="reply_timeout")
             except Exception:
                 pass
 
@@ -1981,6 +1998,7 @@ def _handle_agent_message(session: RealSession, body: str, from_number: str) -> 
     latency = round(now - session.awaiting_reply_since, 1) if session.awaiting_reply_since else 0.0
     session.turns.append(RealTurn("agent", body, "sms", latency_s=latency))
     session.awaiting_reply_since = 0.0
+    session.nudged = False    # agent replied — a later stall may earn its own nudge
     session.log(f"SMS received from {from_number}" + (f" ({latency}s)" if latency else ""))
 
     if session.status in ("waiting_for_sms", "calling"):
