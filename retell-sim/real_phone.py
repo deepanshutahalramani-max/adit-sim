@@ -1091,7 +1091,8 @@ VALID_TRIGGERS = ("missed_call", "incomplete_call", "inbound_sms", "inbound_call
 def _start_session(trigger_type: str, practice: str, scenario_id: str, env: str,
                    patient_number: str = "", opener: str = "", suite_id: str = "",
                    mode: str = "auto", goal_override: str = "",
-                   label_override: str = "", extra_context: str = "") -> RealSession:
+                   label_override: str = "", extra_context: str = "",
+                   stable_identity: bool = False) -> RealSession:
     _ensure_watchdog()
     cfg = _resolve_scenario(scenario_id)
     srv = _sim()
@@ -1123,9 +1124,15 @@ def _start_session(trigger_type: str, practice: str, scenario_id: str, env: str,
     # New-patient scenarios mint a fresh name+DOB each run (so the agent treats
     # them as genuinely new); existing-patient scenarios keep the number's stable
     # identity so they ARE recognized.
-    if base.is_new:
+    # stable_identity=True forces the number's fixed identity even for a new-patient
+    # booking — used for the prior-booking step of cancel/reschedule so the booked
+    # patient EXACTLY matches the one the cancel/reschedule step then acts on.
+    if base.is_new and not stable_identity:
         dyn_first, dyn_dob = _fresh_new_patient()
         disp_name = f"{dyn_first} {QA_LAST_NAME}"
+    elif base.is_new and stable_identity:
+        dyn_first, dyn_dob = ident.get("first", ""), ident.get("dob", "")
+        disp_name = f"{dyn_first} {ident.get('last', '')}".strip()
     else:
         dyn_first, dyn_dob = "", ""
         disp_name = f"{ident.get('first', '')} {ident.get('last', '')}".strip()
@@ -1486,9 +1493,12 @@ def _run_journey(suite: SuiteRun) -> None:
         suite.current_idx = idx
         try:
             with _PICK_LOCK:
+                # One identity through the whole journey: the book phase uses the
+                # number's STABLE identity so the later reschedule/cancel phases act
+                # on the exact same patient.
                 session = _start_session(suite.trigger_type, suite.practice_number, sid, suite.env,
                                          patient_number=suite.pinned_number, suite_id=suite.suite_id,
-                                         extra_context=suite.extra_context)
+                                         extra_context=suite.extra_context, stable_identity=True)
         except Exception:
             continue
         suite.session_ids.append(session.session_id)
@@ -1527,11 +1537,16 @@ def _suite_worker(suite: SuiteRun, q) -> None:
                         with _PICK_LOCK:
                             prep = _start_session(suite.trigger_type, suite.practice_number,
                                                   "new-patient-cleaning", suite.env,
-                                                  patient_number=pinned, suite_id=suite.suite_id)
-                        prep.log(f"Prior-booking step for '{sid}' — registering {prep.patient_name} first")
+                                                  patient_number=pinned, suite_id=suite.suite_id,
+                                                  # Book as the number's STABLE identity so the
+                                                  # follow-up cancel/reschedule acts on this exact
+                                                  # patient (not a fresh random one).
+                                                  stable_identity=True,
+                                                  label_override=f"Setup — book an appointment first (for {sid})")
+                        prep.log(f"Setup step for '{sid}' — booking an appointment as {prep.patient_name} so there is one to {sid}")
                         suite.session_ids.append(prep.session_id)
-                        _wait_terminal(prep, suite)
-                        time.sleep(15)
+                        _wait_terminal(prep, suite)   # WAIT until the booking is fully confirmed
+                        time.sleep(15)                # let the booking settle in the EHR
                     except Exception:
                         pass
             if suite.aborted:
