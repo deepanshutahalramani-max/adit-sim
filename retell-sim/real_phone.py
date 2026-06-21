@@ -94,9 +94,9 @@ MAX_SMS_TURNS          = 16        # safety cap on auto-replies per session
 INCOMPLETE_HOLD_S      = 12        # silence before hanging up an incomplete call
 MISSED_CANCEL_S        = 1         # cancel ASAP after ringing starts (true missed call)
 COOLDOWN_S             = 24 * 3600
-REPLY_TIMEOUT_S        = 120       # agent must reply within this mid-conversation (it
-                                   # pauses on EHR lookups); after this we nudge once,
-                                   # then wait REPLY_TIMEOUT_S again before failing
+REPLY_TIMEOUT_S        = 180       # agent must reply within this mid-conversation (3 min;
+                                   # it pauses on EHR lookups). After this we nudge once,
+                                   # then wait REPLY_TIMEOUT_S again before failing (~6 min total)
 # AI follow-up SMS after a missed/incomplete call can take 6-7 minutes to arrive
 # on the live practice path — give it 10 minutes before declaring no-engagement.
 FOLLOWUP_SMS_TIMEOUT_S = 600
