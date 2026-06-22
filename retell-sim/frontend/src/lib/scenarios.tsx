@@ -4,7 +4,7 @@
  */
 import {
   UserPlus, Siren, CalendarCheck, CalendarClock, CalendarX,
-  ShieldCheck, Clock, Stethoscope, ClipboardList,
+  ShieldCheck, Clock, ClipboardList,
 } from "lucide-react";
 
 export const SCENARIO_ICON: Record<string, typeof UserPlus> = {
@@ -15,7 +15,7 @@ export const SCENARIO_ICON: Record<string, typeof UserPlus> = {
   "cancel": CalendarX,
   "insurance-book": ShieldCheck,
   "office-hours-book": Clock,
-  "post-treatment-followup": Stethoscope,
+  "create-task": ClipboardList,
 };
 
 /** The icon for a scenario id, with a sensible default. */

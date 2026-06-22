@@ -186,7 +186,7 @@ const SCENARIO_LABELS: Record<string, string> = {
   "cancel": "Cancel",
   "insurance-book": "Insurance → Book",
   "office-hours-book": "Office Hours → Book",
-  "post-treatment-followup": "Post-Treatment",
+  "create-task": "Billing Question → Task",
 };
 
 /* ── Identity board ────────────────────────────────────────────────────────── */

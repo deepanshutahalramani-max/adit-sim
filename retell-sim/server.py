@@ -247,7 +247,7 @@ SCENARIOS: dict[str, dict] = {
     "cancel":                 {"label": "❌ Cancel Appointment",          "goal": "Cancel an upcoming appointment", "opener": "I need to cancel my appointment please", "type": "cancel", "persona_idx": 2},
     "insurance-book":         {"label": "🏥 Insurance Check → Book",     "goal": "Confirm insurance is accepted then book appointment", "opener": "Do you accept Delta Dental insurance?", "type": "book", "persona_idx": 0},
     "office-hours-book":      {"label": "🕐 Office Hours → Book",        "goal": "Ask about office hours then book if available", "opener": "What are your office hours?", "type": "book", "persona_idx": 3},
-    "post-treatment-followup":{"label": "💊 Post-Treatment Follow-up",   "goal": "Report sensitivity after treatment and book a follow-up check as an existing patient", "opener": "I had a filling done last week and it's still sensitive to cold, I need a follow-up", "type": "book", "persona_idx": 2},
+    "create-task":            {"label": "📝 Billing Question → Task",     "goal": "Get the agent to CREATE A TASK / NOTE for the office to follow up — you have a billing question (a charge on your last visit) and want someone to call you back. You do NOT want to book an appointment. Success = the agent explicitly confirms a note/task was created for the team.", "opener": "Hi, I have a question about a charge on my last bill — can someone look into it and call me back?", "type": "task", "persona_idx": 2},
 }
 
 # Scenarios that require an existing patient record in the backend.
@@ -257,7 +257,6 @@ REQUIRES_PRIOR_BOOKING: frozenset[str] = frozenset({
     "existing-routine",
     "reschedule",
     "cancel",
-    "post-treatment-followup",
 })
 
 # ── Data classes ──────────────────────────────────────────────────────────────
@@ -1328,7 +1327,7 @@ CALL_OPENERS: dict[str, str] = {
     "cancel":                  "Hi, I need to cancel my appointment please.",
     "insurance-book":          "Hi, I was wondering if you accept Delta Dental insurance before I go ahead and book.",
     "office-hours-book":       "Hi, what are your office hours? And if you're open, I'd love to make an appointment.",
-    "post-treatment-followup": "Hi, I had a filling done last week and my tooth is still really sensitive to cold. I think I need to come back in.",
+    "create-task":             "Hi, I have a question about a charge on my last bill. Could someone look into it and give me a call back?",
 }
 
 def smart_caller_reply(
@@ -3019,7 +3018,7 @@ CALL_SCENARIOS_GOALS: dict[str, str] = {
     "cancel":                  "Cancel an upcoming appointment",
     "insurance-book":          "Confirm insurance is accepted then book",
     "office-hours-book":       "Ask about hours then book if available",
-    "post-treatment-followup": "Report sensitivity and book a follow-up",
+    "create-task":             "Ask a billing question so the agent creates a task/note for the team",
 }
 
 @app.post("/api/ai-caller-reply")

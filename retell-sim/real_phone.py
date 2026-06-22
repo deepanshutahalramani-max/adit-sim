@@ -1463,7 +1463,7 @@ SUITES: dict[str, SuiteRun] = {}
 SESSION_TERMINAL_TIMEOUT_S = 12 * 60
 
 # Scenarios that need the patient to already exist in ADIT
-_NEEDS_BOOKING = {"existing-routine", "reschedule", "cancel", "post-treatment-followup"}
+_NEEDS_BOOKING = {"existing-routine", "reschedule", "cancel"}
 
 
 def _wait_terminal(session: RealSession, suite: "SuiteRun | None" = None) -> None:

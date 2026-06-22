@@ -411,7 +411,7 @@ export async function runCallRegression(params: {
     "cancel",
     "insurance-book",
     "office-hours-book",
-    "post-treatment-followup",
+    "create-task",
   ];
   return post("/simulate/call/parallel", {
     scenario_ids: ALL_CALL_SCENARIOS,
