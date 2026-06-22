@@ -70,10 +70,10 @@ export function StopAllButton() {
             <div className="max-h-[140px] overflow-auto mb-3 space-y-1">
               {data!.sessions.map(s => (
                 <div key={s.session_id} className="text-[11.5px] text-ink-500 flex items-center gap-2">
-                  <span className="inline-block w-[5px] h-[5px] rounded-full bg-[#EF4444] animate-pulse" />
-                  <span className="font-semibold">{s.env.toUpperCase()}</span>
-                  <span className="truncate">{s.label}</span>
-                  <span className="text-ink-300 ml-auto">{s.status.replace(/_/g, " ")}</span>
+                  <span className="inline-block w-[5px] h-[5px] rounded-full bg-[#EF4444] animate-pulse flex-shrink-0" />
+                  <span className="font-semibold flex-shrink-0">{s.env.toUpperCase()}</span>
+                  <span className="truncate flex-1 min-w-0">{s.label}</span>
+                  <span className="text-ink-300 flex-shrink-0 whitespace-nowrap">{s.status.replace(/_/g, " ")}</span>
                 </div>
               ))}
             </div>
