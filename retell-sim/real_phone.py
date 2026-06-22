@@ -639,6 +639,7 @@ class RealSession:
     persona_idx: int
     scenario_label: str = ""
     extra_context: str = ""      # optional reviewer-supplied scenario context (text/screenshot-derived)
+    opener: str = ""             # custom first message/line (custom scenarios) — used for the voice opener too
     mode: str = "auto"           # auto (AI drives patient) | manual (human drives patient)
     patient_name: str = ""       # identity used (from NUMBER_IDENTITIES)
     dyn_first: str = ""          # new-patient runs: fresh unique first name (so EHR sees a NEW patient)
@@ -1149,6 +1150,7 @@ def _start_session(trigger_type: str, practice: str, scenario_id: str, env: str,
         suite_id=suite_id,
         mode=mode,
         extra_context=extra_context,
+        opener=opener,
     )
     with _SESSIONS_LOCK:
         REAL_SESSIONS[session.session_id] = session
@@ -2326,7 +2328,9 @@ async def twilio_voice_turn(request: Request, session_id: str = ""):
     # essential for Custom numbers / agents that expect the caller to speak first.
     if n_patient_turns == 0 and s._empty_gathers <= 2:
         cfg = _sim().SCENARIOS.get(s.scenario_id, {})
-        opener = cfg.get("opener") or "Hi, I'd like to book an appointment."
+        # Custom scenarios carry their own opener; fall back to the scenario's
+        # opener (and a generic one) so a custom case isn't forced into "cleaning".
+        opener = s.opener or cfg.get("opener") or "Hi, I'd like to book an appointment."
         s.turns.append(RealTurn("patient", opener, "voice"))
         s.awaiting_reply_since = time.time()
         s.log("No greeting heard — AI patient opening the conversation")

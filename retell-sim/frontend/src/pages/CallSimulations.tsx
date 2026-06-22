@@ -10,6 +10,7 @@ import { Mic, Check } from "lucide-react";
 import type { Config, AppConfig } from "../types";
 import { RealRunPanel } from "../components/RealRunPanel";
 import { IdentityBoard, ContextInput } from "../components/RealOps";
+import { CustomScenario } from "../components/CustomScenario";
 import { realEnv, destNumber, envGuard } from "./Simulations";
 import { scenarioIcon, cleanScenarioLabel } from "../lib/scenarios";
 
@@ -20,6 +21,7 @@ interface Props {
 
 export function CallSimulations({ config, appConfig }: Props) {
   const scenarios = appConfig?.scenarios ?? [];
+  const [scenMode, setScenMode] = useState<"preset" | "custom">("preset");
   const [selected, setSelected] = useState<string[]>([]);
   const [ctx, setCtx] = useState("");
   const env = realEnv(config.environment)!;
@@ -46,6 +48,22 @@ export function CallSimulations({ config, appConfig }: Props) {
         </p>
       </div>
 
+      {/* Preset vs custom */}
+      <div className="inline-flex gap-1 p-1 bg-canvas-sunken rounded-xl border border-line">
+        {([["preset", "Preset scenarios"], ["custom", "Custom scenario"]] as const).map(([id, label]) => (
+          <button key={id} onClick={() => setScenMode(id)}
+            className={`text-[13px] font-semibold px-3.5 py-2 rounded-lg transition-colors ${
+              scenMode === id ? "bg-canvas-raised text-ink-900 shadow-card" : "text-ink-400 hover:text-ink-700"
+            }`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {scenMode === "custom" ? (
+        <CustomScenario env={env} practiceNumber={dest} allowedTriggers={["inbound_call"]} channelLabel="call" />
+      ) : (
+      <>
       {/* Scenario picker */}
       <div className="card card-pad">
         <div className="flex items-center justify-between mb-3">
@@ -100,6 +118,8 @@ export function CallSimulations({ config, appConfig }: Props) {
           disabledReason={selected.length === 0 ? "Select at least one scenario above." : undefined}
         />
       </div>
+      </>
+      )}
     </div>
   );
 }

@@ -11,6 +11,7 @@ import type { Config, AppConfig } from "../types";
 import { RealRunPanel } from "../components/RealRunPanel";
 import { RealManualConsole } from "../components/RealManualConsole";
 import { IdentityBoard, ContextInput } from "../components/RealOps";
+import { CustomScenario } from "../components/CustomScenario";
 import { scenarioIcon, cleanScenarioLabel } from "../lib/scenarios";
 
 /** Map sidebar environment to real-phone env */
@@ -57,6 +58,7 @@ type SubTab = "ai" | "manual";
 export function Simulations({ config, appConfig }: Props) {
   const scenarios = appConfig?.scenarios ?? [];
   const [subTab, setSubTab] = useState<SubTab>("ai");
+  const [scenMode, setScenMode] = useState<"preset" | "custom">("preset");
   const [selected, setSelected] = useState<string[]>([]);
   const [ctx, setCtx] = useState("");
   const env = realEnv(config.environment)!;
@@ -101,6 +103,27 @@ export function Simulations({ config, appConfig }: Props) {
           {/* Patient test numbers */}
           <IdentityBoard env={env} />
 
+          {/* Preset vs custom */}
+          <div className="inline-flex gap-1 p-1 bg-canvas-sunken rounded-xl border border-line">
+            {([["preset", "Preset scenarios"], ["custom", "Custom scenario"]] as const).map(([id, label]) => (
+              <button key={id} onClick={() => setScenMode(id)}
+                className={`text-[13px] font-semibold px-3.5 py-2 rounded-lg transition-colors ${
+                  scenMode === id ? "bg-canvas-raised text-ink-900 shadow-card" : "text-ink-400 hover:text-ink-700"
+                }`}>
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {scenMode === "custom" ? (
+            <CustomScenario
+              env={env}
+              practiceNumber={dest}
+              allowedTriggers={["incomplete_call", "missed_call", "inbound_sms"]}
+              channelLabel="call / SMS"
+            />
+          ) : (
+          <>
           {/* Scenario picker */}
           <div className="card card-pad">
             <div className="flex items-center justify-between mb-3">
@@ -156,6 +179,8 @@ export function Simulations({ config, appConfig }: Props) {
               disabledReason={selected.length === 0 ? "Select at least one scenario above." : undefined}
             />
           </div>
+          </>
+          )}
         </div>
       )}
 
