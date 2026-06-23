@@ -8,6 +8,7 @@ import { useState } from "react";
 import { Square } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchRealActive, stopAllReal } from "../api";
+import { cleanScenarioLabel } from "../lib/scenarios";
 
 export function StopAllButton() {
   const qc = useQueryClient();
@@ -59,7 +60,7 @@ export function StopAllButton() {
       </button>
 
       {open && busy && (
-        <div className="absolute right-0 mt-2 w-[320px] card shadow-pop z-50 p-4">
+        <div className="absolute right-0 mt-2 w-[340px] max-w-[calc(100vw-2rem)] card shadow-pop z-50 p-4">
           <div className="text-[13.5px] font-semibold text-ink-900 mb-1">Stop all communication?</div>
           <div className="text-[12px] text-ink-500 mb-3 leading-relaxed">
             This ends <b>{count}</b> active conversation{count !== 1 ? "s" : ""}
@@ -67,12 +68,12 @@ export function StopAllButton() {
             hanging up any live calls immediately.
           </div>
           {(data?.sessions?.length ?? 0) > 0 && (
-            <div className="max-h-[140px] overflow-auto mb-3 space-y-1">
+            <div className="max-h-[150px] overflow-auto mb-3 space-y-1.5 border-t border-line pt-2.5">
               {data!.sessions.map(s => (
-                <div key={s.session_id} className="text-[11.5px] text-ink-500 flex items-center gap-2">
-                  <span className="inline-block w-[5px] h-[5px] rounded-full bg-[#EF4444] animate-pulse flex-shrink-0" />
-                  <span className="font-semibold flex-shrink-0">{s.env.toUpperCase()}</span>
-                  <span className="truncate flex-1 min-w-0">{s.label}</span>
+                <div key={s.session_id} className="flex items-center gap-2 text-[11.5px]">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#EF4444] animate-pulse flex-shrink-0" />
+                  <span className="font-semibold text-ink-700 flex-shrink-0">{s.env.toUpperCase()}</span>
+                  <span className="truncate flex-1 min-w-0 text-ink-500">{cleanScenarioLabel(s.label)}</span>
                   <span className="text-ink-300 flex-shrink-0 whitespace-nowrap">{s.status.replace(/_/g, " ")}</span>
                 </div>
               ))}
