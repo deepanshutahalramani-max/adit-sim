@@ -1071,7 +1071,10 @@ def _run_incomplete_call(session: RealSession) -> None:
         _finish(session, "failed", "error", f"Incomplete-call error: {exc}", failure_type="error")
 
 
-def _run_inbound_call(session: RealSession) -> None:
+MAX_VOICE_ATTEMPTS = 3   # the practice line busies out on concurrent calls — redial
+
+
+def _run_inbound_call(session: RealSession, attempt: int = 1) -> None:
     try:
         call = _call_common(session, {
             "Url": f"{PUBLIC_BASE}/api/twilio/voice-answer?session_id={session.session_id}",
@@ -1079,7 +1082,40 @@ def _run_inbound_call(session: RealSession) -> None:
         })
         session.call_sid = call.get("sid", "")
         session.status = "calling"
-        session.log("Voice call placed — full conversation, recorded")
+        session.log("Voice call placed — full conversation, recorded"
+                    + (f" (attempt {attempt}/{MAX_VOICE_ATTEMPTS})" if attempt > 1 else ""))
+
+        # Watch for the call to CONNECT (in-progress). If the practice line is busy
+        # / doesn't answer, the call ends without connecting — redial a few times
+        # (a real caller would), then fail clearly instead of looking "completed".
+        deadline = time.time() + 50
+        connected = False
+        while time.time() < deadline:
+            time.sleep(2)
+            st = _tw_get(f"/Calls/{session.call_sid}.json").get("status", "")
+            session.call_status = st
+            if st == "in-progress":
+                connected = True
+                break
+            if st == "completed":           # connected and already ended (short call)
+                connected = bool(session.turns)
+                break
+            if st in ("busy", "no-answer", "failed", "canceled"):
+                break
+
+        if connected:
+            return   # conversation proceeds; the status/recording callbacks finalize it
+
+        # Never connected (busy / no-answer / failed).
+        if attempt < MAX_VOICE_ATTEMPTS and session.status not in ("completed", "failed"):
+            session.log(f"Practice line {session.call_status or 'did not connect'} — redialing "
+                        f"({attempt}/{MAX_VOICE_ATTEMPTS})")
+            time.sleep(8)
+            return _run_inbound_call(session, attempt + 1)
+        _finish(session, "failed", "incomplete",
+                f"Call didn't connect — practice line was {session.call_status or 'busy / no answer'} "
+                f"on {MAX_VOICE_ATTEMPTS} attempt(s). The line may be busy with another call.",
+                failure_type="no_connect")
     except Exception as exc:
         _finish(session, "failed", "error", f"Inbound-call error: {exc}", failure_type="error")
 
@@ -2119,7 +2155,10 @@ async def twilio_call_status(request: Request, session_id: str = ""):
         if status in ("completed", "failed", "busy", "no-answer") and not s.call_ended_at:
             s.call_ended_at = time.time()
         if s.trigger_type == "inbound_call" and status in ("completed", "failed", "busy", "no-answer"):
-            if s.status not in ("completed", "failed"):
+            # Only finalize a call that actually CONNECTED (ended normally, or has a
+            # transcript). A busy / no-answer with no conversation never connected —
+            # leave it to _run_inbound_call's redial/retry, which fails it clearly.
+            if s.status not in ("completed", "failed") and (status == "completed" or s.turns):
                 outcome = _derive_voice_outcome(s)
                 _finish(s, "completed", s.outcome or outcome, f"Voice call ended — outcome: {outcome}")
     return _twiml("")
