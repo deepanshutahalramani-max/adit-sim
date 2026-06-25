@@ -92,6 +92,8 @@ def _normalize_number(num: str) -> str:
 
 MAX_SMS_TURNS          = 16        # safety cap on auto-replies per session
 INCOMPLETE_HOLD_S      = 12        # silence before hanging up an incomplete call
+VOICE_MAX_CONCURRENCY  = 20        # voice reuses numbers (matched by Twilio Call SID),
+                                   # so it isn't pool-capped — only by Retell (~20)
 MISSED_CANCEL_S        = 1         # cancel ASAP after ringing starts (true missed call)
 COOLDOWN_S             = 24 * 3600
 REPLY_TIMEOUT_S        = 180       # agent must reply within this mid-conversation (3 min;
@@ -523,7 +525,17 @@ def _fetch_ehr_calls(session: RealSession) -> None:
             """One attempt to find this session's Retell record (the call/chat from
             this patient number, started around this session). Returns the record or None."""
             if session.trigger_type == "inbound_call":
-                for c in _retell_list_items(hdrs, "calls", 100):
+                items = _retell_list_items(hdrs, "calls", 100)
+                # 1) EXACT match by Twilio Call SID — Retell records it in
+                #    telephony_identifier.twilio_call_sid. Unique per call, so this
+                #    attributes correctly even when many calls share one number.
+                if session.call_sid:
+                    for c in items:
+                        tid = c.get("telephony_identifier") or {}
+                        if tid.get("twilio_call_sid") == session.call_sid:
+                            return c
+                # 2) Fallback: caller number + start-time window.
+                for c in items:
                     if digits in str(c.get("from_number", "")) and \
                        c.get("start_timestamp", 0) / 1000 >= session.created_at - 240:
                         return c
@@ -810,15 +822,24 @@ def _number_busy(patient: str) -> bool:
 
 
 def _pick_patient_number(practice: str, requested: str = "",
-                         needs_existing: bool = False, prefer_new: bool = False) -> str:
+                         needs_existing: bool = False, prefer_new: bool = False,
+                         reuse_ok: bool = False) -> str:
     """Pick the best Twilio number for this scenario.
     needs_existing → prefer numbers already booked at this practice.
     prefer_new     → prefer numbers NOT yet booked (clean new-patient record).
-    Always avoid numbers currently running a session."""
+    Avoid numbers currently running a session — UNLESS reuse_ok (voice calls),
+    which may share a number because each call is matched back to its session by
+    its unique Twilio Call SID, not by the phone number."""
     if requested:
         return requested
     candidates = [n for n in TWILIO_NUMBERS if not _number_busy(n)]
     if not candidates:
+        if reuse_ok and TWILIO_NUMBERS:
+            # All busy, but voice can reuse — pick the one with the fewest active
+            # sessions so concurrent calls spread across the pool.
+            return min(TWILIO_NUMBERS, key=lambda n: sum(
+                1 for s in REAL_SESSIONS.values()
+                if s.patient_number == n and s.status not in ("completed", "failed")))
         return ""
 
     def rank(n: str) -> tuple:
@@ -1195,7 +1216,8 @@ def _start_session(trigger_type: str, practice: str, scenario_id: str, env: str,
     else:
         patient = _pick_patient_number(practice, patient_number,
                                        needs_existing=needs_existing,
-                                       prefer_new=base.is_new)
+                                       prefer_new=base.is_new,
+                                       reuse_ok=(trigger_type == "inbound_call"))
     if not patient:
         raise HTTPException(status_code=503, detail="All patient numbers are busy — try again shortly.")
 
@@ -1667,12 +1689,19 @@ def _run_suite(suite: SuiteRun) -> None:
         # BETA (and PROD voice) fan out across the Twilio pool.
         is_prod_sms = (suite.practice_number == PRACTICE_NUMBERS.get("prod", "")
                        and suite.trigger_type != "inbound_call" and _rc_configured())
+        is_voice = suite.trigger_type == "inbound_call"
         if is_prod_sms:
             n_workers = 1                          # single RingCentral number
+        elif is_voice:
+            # Voice can REUSE numbers (each call is matched to its session by its
+            # unique Twilio Call SID), so concurrency isn't capped by the pool —
+            # only by the destination + Retell (≈20). Numbers spread round-robin.
+            want = suite.concurrency or VOICE_MAX_CONCURRENCY
+            n_workers = max(1, min(want, VOICE_MAX_CONCURRENCY, len(suite.scenario_ids)))
         else:
-            pool = len(TWILIO_NUMBERS)
+            pool = len(TWILIO_NUMBERS)             # SMS: one number per session
             want = suite.concurrency or pool       # 0 → auto = full pool
-            # Never exceed the physical pool — a number can't run two sessions at once.
+            # Never exceed the physical pool — an SMS number can't run two at once.
             # Surplus runs queue and auto-start as numbers free up.
             n_workers = max(1, min(want, pool, len(suite.scenario_ids)))
         threads = [threading.Thread(target=_suite_worker, args=(suite, q), daemon=True)

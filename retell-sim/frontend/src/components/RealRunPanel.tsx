@@ -50,10 +50,15 @@ export function RealRunPanel({
 
   const { data: cfg } = useQuery({ queryKey: ["realConfig"], queryFn: fetchRealConfig, refetchInterval: 30_000 });
 
-  // Effective simultaneous cap = patient-number pool, but PROD SMS is single-number (RingCentral).
+  // Effective simultaneous cap:
+  //  • PROD SMS  → 1 (single RingCentral number)
+  //  • Voice     → up to 20 (numbers are reused, matched back by Twilio Call SID)
+  //  • Other SMS → patient-number pool (one number per session)
   const twilioPool = (cfg?.patient_numbers ?? []).filter(p => p.provider === "twilio").length || 4;
-  const isProdSms = env === "prod" && trigger !== "inbound_call";
-  const effectiveMax = isProdSms ? 1 : twilioPool;
+  const isVoice = trigger === "inbound_call";
+  const isProdSms = env === "prod" && !isVoice;
+  const VOICE_MAX = 20;
+  const effectiveMax = isProdSms ? 1 : isVoice ? VOICE_MAX : twilioPool;
 
   const scenarioCount = scenarioIds?.length ?? 0;
   const maxRuns = scenarioCount > 0 ? Math.max(1, Math.floor(20 / scenarioCount)) : 20;
@@ -77,12 +82,12 @@ export function RealRunPanel({
     .sort((a, b) => (b.created_at ?? 0) - (a.created_at ?? 0));
   const anyMineRunning = myRuns.some(s => s.status === "running");
 
-  // How many patient numbers are FREE right now — you can launch more runs as long
-  // as at least one is free (the backend queues the rest as numbers free up).
+  // How many patient numbers are FREE right now. SMS needs a free number per
+  // session; voice reuses numbers so it's never blocked on "busy".
   const freeNow = isProdSms
     ? ((cfg?.patient_numbers ?? []).filter(p => p.provider === "ringcentral").every(p => !p.busy) ? 1 : 0)
     : (cfg?.patient_numbers ?? []).filter(p => p.provider === "twilio" && !p.busy).length;
-  const noneFree = (cfg?.patient_numbers?.length ?? 0) > 0 && freeNow === 0;
+  const noneFree = !isVoice && (cfg?.patient_numbers?.length ?? 0) > 0 && freeNow === 0;
 
   const launch = useMutation({
     mutationFn: () => runRealSuite({
@@ -160,9 +165,12 @@ export function RealRunPanel({
               </label>
               <p className="text-[12px] text-ink-500 leading-relaxed flex-1 min-w-[220px]">
                 <b className="text-ink-700">{totalScenarios} total run{totalScenarios === 1 ? "" : "s"}.</b>{" "}
-                Up to <b>{effectiveMax}</b> at once{isProdSms ? " (PROD SMS uses one number)" : " (limited by patient numbers)"}
+                Up to <b>{effectiveMax}</b> at once
+                {isProdSms ? " (PROD SMS uses one number)"
+                  : isVoice ? " (calls reuse numbers — matched back by Call ID)"
+                  : " (limited by patient numbers)"}
                 {queued > 0 ? <> — the remaining <b>{queued}</b> queue automatically.</> : "."}
-                {" "}<span className="text-ink-400">{freeNow} free now.</span>
+                {!isVoice && <> {" "}<span className="text-ink-400">{freeNow} free now.</span></>}
               </p>
             </div>
           )}
