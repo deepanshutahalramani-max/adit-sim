@@ -472,6 +472,13 @@ def _ehr_sync_loop() -> None:
 # via get-call / get-chat (those are not deprecated).
 _RETELL = "https://api.retellai.com"
 
+# When several concurrent voice calls share one Twilio number, the Retell records
+# can only be told apart by start time (Retell logs the *practice's* telephony Call
+# SID, not ours, so there's no exact id to match on). We claim each record to
+# exactly one session so two sessions never attribute the same call/chat.
+_CLAIMED_RETELL: set = set()
+_CLAIM_LOCK = threading.Lock()
+
 
 def _retell_list_items(hdrs: dict, kind: str, limit: int = 100) -> list:
     """POST /v3/list-{calls|chats}; returns the `items` array (or [] on error)."""
@@ -522,30 +529,30 @@ def _fetch_ehr_calls(session: RealSession) -> None:
         hdrs = {"Authorization": f"Bearer {key}"}
 
         def _lookup():
-            """One attempt to find this session's Retell record (the call/chat from
-            this patient number, started around this session). Returns the record or None."""
+            """One attempt to find this session's Retell record. Gather candidates
+            for this patient number near this session's start, then CLAIM the closest
+            unclaimed one — so concurrent calls sharing a number each get a distinct
+            record instead of all matching the same one."""
             if session.trigger_type == "inbound_call":
-                items = _retell_list_items(hdrs, "calls", 100)
-                # 1) EXACT match by Twilio Call SID — Retell records it in
-                #    telephony_identifier.twilio_call_sid. Unique per call, so this
-                #    attributes correctly even when many calls share one number.
-                if session.call_sid:
-                    for c in items:
-                        tid = c.get("telephony_identifier") or {}
-                        if tid.get("twilio_call_sid") == session.call_sid:
-                            return c
-                # 2) Fallback: caller number + start-time window.
-                for c in items:
-                    if digits in str(c.get("from_number", "")) and \
-                       c.get("start_timestamp", 0) / 1000 >= session.created_at - 240:
-                        return c
+                idkey = "call_id"
+                cands = [c for c in _retell_list_items(hdrs, "calls", 100)
+                         if digits in str(c.get("from_number", ""))
+                         and c.get("start_timestamp", 0) / 1000 >= session.created_at - 240]
             else:
-                chats = sorted(_retell_list_items(hdrs, "chats", 100),
-                               key=lambda c: c.get("start_timestamp", 0), reverse=True)
-                for c in chats:
-                    dv = c.get("retell_llm_dynamic_variables", {}) or {}
-                    if digits in str(dv.get("patient_phone_number", "")) and \
-                       c.get("start_timestamp", 0) / 1000 >= session.created_at - 240:
+                idkey = "chat_id"
+                cands = [c for c in _retell_list_items(hdrs, "chats", 100)
+                         if digits in str((c.get("retell_llm_dynamic_variables", {}) or {}).get("patient_phone_number", ""))
+                         and c.get("start_timestamp", 0) / 1000 >= session.created_at - 240]
+            if not cands:
+                return None
+            # closest start-time to when this session began wins; never reuse a
+            # record already claimed by a sibling session.
+            cands.sort(key=lambda c: abs(c.get("start_timestamp", 0) / 1000 - session.created_at))
+            with _CLAIM_LOCK:
+                for c in cands:
+                    cid = c.get(idkey)
+                    if cid and cid not in _CLAIMED_RETELL:
+                        _CLAIMED_RETELL.add(cid)
                         return c
             return None
 
