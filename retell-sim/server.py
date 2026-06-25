@@ -1726,8 +1726,12 @@ async def list_calls(body: ListCallsBody = None):
     if b.sort_order: payload["sort_order"]  = b.sort_order
     rkey = _resolve_retell_key(b.api_base)
     try:
-        r = await _retell_post("/v2/list-calls", payload, retell_key=rkey)
-        return r.json()
+        # v2/list-calls was deprecated (sunset 2026-06-15) → v3/list-calls, which
+        # returns {items, pagination_key, has_more}. Unwrap to the items array so
+        # existing callers still receive a plain list.
+        r = await _retell_post("/v3/list-calls", payload, retell_key=rkey)
+        data = r.json()
+        return data.get("items", data) if isinstance(data, dict) else data
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Retell list-calls failed: {exc}")
 

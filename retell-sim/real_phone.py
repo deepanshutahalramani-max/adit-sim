@@ -449,21 +449,64 @@ def _ehr_sync_loop() -> None:
             try:
                 key = srv._resolve_retell_key(api_base)
                 hdrs = {"Authorization": f"Bearer {key}"}
-                r = httpx.get("https://api.retellai.com/list-chat", headers=hdrs, timeout=15)
-                if r.status_code != 200:
-                    continue
                 # only chats from the last ~30 min (bounded work)
                 cutoff = (time.time() - 1800) * 1000
-                recent = [c for c in r.json() if c.get("start_timestamp", 0) >= cutoff]
+                recent = [c for c in _retell_list_items(hdrs, "chats", 100)
+                          if c.get("start_timestamp", 0) >= cutoff]
                 for c in sorted(recent, key=lambda x: x.get("start_timestamp", 0), reverse=True)[:15]:
-                    full = httpx.get(f"https://api.retellai.com/get-chat/{c['chat_id']}",
-                                     headers=hdrs, timeout=15)
-                    if full.status_code != 200:
+                    msgs = _retell_chat_msgs(hdrs, c["chat_id"])
+                    if msgs is None:
                         continue
-                    calls = _extract_ehr_calls(full.json().get("message_with_tool_calls"))
-                    _ingest_ehr(calls, env, session_id=c["chat_id"])
+                    _ingest_ehr(_extract_ehr_calls(msgs), env, session_id=c["chat_id"])
             except Exception:
                 pass
+
+
+# ── Retell list endpoints (v3) ───────────────────────────────────────────────
+# Legacy GET /list-chat and POST /v2/list-calls were deprecated (sunset
+# 2026-06-15) in favour of the paginated v3 endpoints. v3 returns
+# {items: [...], pagination_key, has_more} and the list items NO LONGER include
+# the transcript/messages — so we match on the list, then fetch the full record
+# via get-call / get-chat (those are not deprecated).
+_RETELL = "https://api.retellai.com"
+
+
+def _retell_list_items(hdrs: dict, kind: str, limit: int = 100) -> list:
+    """POST /v3/list-{calls|chats}; returns the `items` array (or [] on error)."""
+    body: dict = {"limit": limit}
+    if kind == "calls":
+        body["sort_order"] = "descending"
+    try:
+        r = httpx.post(f"{_RETELL}/v3/list-{kind}", headers=hdrs, json=body, timeout=15)
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        return (data.get("items", []) if isinstance(data, dict) else data) or []
+    except Exception:
+        return []
+
+
+def _retell_call_msgs(hdrs: dict, call_id: str):
+    """Full voice transcript (with tool calls) for one call."""
+    try:
+        r = httpx.get(f"{_RETELL}/v2/get-call/{call_id}", headers=hdrs, timeout=15)
+        if r.status_code != 200:
+            return None
+        j = r.json()
+        return j.get("transcript_with_tool_calls") or j.get("message_with_tool_calls")
+    except Exception:
+        return None
+
+
+def _retell_chat_msgs(hdrs: dict, chat_id: str):
+    """Full chat messages (with tool calls) for one chat."""
+    try:
+        r = httpx.get(f"{_RETELL}/get-chat/{chat_id}", headers=hdrs, timeout=15)
+        if r.status_code != 200:
+            return None
+        return r.json().get("message_with_tool_calls")
+    except Exception:
+        return None
 
 
 def _fetch_ehr_calls(session: RealSession) -> None:
@@ -480,16 +523,12 @@ def _fetch_ehr_calls(session: RealSession) -> None:
             """One attempt to find this session's Retell record (the call/chat from
             this patient number, started around this session). Returns the record or None."""
             if session.trigger_type == "inbound_call":
-                r = httpx.post("https://api.retellai.com/v2/list-calls", headers=hdrs,
-                               json={"limit": 100, "sort_order": "descending"}, timeout=15)
-                calls = r.json() if r.status_code == 200 else []
-                for c in calls:
+                for c in _retell_list_items(hdrs, "calls", 100):
                     if digits in str(c.get("from_number", "")) and \
                        c.get("start_timestamp", 0) / 1000 >= session.created_at - 240:
                         return c
             else:
-                r = httpx.get("https://api.retellai.com/list-chat", headers=hdrs, timeout=15)
-                chats = sorted(r.json() if r.status_code == 200 else [],
+                chats = sorted(_retell_list_items(hdrs, "chats", 100),
                                key=lambda c: c.get("start_timestamp", 0), reverse=True)
                 for c in chats:
                     dv = c.get("retell_llm_dynamic_variables", {}) or {}
@@ -514,12 +553,13 @@ def _fetch_ehr_calls(session: RealSession) -> None:
         record_found = rec is not None
         msgs = None
         if rec is not None:
+            # v3 list items don't carry the transcript/messages — fetch the full record.
             if session.trigger_type == "inbound_call":
                 session.retell_id = rec.get("call_id", "")      # for the dashboard deep-link
-                msgs = rec.get("transcript_with_tool_calls") or rec.get("message_with_tool_calls")
+                msgs = _retell_call_msgs(hdrs, session.retell_id) if session.retell_id else None
             else:
                 session.retell_id = rec.get("chat_id", "")      # for the dashboard deep-link
-                msgs = rec.get("message_with_tool_calls")
+                msgs = _retell_chat_msgs(hdrs, session.retell_id) if session.retell_id else None
 
         # ── Failure triage (#31): cross-reference Retell to explain WHY it failed ──
         if session.status == "failed":
@@ -1804,16 +1844,13 @@ def real_ehr_sync():
         try:
             key = srv._resolve_retell_key(api_base)
             hdrs = {"Authorization": f"Bearer {key}"}
-            r = httpx.get("https://api.retellai.com/list-chat", headers=hdrs, timeout=15)
-            if r.status_code != 200:
-                continue
             cutoff = (time.time() - 6 * 3600) * 1000   # last 6h on manual trigger
-            recent = [c for c in r.json() if c.get("start_timestamp", 0) >= cutoff]
+            recent = [c for c in _retell_list_items(hdrs, "chats", 100)
+                      if c.get("start_timestamp", 0) >= cutoff]
             for c in sorted(recent, key=lambda x: x.get("start_timestamp", 0), reverse=True)[:25]:
-                full = httpx.get(f"https://api.retellai.com/get-chat/{c['chat_id']}", headers=hdrs, timeout=15)
-                if full.status_code == 200:
-                    _ingest_ehr(_extract_ehr_calls(full.json().get("message_with_tool_calls")),
-                                env, session_id=c["chat_id"])
+                msgs = _retell_chat_msgs(hdrs, c["chat_id"])
+                if msgs is not None:
+                    _ingest_ehr(_extract_ehr_calls(msgs), env, session_id=c["chat_id"])
         except Exception:
             pass
     return {"ingested": len(EHR_CALLS) - before, "total": len(EHR_CALLS)}
