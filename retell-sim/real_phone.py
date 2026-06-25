@@ -540,15 +540,17 @@ def _fetch_ehr_calls(session: RealSession) -> None:
         # Retell can lag indexing the record by 10-40s after the call/chat ends, so a
         # single fetch sometimes misses it (empty EHR panel / no deep-link). Retry a
         # few times until it appears.
+        # v3 list endpoints index a finished call/chat more slowly than the old
+        # v2 ones did — give it a longer window (~80s) before giving up.
         rec = None
-        for _attempt in range(5):
+        for _attempt in range(10):
             try:
                 rec = _lookup()
             except Exception:
                 rec = None
             if rec is not None:
                 break
-            time.sleep(6)
+            time.sleep(8)
 
         record_found = rec is not None
         msgs = None
